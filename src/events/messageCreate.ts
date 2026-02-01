@@ -15,6 +15,10 @@ export function onMessageCreate(client: Client): void {
     const mapping = getThreadByThreadId(message.channelId);
     if (!mapping) return; // Not a tracked ticket thread
 
+    // Only mapped agents may post into ticket threads
+    const userEntry = getUserMap(message.author.id);
+    if (!userEntry) return;
+
     await enqueueForTicket(mapping.ticket_id, async () => {
       try {
         await forwardToZammad(message, mapping.ticket_id, mapping.thread_id);
@@ -33,8 +37,6 @@ async function forwardToZammad(
   ticketId: number,
   threadId: string
 ): Promise<void> {
-  const userEntry = getUserMap(message.author.id);
-
   const body = message.content || "";
 
   // Download Discord attachments and base64-encode for Zammad
@@ -60,13 +62,9 @@ async function forwardToZammad(
 
   if (!body.trim() && attachments.length === 0) return; // nothing to forward
 
-  const senderInfo = userEntry
-    ? `${message.author.username}`
-    : `${message.author.username} (unmapped)`;
-
   const article = await createArticle({
     ticket_id: ticketId,
-    body: `[Discord — ${senderInfo}] ${body}`,
+    body: `[Discord — ${message.author.username}] ${body}`,
     type: "note",
     sender: "Agent",
     internal: true,
