@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { join } from "node:path";
+import { Client } from "discord.js";
 import { loadEnv, env } from "./util/env.js";
 import { logger } from "./util/logger.js";
 import { initDb, closeDb, pruneDedup, pruneSyncedArticles } from "./db/index.js";
@@ -8,6 +9,7 @@ import { startWebServer } from "./web/server.js";
 import { syncAllTickets } from "./services/backfill.js";
 import { startHealthCheck, stopHealthCheck } from "./services/health.js";
 
+let discordClient: Client | null = null;
 let server: Awaited<ReturnType<typeof startWebServer>> | null = null;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -23,6 +25,7 @@ async function main() {
 
   // 3. Create Discord client and login
   const client = createClient();
+  discordClient = client;
   await client.login(env().DISCORD_TOKEN);
 
   // 4. Start webhook HTTP server
@@ -72,6 +75,15 @@ async function shutdown(signal: string) {
   if (server) {
     try {
       await server.close();
+    } catch {
+      // ignore
+    }
+  }
+
+  // Close Discord gateway connection
+  if (discordClient) {
+    try {
+      await discordClient.destroy();
     } catch {
       // ignore
     }

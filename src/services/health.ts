@@ -76,26 +76,31 @@ export function startHealthCheck(client: Client): void {
   timer = setInterval(async () => {
     if (checking) return; // prevent overlapping checks
     checking = true;
-    const healthy = await checkZammad();
-    checking = false;
+    try {
+      const healthy = await checkZammad();
 
-    if (healthy) {
-      if (failureCount >= FAILURE_THRESHOLD && alertSent) {
-        // Recovered
-        setPresence(client, "ok");
-        await sendRecovery(client);
-      }
-      failureCount = 0;
-      alertSent = false;
-    } else {
-      failureCount++;
-      logger.warn({ failureCount }, "Zammad health check failed");
+      if (healthy) {
+        if (failureCount >= FAILURE_THRESHOLD && alertSent) {
+          // Recovered
+          setPresence(client, "ok");
+          await sendRecovery(client);
+        }
+        failureCount = 0;
+        alertSent = false;
+      } else {
+        failureCount++;
+        logger.warn({ failureCount }, "Zammad health check failed");
 
-      if (failureCount >= FAILURE_THRESHOLD && !alertSent) {
-        setPresence(client, "down");
-        await sendAlert(client);
-        alertSent = true;
+        if (failureCount >= FAILURE_THRESHOLD && !alertSent) {
+          setPresence(client, "down");
+          await sendAlert(client);
+          alertSent = true;
+        }
       }
+    } catch (err) {
+      logger.error({ err }, "Health check tick error");
+    } finally {
+      checking = false;
     }
   }, CHECK_INTERVAL);
 }

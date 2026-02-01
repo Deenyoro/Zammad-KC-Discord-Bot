@@ -35,18 +35,25 @@ spec:
           envFrom:
             - secretRef:
                 name: zammad-discord-bot
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 10
             periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
-            initialDelaySeconds: 15
-            periodSeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 10
             failureThreshold: 3
           resources:
             requests:

@@ -299,8 +299,9 @@ function ensureFileExtension(filename: string, contentType: string): string {
   const ext = extMap[contentType.toLowerCase()];
   if (ext) return `${filename}${ext}`;
 
-  // Try deriving from subtype
-  const subtype = contentType.split("/")[1];
+  // Try deriving from subtype (sanitize to alphanumeric only)
+  const rawSubtype = contentType.split("/")[1] ?? "";
+  const subtype = rawSubtype.match(/^[a-z0-9]+$/i)?.[0];
   if (subtype && subtype !== "octet-stream") return `${filename}.${subtype}`;
 
   return filename;
