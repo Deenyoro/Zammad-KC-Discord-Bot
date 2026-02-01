@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zammad-discord-bot
+  labels:
+    app: zammad-discord-bot
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # SQLite — only one writer at a time
+  selector:
+    matchLabels:
+      app: zammad-discord-bot
+  template:
+    metadata:
+      labels:
+        app: zammad-discord-bot
+    spec:
+      containers:
+        - name: bot
+          image: ghcr.io/deenyoro/zammad-kc-discord-bot:latest
+          ports:
+            - containerPort: 3100
+              name: http
+          envFrom:
+            - secretRef:
+                name: zammad-discord-bot
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: zammad-discord-bot-data
