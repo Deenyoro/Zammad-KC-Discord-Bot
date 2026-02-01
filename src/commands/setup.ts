@@ -6,6 +6,12 @@ import {
 import { logger } from "../util/logger.js";
 import { setUserMap } from "../db/index.js";
 import { findUserByEmail } from "../services/zammad.js";
+import { env } from "../util/env.js";
+
+function isAdmin(userId: string): boolean {
+  const ids = env().ADMIN_USER_IDS;
+  return ids.length === 0 || ids.includes(userId);
+}
 
 export const setupCommand = new SlashCommandBuilder()
   .setName("setup")
@@ -26,6 +32,14 @@ export const setupCommand = new SlashCommandBuilder()
 export async function handleSetupCommand(
   interaction: ChatInputCommandInteraction
 ): Promise<void> {
+  if (!isAdmin(interaction.user.id)) {
+    await interaction.reply({
+      content: "You are not authorised to use setup commands.",
+      ephemeral: true,
+    });
+    return;
+  }
+
   const sub = interaction.options.getSubcommand();
 
   try {

@@ -10,6 +10,10 @@ const envSchema = z.object({
   ZAMMAD_PUBLIC_URL: z.string().url().optional(),
   ZAMMAD_API_TOKEN: z.string().min(1),
   ZAMMAD_WEBHOOK_SECRET: z.string().min(1),
+  ADMIN_USER_IDS: z
+    .string()
+    .default("")
+    .transform((v) => v.split(",").map((s) => s.trim()).filter(Boolean)),
   PORT: z.coerce.number().default(3100),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
 });
