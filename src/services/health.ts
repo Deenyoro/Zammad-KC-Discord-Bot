@@ -7,6 +7,7 @@ const FAILURE_THRESHOLD = 3;   // alert after 3 consecutive failures (90s)
 
 let failureCount = 0;
 let alertSent = false;
+let checking = false;
 let timer: ReturnType<typeof setInterval> | null = null;
 
 function setPresence(client: Client, status: "ok" | "down") {
@@ -73,7 +74,10 @@ export function startHealthCheck(client: Client): void {
   setPresence(client, "ok");
 
   timer = setInterval(async () => {
+    if (checking) return; // prevent overlapping checks
+    checking = true;
     const healthy = await checkZammad();
+    checking = false;
 
     if (healthy) {
       if (failureCount >= FAILURE_THRESHOLD && alertSent) {

@@ -247,11 +247,16 @@ async function syncAllUnsyncedArticles(
     const body = stripHtml(article.body);
     const content = `**${senderLabel}:** ${prefix}${body}`;
 
-    // Download attachments
+    // Download attachments (skip tiny placeholders <10B and oversized >25MB)
+    const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
     const attachments: { data: Buffer; filename: string }[] = [];
     if (article.attachments?.length) {
       for (const att of article.attachments) {
         if (att.size < 10) continue;
+        if (att.size > MAX_ATTACHMENT_BYTES) {
+          logger.warn({ articleId: article.id, attachmentId: att.id, size: att.size }, "Skipping oversized Zammad attachment");
+          continue;
+        }
         try {
           const downloaded = await downloadAttachment(ticketId, article.id, att.id);
           const filename = ensureFileExtension(att.filename, downloaded.contentType);

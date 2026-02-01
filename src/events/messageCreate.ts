@@ -38,10 +38,15 @@ async function forwardToZammad(
   const body = message.content || "";
 
   // Download Discord attachments and base64-encode for Zammad
+  const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB
   const attachments: ArticleAttachment[] = [];
   for (const [, att] of message.attachments) {
+    if (att.size > MAX_ATTACHMENT_BYTES) {
+      logger.warn({ filename: att.name, size: att.size }, "Skipping oversized Discord attachment");
+      continue;
+    }
     try {
-      const res = await fetch(att.url);
+      const res = await fetch(att.url, { signal: AbortSignal.timeout(60_000) });
       const buf = Buffer.from(await res.arrayBuffer());
       attachments.push({
         filename: att.name ?? "attachment",

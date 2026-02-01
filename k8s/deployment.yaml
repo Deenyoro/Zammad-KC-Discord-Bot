@@ -16,9 +16,19 @@ spec:
       labels:
         app: zammad-discord-bot
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: bot
           image: ghcr.io/deenyoro/zammad-kc-discord-bot:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 3100
               name: http
@@ -41,7 +51,7 @@ spec:
           resources:
             requests:
               cpu: 50m
-              memory: 128Mi
+              memory: 256Mi
             limits:
               cpu: 500m
               memory: 512Mi

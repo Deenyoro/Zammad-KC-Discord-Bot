@@ -68,6 +68,7 @@ async function zammadFetch(path: string, init?: RequestInit): Promise<Response> 
   const url = `${env().ZAMMAD_BASE_URL}/api/v1${path}`;
   const res = await fetch(url, {
     ...init,
+    signal: init?.signal ?? AbortSignal.timeout(30_000),
     headers: {
       Authorization: `Bearer ${env().ZAMMAD_API_TOKEN}`,
       "Content-Type": "application/json",
@@ -106,7 +107,8 @@ export async function getAllOpenTickets(): Promise<ZammadTicket[]> {
   let page = 1;
   const perPage = 100;
 
-  while (true) {
+  const MAX_PAGES = 50; // safety limit: 5 000 tickets max
+  while (page <= MAX_PAGES) {
     const batch = await getTickets(page, perPage);
     if (batch.length === 0) break;
 
@@ -224,10 +226,11 @@ export async function findUserByEmail(email: string): Promise<ZammadUser | undef
     // ES may be down — fall through to pagination
   }
 
-  // Fallback: paginate through all users
+  // Fallback: paginate through all users (capped at 50 pages / 5 000 users)
   let page = 1;
   const perPage = 100;
-  while (true) {
+  const MAX_PAGES = 50;
+  while (page <= MAX_PAGES) {
     const res = await zammadFetch(`/users?page=${page}&per_page=${perPage}&expand=true`);
     const users = (await res.json()) as ZammadUser[];
     if (users.length === 0) break;
