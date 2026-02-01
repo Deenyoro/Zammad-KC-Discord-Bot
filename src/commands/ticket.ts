@@ -115,6 +115,17 @@ async function requireMapping(
     });
     return null;
   }
+
+  const caller = getUserMap(interaction.user.id);
+  if (!caller) {
+    await interaction.reply({
+      content:
+        "You must be mapped to a Zammad agent before using ticket commands. Ask an admin to run `/setup usermap`.",
+      ephemeral: true,
+    });
+    return null;
+  }
+
   return mapping;
 }
 
