@@ -220,11 +220,11 @@ async function processWebhook(
     }
   }
 
-  // Handle title changes
-  if (webhookTicket.title !== mapping.title) {
-    updateThreadTitle(ticketId, webhookTicket.title);
-    await renameTicketThread(client, mapping.thread_id, mapping.ticket_number, webhookTicket.title);
-    logger.info({ ticketId, oldTitle: mapping.title, newTitle: webhookTicket.title }, "Renamed thread via webhook for title change");
+  // Handle title changes (use fullTicket.title not webhookTicket.title - webhook payload can be stale)
+  if (fullTicket.title !== mapping.title) {
+    updateThreadTitle(ticketId, fullTicket.title);
+    await renameTicketThread(client, mapping.thread_id, mapping.ticket_number, fullTicket.title);
+    logger.info({ ticketId, oldTitle: mapping.title, newTitle: fullTicket.title }, "Renamed thread via webhook for title change");
   }
 
   // Sync ALL unsynced articles in order (by article ID).
