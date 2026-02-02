@@ -224,6 +224,7 @@ async function processWebhook(
   if (webhookTicket.title !== mapping.title) {
     updateThreadTitle(ticketId, webhookTicket.title);
     await renameTicketThread(client, mapping.thread_id, mapping.ticket_number, webhookTicket.title);
+    logger.info({ ticketId, oldTitle: mapping.title, newTitle: webhookTicket.title }, "Renamed thread via webhook for title change");
   }
 
   // Sync ALL unsynced articles in order (by article ID).
