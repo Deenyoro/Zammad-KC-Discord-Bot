@@ -127,7 +127,7 @@ export async function getAllOpenTickets(): Promise<ZammadTicket[]> {
 
 export async function updateTicket(
   ticketId: number,
-  data: Partial<Pick<ZammadTicket, "title" | "state_id" | "priority_id" | "owner_id" | "group_id">>
+  data: Partial<Pick<ZammadTicket, "title" | "state_id" | "priority_id" | "owner_id" | "group_id">> & { pending_time?: string }
 ): Promise<ZammadTicket> {
   const res = await zammadFetch(`/tickets/${ticketId}`, {
     method: "PUT",

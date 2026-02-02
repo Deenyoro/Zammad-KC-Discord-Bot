@@ -10,7 +10,7 @@ import { REST, Routes } from "discord.js";
 import { ticketCommand } from "./ticket.js";
 import { setupCommand } from "./setup.js";
 import { helpCommand } from "./help.js";
-import { replyCommand, noteCommand, ownerCommand } from "./shortcuts.js";
+import { replyCommand, noteCommand, ownerCommand, pendingCommand } from "./shortcuts.js";
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -28,6 +28,7 @@ const commands = [
   replyCommand.toJSON(),
   noteCommand.toJSON(),
   ownerCommand.toJSON(),
+  pendingCommand.toJSON(),
 ];
 const rest = new REST().setToken(token);
 

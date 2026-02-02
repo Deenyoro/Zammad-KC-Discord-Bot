@@ -446,6 +446,42 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   );
 }
 
+// ---------------------------------------------------------------
+// /pending command handler
+// ---------------------------------------------------------------
+
+function computePendingTime(code: string): string {
+  const now = new Date();
+  switch (code) {
+    case "1d": now.setDate(now.getDate() + 1); break;
+    case "3d": now.setDate(now.getDate() + 3); break;
+    case "1w": now.setDate(now.getDate() + 7); break;
+    case "2w": now.setDate(now.getDate() + 14); break;
+    case "1m": now.setMonth(now.getMonth() + 1); break;
+    case "3m": now.setMonth(now.getMonth() + 3); break;
+    default: now.setDate(now.getDate() + 1); break;
+  }
+  return now.toISOString();
+}
+
+export async function handlePending(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply({ ephemeral: true });
+
+  const type = interaction.options.getString("type", true);
+  const duration = interaction.options.getString("duration", true);
+
+  const state = await getStateByName(type);
+  if (!state) throw new Error(`Unknown state: ${type}`);
+
+  const pendingTime = computePendingTime(duration);
+  await updateTicket(mapping.ticket_id, { state_id: state.id, pending_time: pendingTime });
+  await interaction.editReply(
+    `Ticket #${mapping.ticket_number} set to **${type}** until ${new Date(pendingTime).toLocaleDateString()}.`
+  );
+}
+
 export async function handleOwner(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
