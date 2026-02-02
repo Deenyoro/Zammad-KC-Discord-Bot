@@ -83,12 +83,26 @@ export async function syncAllTickets(client: Client): Promise<void> {
           updateThreadState(ticket.id, ticketInfo.state);
 
           // Reopen thread if it was closed but ticket is now open
+          // BUT: Add grace period to avoid race condition with /ticket close command
           if (existing.state === "closed" && ticketInfo.state !== "closed") {
-            try {
-              await reopenTicketThread(client, existing.thread_id);
-              logger.info({ ticketId: ticket.id }, "Reopened thread for ticket that is no longer closed");
-            } catch (err) {
-              logger.warn({ ticketId: ticket.id, err }, "Failed to reopen thread");
+            // Skip recently closed threads to avoid race condition:
+            // If /ticket close was just run, the Zammad API might still show stale
+            // "open" state while the webhook is processing. Wait 30 seconds before
+            // reopening to avoid fighting with the close command.
+            const updatedAt = new Date(existing.updated_at);
+            const ageSeconds = (Date.now() - updatedAt.getTime()) / 1000;
+            if (ageSeconds < 30) {
+              logger.debug(
+                { ticketId: ticket.id, ageSeconds },
+                "Skipping reopen of recently closed thread (grace period)"
+              );
+            } else {
+              try {
+                await reopenTicketThread(client, existing.thread_id);
+                logger.info({ ticketId: ticket.id }, "Reopened thread for ticket that is no longer closed");
+              } catch (err) {
+                logger.warn({ ticketId: ticket.id, err }, "Failed to reopen thread");
+              }
             }
           }
         }
