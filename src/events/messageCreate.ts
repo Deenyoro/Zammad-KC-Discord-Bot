@@ -13,28 +13,11 @@ export function onMessageCreate(client: Client): void {
     if (!message.channel.isThread()) return;
 
     const mapping = getThreadByThreadId(message.channelId);
-    if (!mapping) {
-      logger.debug({ channelId: message.channelId }, "Message in untracked thread");
-      return; // Not a tracked ticket thread
-    }
+    if (!mapping) return; // Not a tracked ticket thread
 
     // Only mapped agents may post into ticket threads
     const userEntry = getUserMap(message.author.id);
-    if (!userEntry) {
-      logger.warn({
-        discordId: message.author.id,
-        username: message.author.username,
-        ticketId: mapping.ticket_id
-      }, "User not in usermap, ignoring message");
-      return;
-    }
-
-    logger.info({
-      ticketId: mapping.ticket_id,
-      discordUser: message.author.username,
-      zammadEmail: userEntry.zammad_email,
-      zammadId: userEntry.zammad_id
-    }, "Forwarding Discord message to Zammad");
+    if (!userEntry) return;
 
     await enqueueForTicket(mapping.ticket_id, async () => {
       try {
@@ -80,34 +63,22 @@ async function forwardToZammad(
 
   if (!body.trim() && attachments.length === 0) return; // nothing to forward
 
-  const articleData = {
+  const article = await createArticle({
     ticket_id: ticketId,
     body,
     type: "note",
     sender: "Agent",
     internal: true,
     content_type: "text/plain",
-    from: userEntry.zammad_email,
-    created_by_id: userEntry.zammad_id ?? undefined,
+    origin_by_id: userEntry.zammad_id ?? undefined,
     attachments: attachments.length > 0 ? attachments : undefined,
-  };
-
-  logger.debug({ ticketId, articleData }, "Creating Zammad article with user attribution");
-
-  const article = await createArticle(articleData);
+  });
 
   // Mark as synced so the webhook echo is suppressed
   markArticleSynced(article.id, ticketId, threadId, message.id, "discord_to_zammad");
 
   logger.info(
-    {
-      ticketId,
-      articleId: article.id,
-      discordMsgId: message.id,
-      attachmentCount: attachments.length,
-      requestedCreatedById: userEntry.zammad_id,
-      requestedFrom: userEntry.zammad_email
-    },
+    { ticketId, articleId: article.id, discordMsgId: message.id, attachmentCount: attachments.length },
     "Forwarded Discord message to Zammad"
   );
 }
