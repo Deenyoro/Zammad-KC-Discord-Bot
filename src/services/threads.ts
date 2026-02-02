@@ -172,9 +172,17 @@ export async function renameTicketThread(
   newTitle: string
 ): Promise<void> {
   const thread = (await client.channels.fetch(threadId)) as ThreadChannel | null;
-  if (!thread?.isThread()) return;
+  if (!thread?.isThread()) {
+    logger.warn({ threadId }, "Thread not found or not a thread for rename");
+    return;
+  }
   const name = truncate(`#${ticketNumber} ${newTitle}`, 100);
-  await discordQueue.add(async () => { await thread.setName(name, "Ticket title updated in Zammad"); });
+  const oldName = thread.name;
+  logger.info({ threadId, oldName, newName: name }, "About to rename thread");
+  await discordQueue.add(async () => {
+    await thread.setName(name, "Ticket title updated in Zammad");
+    logger.info({ threadId, oldName, newName: name }, "Discord API rename completed");
+  });
 }
 
 export async function sendToThread(
