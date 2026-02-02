@@ -180,13 +180,13 @@ export async function handleTicketCommand(
 async function handleClose(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply();
 
   const closedState = await getStateByName("closed");
   if (!closedState) throw new Error("Could not find 'closed' state in Zammad");
 
   await updateTicket(mapping.ticket_id, { state_id: closedState.id });
-  await interaction.editReply(`Ticket #${mapping.ticket_number} closed.`);
+  await interaction.editReply(`${interaction.user} closed ticket #${mapping.ticket_number}.`);
 }
 
 async function handleAssign(interaction: ChatInputCommandInteraction) {
@@ -236,7 +236,7 @@ async function handlePriority(interaction: ChatInputCommandInteraction) {
 async function handleState(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply();
 
   const stateName = interaction.options.getString("name", true);
   const state = await getStateByName(stateName);
@@ -244,7 +244,7 @@ async function handleState(interaction: ChatInputCommandInteraction) {
 
   await updateTicket(mapping.ticket_id, { state_id: state.id });
   await interaction.editReply(
-    `Ticket #${mapping.ticket_number} state changed to ${stateName}.`
+    `${interaction.user} changed ticket #${mapping.ticket_number} state to **${stateName}**.`
   );
 }
 
@@ -467,7 +467,7 @@ function computePendingTime(code: string): string {
 export async function handlePending(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply();
 
   const type = interaction.options.getString("type", true);
   const duration = interaction.options.getString("duration", true);
@@ -478,7 +478,7 @@ export async function handlePending(interaction: ChatInputCommandInteraction) {
   const pendingTime = computePendingTime(duration);
   await updateTicket(mapping.ticket_id, { state_id: state.id, pending_time: pendingTime });
   await interaction.editReply(
-    `Ticket #${mapping.ticket_number} set to **${type}** until ${new Date(pendingTime).toLocaleDateString()}.`
+    `${interaction.user} set ticket #${mapping.ticket_number} to **${type}** until ${new Date(pendingTime).toLocaleDateString()}.`
   );
 }
 
