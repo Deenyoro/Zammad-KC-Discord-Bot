@@ -161,7 +161,7 @@ export async function createArticle(data: {
   content_type?: string;
   to?: string;
   from?: string;
-  created_by_id?: number;
+  origin_by_id?: number;
   attachments?: ArticleAttachment[];
   preferences?: Record<string, unknown>;
 }): Promise<ZammadArticle> {
