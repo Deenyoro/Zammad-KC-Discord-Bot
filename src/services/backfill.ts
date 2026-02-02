@@ -94,6 +94,9 @@ export async function syncAllTickets(client: Client): Promise<void> {
         }
 
         // Update title if changed
+        if (ticket.id === 2703) {
+          logger.info({ ticketId: ticket.id, zammadTitle: ticket.title, dbTitle: existing.title, match: ticket.title === existing.title }, "Title check for 2703");
+        }
         if (ticket.title !== existing.title) {
           try {
             await renameTicketThread(client, existing.thread_id, existing.ticket_number, ticket.title);
