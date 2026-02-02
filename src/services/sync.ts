@@ -1,4 +1,4 @@
-import { Client } from "discord.js";
+import { Client, ThreadChannel } from "discord.js";
 import { logger } from "../util/logger.js";
 import {
   getThreadByTicketId,
@@ -24,6 +24,8 @@ import {
   renameTicketThread,
   sendToThread,
   ticketUrl,
+  removeRoleMembersFromThread,
+  addRoleMembersToThread,
   type TicketInfo,
 } from "./threads.js";
 
@@ -193,6 +195,28 @@ async function processWebhook(
       await closeTicketThread(client, mapping.thread_id);
     } else if (oldState === "closed") {
       await reopenTicketThread(client, mapping.thread_id);
+    }
+
+    // "pending close" → remove role members (thread stays open/unlocked)
+    if (normalizedState === "pending close") {
+      await removeRoleMembersFromThread(client, mapping.thread_id);
+    }
+
+    // Transition OUT of "pending close" → re-add members
+    if (oldState === "pending close" && normalizedState !== "pending close") {
+      const thread = (await client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
+      if (thread?.isThread() && !thread.archived) {
+        await addRoleMembersToThread(thread);
+      }
+    }
+  }
+
+  // If ticket is still "pending close" and a webhook fired (activity while pending),
+  // re-add members so the team sees the update
+  if (normalizedState === oldState && normalizedState === "pending close" && webhookArticle) {
+    const thread = (await client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
+    if (thread?.isThread() && !thread.archived) {
+      await addRoleMembersToThread(thread);
     }
   }
 

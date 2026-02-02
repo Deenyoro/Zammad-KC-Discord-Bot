@@ -63,13 +63,16 @@ export async function syncAllTickets(client: Client): Promise<void> {
         }
 
         // Ensure all role members are in the thread (catches newly added members)
-        try {
-          const thread = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
-          if (thread?.isThread() && !thread.archived) {
-            await addRoleMembersToThread(thread);
+        // Skip for "pending close" — members were intentionally removed
+        if (ticketInfo.state !== "pending close") {
+          try {
+            const thread = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
+            if (thread?.isThread() && !thread.archived) {
+              await addRoleMembersToThread(thread);
+            }
+          } catch (err) {
+            logger.debug({ ticketId: ticket.id, err }, "Failed to sync role members to thread");
           }
-        } catch (err) {
-          logger.debug({ ticketId: ticket.id, err }, "Failed to sync role members to thread");
         }
 
         // Update state if changed

@@ -1,6 +1,6 @@
 import { Client, Events } from "discord.js";
 import { logger } from "../util/logger.js";
-import { handleTicketCommand, handleReply, handleNote, handleOwner } from "../commands/ticket.js";
+import { handleTicketCommand, handleReply, handleNote, handleOwner, handlePending } from "../commands/ticket.js";
 import { handleSetupCommand } from "../commands/setup.js";
 import { handleHelpCommand } from "../commands/help.js";
 
@@ -29,6 +29,9 @@ export function onInteractionCreate(client: Client): void {
           break;
         case "owner":
           await handleOwner(interaction);
+          break;
+        case "pending":
+          await handlePending(interaction);
           break;
         default:
           logger.warn({ commandName }, "Unknown command");
