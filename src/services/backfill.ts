@@ -4,6 +4,7 @@ import {
   getThreadByTicketId,
   getAllTicketThreads,
   updateThreadState,
+  updateThreadTitle,
 } from "../db/index.js";
 import { getAllOpenTickets, getUser } from "./zammad.js";
 import {
@@ -12,6 +13,7 @@ import {
   updateHeaderEmbed,
   closeTicketThread,
   reopenTicketThread,
+  renameTicketThread,
   ticketUrl,
   type TicketInfo,
 } from "./threads.js";
@@ -88,6 +90,17 @@ export async function syncAllTickets(client: Client): Promise<void> {
             } catch (err) {
               logger.warn({ ticketId: ticket.id, err }, "Failed to reopen thread");
             }
+          }
+        }
+
+        // Update title if changed
+        if (ticket.title !== existing.title) {
+          try {
+            await renameTicketThread(client, existing.thread_id, existing.ticket_number, ticket.title);
+            updateThreadTitle(ticket.id, ticket.title);
+            logger.info({ ticketId: ticket.id, oldTitle: existing.title, newTitle: ticket.title }, "Renamed thread for title change");
+          } catch (err) {
+            logger.warn({ ticketId: ticket.id, err }, "Failed to rename thread");
           }
         }
       }
