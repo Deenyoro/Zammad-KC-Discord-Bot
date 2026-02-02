@@ -398,8 +398,19 @@ async function detectReplyChannel(
     }
 
     default:
-      // Unknown channel type — try to mirror it
-      return { type: articleType, to: channelArticle.from || "", label: `${articleType} reply` };
+      // Unknown channel type (phone, web, etc.) — default to email
+      const ticket = await getTicket(ticketId);
+      let to: string | undefined;
+      if (ticket.customer_id) {
+        try {
+          const customer = await getUser(ticket.customer_id);
+          to = customer.email;
+        } catch {
+          to = ticket.customer;
+        }
+      }
+      if (!to) return null;
+      return { type: "email", to, label: `email to ${to}` };
   }
 }
 
