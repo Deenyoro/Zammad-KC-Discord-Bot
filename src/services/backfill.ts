@@ -11,6 +11,7 @@ import {
   createTicketThread,
   updateHeaderEmbed,
   closeTicketThread,
+  reopenTicketThread,
   ticketUrl,
   type TicketInfo,
 } from "./threads.js";
@@ -78,6 +79,16 @@ export async function syncAllTickets(client: Client): Promise<void> {
         // Update state if changed
         if (ticketInfo.state !== existing.state) {
           updateThreadState(ticket.id, ticketInfo.state);
+
+          // Reopen thread if it was closed but ticket is now open
+          if (existing.state === "closed" && ticketInfo.state !== "closed") {
+            try {
+              await reopenTicketThread(client, existing.thread_id);
+              logger.info({ ticketId: ticket.id }, "Reopened thread for ticket that is no longer closed");
+            } catch (err) {
+              logger.warn({ ticketId: ticket.id, err }, "Failed to reopen thread");
+            }
+          }
         }
       }
     } catch (err) {
