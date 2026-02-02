@@ -165,19 +165,21 @@ export async function createArticle(data: {
   attachments?: ArticleAttachment[];
   preferences?: Record<string, unknown>;
 }): Promise<ZammadArticle> {
+  const payload = {
+    type: "note",
+    sender: "Agent",
+    internal: false,
+    content_type: "text/plain",
+    ...data,
+    preferences: {
+      ...data.preferences,
+      discord: { synced: true },
+    },
+  };
+  logger.debug({ payload }, "Creating article with payload");
   const res = await zammadFetch("/ticket_articles", {
     method: "POST",
-    body: JSON.stringify({
-      type: "note",
-      sender: "Agent",
-      internal: false,
-      content_type: "text/plain",
-      ...data,
-      preferences: {
-        ...data.preferences,
-        discord: { synced: true },
-      },
-    }),
+    body: JSON.stringify(payload),
   });
   return res.json() as Promise<ZammadArticle>;
 }
