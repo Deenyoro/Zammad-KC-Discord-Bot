@@ -294,6 +294,9 @@ export async function handleNote(interaction: ChatInputCommandInteraction) {
   const text = interaction.options.getString("text", true);
   const fileOption = interaction.options.getAttachment("file");
 
+  // Get user mapping for attribution
+  const userEntry = getUserMap(interaction.user.id);
+
   let attachments: ArticleAttachment[] | undefined;
   if (fileOption) {
     try {
@@ -315,6 +318,7 @@ export async function handleNote(interaction: ChatInputCommandInteraction) {
     internal: true,
     type: "note",
     sender: "Agent",
+    origin_by_id: userEntry?.zammad_id ?? undefined,
     attachments,
   });
   await interaction.editReply(
@@ -412,6 +416,9 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  // Get user mapping for attribution
+  const userEntry = getUserMap(interaction.user.id);
+
   // Download attachment from Discord and base64-encode for Zammad
   let attachments: ArticleAttachment[] | undefined;
   if (fileOption) {
@@ -437,6 +444,7 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     internal: false,
     content_type: "text/plain",
     to: channel.to,
+    origin_by_id: userEntry?.zammad_id ?? undefined,
     attachments,
   });
 
