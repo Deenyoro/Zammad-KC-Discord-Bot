@@ -160,6 +160,7 @@ export async function createArticle(data: {
   internal?: boolean;
   content_type?: string;
   to?: string;
+  cc?: string;
   from?: string;
   origin_by_id?: number;
   attachments?: ArticleAttachment[];
