@@ -170,12 +170,24 @@ async function processWebhook(
   };
 
   let mapping = getThreadByTicketId(ticketId);
+  let threadJustCreated = false;
 
   // Create thread if it doesn't exist
   if (!mapping) {
     await createTicketThread(client, ticketInfo);
     mapping = getThreadByTicketId(ticketId);
     if (!mapping) throw new Error(`Failed to create mapping for ticket ${ticketId}`);
+    threadJustCreated = true;
+
+    // If we just created a thread for a closed ticket, close it immediately
+    if (normalizedState === "closed") {
+      await closeTicketThread(client, mapping.thread_id);
+      logger.info({ ticketId }, "Closed newly created thread for closed ticket");
+    } else if (normalizedState === "pending close") {
+      // Don't add members to newly created "pending close" threads
+      await removeRoleMembersFromThread(client, mapping.thread_id);
+      logger.info({ ticketId }, "Removed members from newly created pending close thread");
+    }
   }
 
   // Update header embed (state, title, assignee may have changed)
