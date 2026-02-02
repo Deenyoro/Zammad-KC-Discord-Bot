@@ -119,10 +119,10 @@ export async function syncAllTickets(client: Client): Promise<void> {
     // Skip recently created threads to avoid race condition:
     // If a webhook creates a thread DURING this sync (after we fetched tickets),
     // the thread won't be in openTicketIds but the ticket IS actually open.
-    // Wait 5 minutes before considering a thread "stale" to avoid false positives.
+    // Wait 2 minutes before considering a thread "stale" to avoid false positives.
     const createdAt = new Date(mapping.created_at);
     const ageMinutes = (Date.now() - createdAt.getTime()) / (1000 * 60);
-    if (ageMinutes < 5) {
+    if (ageMinutes < 2) {
       logger.debug({ ticketId: mapping.ticket_id, ageMinutes }, "Skipping recently created thread");
       continue;
     }
