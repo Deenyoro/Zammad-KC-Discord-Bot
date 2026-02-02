@@ -14,7 +14,7 @@ import {
   getUser,
   type ArticleAttachment,
 } from "../services/zammad.js";
-import { ticketUrl } from "../services/threads.js";
+import { ticketUrl, closeTicketThread } from "../services/threads.js";
 
 export const ticketCommand = new SlashCommandBuilder()
   .setName("ticket")
@@ -189,6 +189,12 @@ async function handleClose(interaction: ChatInputCommandInteraction) {
   if (!closedState) throw new Error("Could not find 'closed' state in Zammad");
 
   await updateTicket(mapping.ticket_id, { state_id: closedState.id });
+
+  // Immediately close the Discord thread (archive, lock, remove members)
+  if (interaction.client && mapping.thread_id) {
+    await closeTicketThread(interaction.client, mapping.thread_id);
+  }
+
   await interaction.editReply(`${interaction.user} closed ticket #${mapping.ticket_number}.`);
 }
 
