@@ -139,14 +139,17 @@ export async function updateHeaderEmbed(
 }
 
 export async function closeTicketThread(client: Client, threadId: string): Promise<void> {
-  // Remove role members before archiving so they don't get stuck
-  await removeRoleMembersFromThread(client, threadId);
-
   const thread = (await client.channels.fetch(threadId)) as ThreadChannel | null;
   if (!thread?.isThread()) return;
+
+  // Archive first for instant visual feedback, then remove members in the background
   await discordQueue.add(async () => {
     await thread.edit({ locked: true, archived: true, reason: "Ticket closed in Zammad" });
   });
+
+  removeRoleMembersFromThread(client, threadId).catch((err) =>
+    logger.warn({ threadId, err }, "Failed to remove role members after close")
+  );
 }
 
 export async function reopenTicketThread(client: Client, threadId: string): Promise<void> {
@@ -230,16 +233,16 @@ async function getRoleMemberIds(guild: import("discord.js").Guild): Promise<stri
 }
 
 /** Fetch all guild members with the ticket role and add them to the thread. */
-async function addRoleMembersToThread(thread: ThreadChannel): Promise<void> {
+export async function addRoleMembersToThread(thread: ThreadChannel): Promise<void> {
   try {
     const memberIds = await getRoleMemberIds(thread.guild);
-    for (const memberId of memberIds) {
-      try {
-        await discordQueue.add(async () => { await thread.members.add(memberId); });
-      } catch (err) {
-        logger.debug({ memberId, threadId: thread.id, err }, "Failed to add role member to thread");
-      }
-    }
+    await Promise.allSettled(
+      memberIds.map((memberId) =>
+        discordQueue.add(async () => { await thread.members.add(memberId); }).catch((err) => {
+          logger.debug({ memberId, threadId: thread.id, err }, "Failed to add role member to thread");
+        })
+      )
+    );
   } catch (err) {
     logger.warn({ threadId: thread.id, err }, "Failed to add role members to thread");
   }
@@ -255,13 +258,14 @@ export async function removeRoleMembersFromThread(
 
   try {
     const memberIds = await getRoleMemberIds(thread.guild);
-    for (const memberId of memberIds) {
-      try {
-        await discordQueue.add(async () => { await thread.members.remove(memberId); });
-      } catch (err) {
-        logger.debug({ memberId, threadId, err }, "Failed to remove member from thread");
-      }
-    }
+    // Submit all removals to the queue concurrently instead of awaiting each one
+    await Promise.allSettled(
+      memberIds.map((memberId) =>
+        discordQueue.add(async () => { await thread.members.remove(memberId); }).catch((err) => {
+          logger.debug({ memberId, threadId, err }, "Failed to remove member from thread");
+        })
+      )
+    );
   } catch (err) {
     logger.warn({ threadId, err }, "Failed to remove role members from thread");
   }
