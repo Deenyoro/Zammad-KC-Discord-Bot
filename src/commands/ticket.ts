@@ -95,6 +95,9 @@ export const ticketCommand = new SlashCommandBuilder()
       .addStringOption((o) =>
         o.setName("text").setDescription("Reply text").setRequired(true)
       )
+      .addStringOption((o) =>
+        o.setName("cc").setDescription("CC emails (comma-separated, email only)").setRequired(false)
+      )
       .addAttachmentOption((o) =>
         o.setName("file").setDescription("Attach a file (image, document, etc.)").setRequired(false)
       )
@@ -406,6 +409,7 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const text = interaction.options.getString("text", true);
+  const ccInput = interaction.options.getString("cc");
   const fileOption = interaction.options.getAttachment("file");
 
   const channel = await detectReplyChannel(mapping.ticket_id);
@@ -418,6 +422,16 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
 
   // Get user mapping for attribution
   const userEntry = getUserMap(interaction.user.id);
+
+  // Parse CC emails (only used for email tickets)
+  let cc: string | undefined;
+  if (ccInput && channel.type === "email") {
+    // Split by comma, trim whitespace, filter out empty strings
+    const ccEmails = ccInput.split(',').map(e => e.trim()).filter(e => e.length > 0);
+    if (ccEmails.length > 0) {
+      cc = ccEmails.join(', ');
+    }
+  }
 
   // Download attachment from Discord and base64-encode for Zammad
   let attachments: ArticleAttachment[] | undefined;
@@ -444,13 +458,15 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     internal: false,
     content_type: "text/plain",
     to: channel.to,
+    cc,
     origin_by_id: userEntry?.zammad_id ?? undefined,
     attachments,
   });
 
   const fileSuffix = fileOption ? ` with attachment "${fileOption.name}"` : "";
+  const ccSuffix = cc ? ` (CC: ${cc})` : "";
   await interaction.editReply(
-    `Reply sent (${channel.label})${fileSuffix} on ticket #${mapping.ticket_number}.`
+    `Reply sent (${channel.label})${fileSuffix}${ccSuffix} on ticket #${mapping.ticket_number}.`
   );
 }
 
