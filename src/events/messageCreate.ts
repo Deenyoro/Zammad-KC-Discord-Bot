@@ -1,6 +1,6 @@
 import { Client, Events, Message } from "discord.js";
 import { logger } from "../util/logger.js";
-import { getThreadByThreadId, getUserMap, markArticleSynced } from "../db/index.js";
+import { getThreadByThreadId, getUserMap, markArticleSynced, type UserMapEntry } from "../db/index.js";
 import { createArticle, type ArticleAttachment } from "../services/zammad.js";
 import { enqueueForTicket } from "../queue/index.js";
 
@@ -21,7 +21,7 @@ export function onMessageCreate(client: Client): void {
 
     await enqueueForTicket(mapping.ticket_id, async () => {
       try {
-        await forwardToZammad(message, mapping.ticket_id, mapping.thread_id);
+        await forwardToZammad(message, mapping.ticket_id, mapping.thread_id, userEntry);
       } catch (err) {
         logger.error(
           { ticketId: mapping.ticket_id, messageId: message.id, err },
@@ -35,7 +35,8 @@ export function onMessageCreate(client: Client): void {
 async function forwardToZammad(
   message: Message,
   ticketId: number,
-  threadId: string
+  threadId: string,
+  userEntry: UserMapEntry
 ): Promise<void> {
   const body = message.content || "";
 
@@ -64,11 +65,13 @@ async function forwardToZammad(
 
   const article = await createArticle({
     ticket_id: ticketId,
-    body: `[Discord — ${message.author.username}] ${body}`,
+    body,
     type: "note",
     sender: "Agent",
     internal: true,
     content_type: "text/plain",
+    from: userEntry.zammad_email,
+    created_by_id: userEntry.zammad_id ?? undefined,
     attachments: attachments.length > 0 ? attachments : undefined,
   });
 
