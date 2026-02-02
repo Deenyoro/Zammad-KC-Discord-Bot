@@ -13,6 +13,7 @@ import {
 import {
   downloadAttachment,
   getArticles,
+  getTicket,
   getUser,
 } from "./zammad.js";
 import {
@@ -120,46 +121,49 @@ async function processWebhook(
   const ticketId = webhookTicket.id;
 
   logger.info(
-    { ticketId, articleId: webhookArticle?.id, state: webhookTicket.state },
+    { ticketId, articleId: webhookArticle?.id },
     "Processing webhook"
   );
 
-  // Resolve owner/customer display names.
-  // Try API for full "Firstname Lastname", fall back to payload login string.
+  // Fetch the full ticket with expand=true so relationship names
+  // (state, priority, group, customer, owner) are resolved.
+  // The webhook payload does NOT include expanded data.
+  const fullTicket = await getTicket(ticketId);
+
+  // Resolve owner/customer to "Firstname Lastname" via the users API
   let ownerName: string | undefined;
-  if (webhookTicket.owner_id && webhookTicket.owner_id > 1) {
+  if (fullTicket.owner_id && fullTicket.owner_id > 1) {
     try {
-      const owner = await getUser(webhookTicket.owner_id);
+      const owner = await getUser(fullTicket.owner_id);
       ownerName = `${owner.firstname} ${owner.lastname}`.trim() || undefined;
     } catch {
-      ownerName = webhookTicket.owner || undefined;
+      ownerName = undefined;
     }
   }
 
   let customerName: string | undefined;
-  if (webhookTicket.customer_id) {
+  if (fullTicket.customer_id) {
     try {
-      const customer = await getUser(webhookTicket.customer_id);
+      const customer = await getUser(fullTicket.customer_id);
       customerName = `${customer.firstname} ${customer.lastname}`.trim() || undefined;
     } catch {
-      customerName = webhookTicket.customer || undefined;
+      customerName = fullTicket.customer || undefined;
     }
   }
 
-  // Normalize state to lowercase everywhere
-  const normalizedState = webhookTicket.state.toLowerCase();
+  const normalizedState = fullTicket.state.toLowerCase();
 
   const ticketInfo: TicketInfo = {
     id: ticketId,
-    number: webhookTicket.number,
-    title: webhookTicket.title,
+    number: fullTicket.number,
+    title: fullTicket.title,
     state: normalizedState,
-    priority: webhookTicket.priority,
+    priority: fullTicket.priority,
     customer: customerName,
     owner: ownerName,
-    owner_id: webhookTicket.owner_id,
-    group: webhookTicket.group,
-    created_at: webhookTicket.created_at,
+    owner_id: fullTicket.owner_id,
+    group: fullTicket.group,
+    created_at: fullTicket.created_at,
     url: ticketUrl(ticketId),
   };
 

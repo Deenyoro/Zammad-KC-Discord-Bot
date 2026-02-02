@@ -1,4 +1,4 @@
-import { Client } from "discord.js";
+import { Client, ThreadChannel } from "discord.js";
 import { logger } from "../util/logger.js";
 import {
   getThreadByTicketId,
@@ -7,6 +7,7 @@ import {
 } from "../db/index.js";
 import { getAllOpenTickets, getUser } from "./zammad.js";
 import {
+  addRoleMembersToThread,
   createTicketThread,
   updateHeaderEmbed,
   closeTicketThread,
@@ -59,6 +60,16 @@ export async function syncAllTickets(client: Client): Promise<void> {
           updated++;
         } catch (err) {
           logger.warn({ ticketId: ticket.id, err }, "Failed to update existing thread embed");
+        }
+
+        // Ensure all role members are in the thread (catches newly added members)
+        try {
+          const thread = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
+          if (thread?.isThread() && !thread.archived) {
+            await addRoleMembersToThread(thread);
+          }
+        } catch (err) {
+          logger.debug({ ticketId: ticket.id, err }, "Failed to sync role members to thread");
         }
 
         // Update state if changed
