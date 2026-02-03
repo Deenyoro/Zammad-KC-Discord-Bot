@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { join } from "node:path";
-import { Client } from "discord.js";
+import { Client, REST, Routes } from "discord.js";
 import { loadEnv, env } from "./util/env.js";
 import { logger } from "./util/logger.js";
 import { initDb, closeDb, pruneDedup, pruneSyncedArticles } from "./db/index.js";
@@ -8,11 +8,49 @@ import { createClient } from "./client.js";
 import { startWebServer } from "./web/server.js";
 import { syncAllTickets } from "./services/backfill.js";
 import { startHealthCheck, stopHealthCheck } from "./services/health.js";
+import { ticketCommand } from "./commands/ticket.js";
+import { setupCommand } from "./commands/setup.js";
+import { helpCommand } from "./commands/help.js";
+import { replyCommand, noteCommand, ownerCommand, pendingCommand } from "./commands/shortcuts.js";
 
 let discordClient: Client | null = null;
 let server: Awaited<ReturnType<typeof startWebServer>> | null = null;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Deploy slash commands to Discord on startup */
+async function deployCommands() {
+  const config = env();
+  const commands = [
+    ticketCommand.toJSON(),
+    setupCommand.toJSON(),
+    helpCommand.toJSON(),
+    replyCommand.toJSON(),
+    noteCommand.toJSON(),
+    ownerCommand.toJSON(),
+    pendingCommand.toJSON(),
+  ];
+
+  const rest = new REST().setToken(config.DISCORD_TOKEN);
+
+  try {
+    if (config.DISCORD_GUILD_ID) {
+      await rest.put(
+        Routes.applicationGuildCommands(config.DISCORD_CLIENT_ID, config.DISCORD_GUILD_ID),
+        { body: commands }
+      );
+      logger.info({ guildId: config.DISCORD_GUILD_ID, count: commands.length }, "Slash commands deployed to guild");
+    } else {
+      await rest.put(
+        Routes.applicationCommands(config.DISCORD_CLIENT_ID),
+        { body: commands }
+      );
+      logger.info({ count: commands.length }, "Slash commands deployed globally");
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to deploy slash commands");
+  }
+}
 
 async function main() {
   // 1. Validate environment
@@ -28,13 +66,16 @@ async function main() {
   discordClient = client;
   await client.login(env().DISCORD_TOKEN);
 
-  // 4. Start webhook HTTP server
+  // 4. Deploy slash commands (ensures new commands/options are always registered)
+  await deployCommands();
+
+  // 5. Start webhook HTTP server
   server = await startWebServer(client);
 
-  // 5. Initial sync — pull all open tickets from Zammad and create threads
+  // 6. Initial sync — pull all open tickets from Zammad and create threads
   await syncAllTickets(client);
 
-  // 6. Periodic ticket sync every 10 seconds — catches title changes and anything webhooks missed
+  // 7. Periodic ticket sync every 10 seconds — catches title changes and anything webhooks missed
   let syncing = false;
   syncTimer = setInterval(async () => {
     if (syncing) return; // skip if previous sync still running
@@ -48,13 +89,13 @@ async function main() {
     }
   }, 10 * 1000);
 
-  // 7. Periodic maintenance (hourly) — prune old dedup/sync entries
+  // 8. Periodic maintenance (hourly) — prune old dedup/sync entries
   cleanupTimer = setInterval(() => {
     pruneDedup();
     pruneSyncedArticles();
   }, 60 * 60 * 1000);
 
-  // 8. Zammad health monitoring — alerts @everyone if Zammad goes down
+  // 9. Zammad health monitoring — alerts @everyone if Zammad goes down
   startHealthCheck(client);
 
   logger.info("Bot fully started");
