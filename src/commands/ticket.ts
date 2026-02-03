@@ -332,6 +332,9 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     }
   }
 
+  // Note: origin_by_id is only sent for email - Zammad has a bug where setting
+  // origin_by_id forces sender to "Customer" for non-email types, which breaks
+  // Teams/SMS delivery (the communicate job checks for sender="Agent").
   await createArticle({
     ticket_id: mapping.ticket_id,
     body: text,
@@ -342,7 +345,7 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     content_type: "text/plain",
     to: channel.to,
     cc,
-    origin_by_id: userEntry?.zammad_id ?? undefined,
+    origin_by_id: channel.type === "email" ? (userEntry?.zammad_id ?? undefined) : undefined,
     attachments,
   });
 
