@@ -306,13 +306,17 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   // Get user mapping for attribution
   const userEntry = getUserMap(interaction.user.id);
 
-  // Parse CC emails (only used for email tickets)
+  // Parse CC emails (only applies to email tickets)
   let cc: string | undefined;
-  if (ccInput && channel.type === "email") {
-    // Split by comma, trim whitespace, filter out empty strings
-    const ccEmails = ccInput.split(',').map(e => e.trim()).filter(e => e.length > 0);
-    if (ccEmails.length > 0) {
-      cc = ccEmails.join(', ');
+  let ccIgnored = false;
+  if (ccInput) {
+    if (channel.type === "email") {
+      const ccEmails = ccInput.split(',').map(e => e.trim()).filter(e => e.length > 0);
+      if (ccEmails.length > 0) {
+        cc = ccEmails.join(', ');
+      }
+    } else {
+      ccIgnored = true;
     }
   }
 
@@ -351,8 +355,9 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
 
   const fileSuffix = fileOption ? ` with attachment "${fileOption.name}"` : "";
   const ccSuffix = cc ? ` (CC: ${cc})` : "";
+  const ccWarning = ccIgnored ? "\n⚠️ CC was ignored — only supported for email tickets." : "";
   await interaction.editReply(
-    `Reply sent (${channel.label})${fileSuffix}${ccSuffix} on ticket #${mapping.ticket_number}.`
+    `Reply sent (${channel.label})${fileSuffix}${ccSuffix} on ticket #${mapping.ticket_number}.${ccWarning}`
   );
 }
 
