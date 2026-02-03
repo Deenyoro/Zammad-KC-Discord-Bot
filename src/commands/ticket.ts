@@ -1,7 +1,4 @@
-import {
-  SlashCommandBuilder,
-  ChatInputCommandInteraction,
-} from "discord.js";
+import { ChatInputCommandInteraction } from "discord.js";
 import { logger } from "../util/logger.js";
 import { getThreadByThreadId, getUserMap, type TicketThread } from "../db/index.js";
 import {
@@ -16,95 +13,8 @@ import {
 } from "../services/zammad.js";
 import { ticketUrl, closeTicketThread } from "../services/threads.js";
 
-export const ticketCommand = new SlashCommandBuilder()
-  .setName("ticket")
-  .setDescription("Zammad ticket operations")
-  .addSubcommand((sc) =>
-    sc.setName("close").setDescription("Close the ticket linked to this thread")
-  )
-  .addSubcommand((sc) =>
-    sc
-      .setName("assign")
-      .setDescription("Assign ticket to a user")
-      .addUserOption((o) =>
-        o.setName("user").setDescription("Discord user to assign").setRequired(true)
-      )
-  )
-  .addSubcommand((sc) =>
-    sc
-      .setName("time")
-      .setDescription("Add time accounting entry")
-      .addNumberOption((o) =>
-        o.setName("minutes").setDescription("Minutes to log").setRequired(true)
-      )
-  )
-  .addSubcommand((sc) =>
-    sc
-      .setName("priority")
-      .setDescription("Change ticket priority")
-      .addStringOption((o) =>
-        o
-          .setName("level")
-          .setDescription("Priority level")
-          .setRequired(true)
-          .addChoices(
-            { name: "1 low", value: "1" },
-            { name: "2 normal", value: "2" },
-            { name: "3 high", value: "3" }
-          )
-      )
-  )
-  .addSubcommand((sc) =>
-    sc
-      .setName("state")
-      .setDescription("Change ticket state")
-      .addStringOption((o) =>
-        o
-          .setName("name")
-          .setDescription("State name")
-          .setRequired(true)
-          .addChoices(
-            { name: "open", value: "open" },
-            { name: "pending reminder", value: "pending reminder" },
-            { name: "pending close", value: "pending close" },
-            { name: "closed", value: "closed" }
-          )
-      )
-  )
-  .addSubcommand((sc) =>
-    sc.setName("info").setDescription("Show ticket details")
-  )
-  .addSubcommand((sc) =>
-    sc.setName("link").setDescription("Get a link to the Zammad ticket")
-  )
-  .addSubcommand((sc) =>
-    sc
-      .setName("note")
-      .setDescription("Add an internal note")
-      .addStringOption((o) =>
-        o.setName("text").setDescription("Note text").setRequired(true)
-      )
-      .addAttachmentOption((o) =>
-        o.setName("file").setDescription("Attach a file (image, document, etc.)").setRequired(false)
-      )
-  )
-  .addSubcommand((sc) =>
-    sc
-      .setName("reply")
-      .setDescription("Send a reply to the customer (email/SMS/Teams)")
-      .addStringOption((o) =>
-        o.setName("text").setDescription("Reply text").setRequired(true)
-      )
-      .addStringOption((o) =>
-        o.setName("cc").setDescription("CC emails (comma-separated, email only)").setRequired(false)
-      )
-      .addAttachmentOption((o) =>
-        o.setName("file").setDescription("Attach a file (image, document, etc.)").setRequired(false)
-      )
-  );
-
 // ---------------------------------------------------------------
-// Handler
+// Handler utilities
 // ---------------------------------------------------------------
 
 async function requireMapping(
@@ -132,55 +42,11 @@ async function requireMapping(
   return mapping;
 }
 
-export async function handleTicketCommand(
-  interaction: ChatInputCommandInteraction
-): Promise<void> {
-  const sub = interaction.options.getSubcommand();
+// ---------------------------------------------------------------
+// Command handlers
+// ---------------------------------------------------------------
 
-  try {
-    switch (sub) {
-      case "close":
-        await handleClose(interaction);
-        return;
-      case "assign":
-        await handleAssign(interaction);
-        return;
-      case "time":
-        await handleTime(interaction);
-        return;
-      case "priority":
-        await handlePriority(interaction);
-        return;
-      case "state":
-        await handleState(interaction);
-        return;
-      case "info":
-        await handleInfo(interaction);
-        return;
-      case "link":
-        await handleLink(interaction);
-        return;
-      case "note":
-        await handleNote(interaction);
-        return;
-      case "reply":
-        await handleReply(interaction);
-        return;
-      default:
-        await interaction.reply({ content: "Unknown subcommand.", ephemeral: true });
-    }
-  } catch (err) {
-    logger.error({ sub, err }, "Slash command error");
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply(`Error: ${msg}`);
-    } else {
-      await interaction.reply({ content: `Error: ${msg}`, ephemeral: true });
-    }
-  }
-}
-
-async function handleClose(interaction: ChatInputCommandInteraction) {
+export async function handleClose(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
   await interaction.deferReply();
@@ -198,7 +64,7 @@ async function handleClose(interaction: ChatInputCommandInteraction) {
   await interaction.editReply(`${interaction.user} closed ticket #${mapping.ticket_number}.`);
 }
 
-async function handleAssign(interaction: ChatInputCommandInteraction) {
+export async function handleAssign(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
   await interaction.deferReply({ ephemeral: true });
@@ -218,7 +84,7 @@ async function handleAssign(interaction: ChatInputCommandInteraction) {
   );
 }
 
-async function handleTime(interaction: ChatInputCommandInteraction) {
+export async function handleTime(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
   await interaction.deferReply({ ephemeral: true });
@@ -230,7 +96,7 @@ async function handleTime(interaction: ChatInputCommandInteraction) {
   );
 }
 
-async function handlePriority(interaction: ChatInputCommandInteraction) {
+export async function handlePriority(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
   await interaction.deferReply({ ephemeral: true });
@@ -242,7 +108,7 @@ async function handlePriority(interaction: ChatInputCommandInteraction) {
   );
 }
 
-async function handleState(interaction: ChatInputCommandInteraction) {
+export async function handleState(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
   await interaction.deferReply();
@@ -257,7 +123,7 @@ async function handleState(interaction: ChatInputCommandInteraction) {
   );
 }
 
-async function handleInfo(interaction: ChatInputCommandInteraction) {
+export async function handleInfo(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
   await interaction.deferReply({ ephemeral: true });
@@ -286,7 +152,7 @@ async function handleInfo(interaction: ChatInputCommandInteraction) {
   await interaction.editReply(lines.join("\n"));
 }
 
-async function handleLink(interaction: ChatInputCommandInteraction) {
+export async function handleLink(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
   await interaction.reply({
