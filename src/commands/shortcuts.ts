@@ -6,6 +6,9 @@ export const replyCommand = new SlashCommandBuilder()
   .addStringOption((o) =>
     o.setName("text").setDescription("Reply text").setRequired(true)
   )
+  .addStringOption((o) =>
+    o.setName("cc").setDescription("CC emails (comma-separated, email only)").setRequired(false)
+  )
   .addAttachmentOption((o) =>
     o.setName("file").setDescription("Attach a file (image, document, etc.)").setRequired(false)
   );
@@ -18,6 +21,62 @@ export const noteCommand = new SlashCommandBuilder()
   )
   .addAttachmentOption((o) =>
     o.setName("file").setDescription("Attach a file (image, document, etc.)").setRequired(false)
+  );
+
+export const closeCommand = new SlashCommandBuilder()
+  .setName("close")
+  .setDescription("Close the ticket linked to this thread");
+
+export const assignCommand = new SlashCommandBuilder()
+  .setName("assign")
+  .setDescription("Assign ticket to a user")
+  .addUserOption((o) =>
+    o.setName("user").setDescription("Discord user to assign").setRequired(true)
+  );
+
+export const ownerCommand = new SlashCommandBuilder()
+  .setName("owner")
+  .setDescription("Set ticket owner (defaults to yourself)")
+  .addUserOption((o) =>
+    o.setName("user").setDescription("Discord user to assign (leave empty for yourself)").setRequired(false)
+  );
+
+export const timeCommand = new SlashCommandBuilder()
+  .setName("time")
+  .setDescription("Add time accounting entry")
+  .addNumberOption((o) =>
+    o.setName("minutes").setDescription("Minutes to log").setRequired(true)
+  );
+
+export const priorityCommand = new SlashCommandBuilder()
+  .setName("priority")
+  .setDescription("Change ticket priority")
+  .addStringOption((o) =>
+    o
+      .setName("level")
+      .setDescription("Priority level")
+      .setRequired(true)
+      .addChoices(
+        { name: "1 low", value: "1" },
+        { name: "2 normal", value: "2" },
+        { name: "3 high", value: "3" }
+      )
+  );
+
+export const stateCommand = new SlashCommandBuilder()
+  .setName("state")
+  .setDescription("Change ticket state")
+  .addStringOption((o) =>
+    o
+      .setName("name")
+      .setDescription("State name")
+      .setRequired(true)
+      .addChoices(
+        { name: "open", value: "open" },
+        { name: "pending reminder", value: "pending reminder" },
+        { name: "pending close", value: "pending close" },
+        { name: "closed", value: "closed" }
+      )
   );
 
 export const pendingCommand = new SlashCommandBuilder()
@@ -48,9 +107,10 @@ export const pendingCommand = new SlashCommandBuilder()
       )
   );
 
-export const ownerCommand = new SlashCommandBuilder()
-  .setName("owner")
-  .setDescription("Set ticket owner (defaults to yourself)")
-  .addUserOption((o) =>
-    o.setName("user").setDescription("Discord user to assign (leave empty for yourself)").setRequired(false)
-  );
+export const infoCommand = new SlashCommandBuilder()
+  .setName("info")
+  .setDescription("Show ticket details");
+
+export const linkCommand = new SlashCommandBuilder()
+  .setName("link")
+  .setDescription("Get a link to the Zammad ticket");
