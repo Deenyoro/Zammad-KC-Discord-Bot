@@ -1,7 +1,7 @@
 import { Client, Events, Message } from "discord.js";
 import { logger } from "../util/logger.js";
 import { getThreadByThreadId, getUserMap, markArticleSynced, type UserMapEntry } from "../db/index.js";
-import { createArticle, type ArticleAttachment } from "../services/zammad.js";
+import { createArticle, getTicket, type ArticleAttachment } from "../services/zammad.js";
 import { enqueueForTicket } from "../queue/index.js";
 
 export function onMessageCreate(client: Client): void {
@@ -63,22 +63,48 @@ async function forwardToZammad(
 
   if (!body.trim() && attachments.length === 0) return; // nothing to forward
 
+  // Fetch ticket to determine if it's Teams/RingCentral and route accordingly
+  const ticket = await getTicket(ticketId);
+  const teamsChat = ticket.preferences?.teams_chat;
+  const ringcentralSms = ticket.preferences?.ringcentral_sms;
+
+  // Determine article type and preferences based on ticket type
+  let articleType = "note";
+  let articlePreferences: Record<string, any> = {};
+
+  if (teamsChat?.chat_id) {
+    articleType = "teams_chat_message";
+    articlePreferences.teams_chat = {
+      chat_id: teamsChat.chat_id,
+      channel_id: teamsChat.channel_id,
+    };
+    logger.debug({ ticketId, chatId: teamsChat.chat_id }, "Routing Discord message to Teams");
+  } else if (ringcentralSms?.from_phone) {
+    articleType = "ringcentral_sms_message";
+    articlePreferences.ringcentral_sms = {
+      to_phone: ringcentralSms.from_phone,
+      channel_id: ringcentralSms.channel_id,
+    };
+    logger.debug({ ticketId, toPhone: ringcentralSms.from_phone }, "Routing Discord message to RingCentral");
+  }
+
   const article = await createArticle({
     ticket_id: ticketId,
     body,
-    type: "note",
+    type: articleType,
     sender: "Agent",
-    internal: true,
+    internal: articleType === "note",
     content_type: "text/plain",
     origin_by_id: userEntry.zammad_id ?? undefined,
     attachments: attachments.length > 0 ? attachments : undefined,
+    preferences: Object.keys(articlePreferences).length > 0 ? articlePreferences : undefined,
   });
 
   // Mark as synced so the webhook echo is suppressed
   markArticleSynced(article.id, ticketId, threadId, message.id, "discord_to_zammad");
 
   logger.info(
-    { ticketId, articleId: article.id, discordMsgId: message.id, attachmentCount: attachments.length },
+    { ticketId, articleId: article.id, articleType, discordMsgId: message.id, attachmentCount: attachments.length },
     "Forwarded Discord message to Zammad"
   );
 }
