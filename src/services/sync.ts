@@ -214,8 +214,8 @@ async function processWebhook(
       await removeRoleMembersFromThread(client, mapping.thread_id);
     }
 
-    // Transition OUT of "pending close" → re-add members
-    if (oldState === "pending close" && normalizedState !== "pending close") {
+    // Transition OUT of "pending close" → re-add members (but NOT if closing)
+    if (oldState === "pending close" && normalizedState !== "pending close" && normalizedState !== "closed") {
       const thread = (await client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
       if (thread?.isThread() && !thread.archived) {
         await addRoleMembersToThread(thread);
