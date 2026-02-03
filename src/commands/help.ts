@@ -16,26 +16,25 @@ export async function handleHelpCommand(
     .setColor(0x7289da)
     .addFields(
       {
-        name: "Quick Commands (use inside a ticket thread)",
+        name: "Communication (use inside a ticket thread)",
         value: [
-          "`/reply <text> [file]` — Reply to the customer (email/SMS/Teams)",
+          "`/reply <text> [cc] [file]` — Reply to the customer (email/SMS/Teams)",
           "`/note <text> [file]` — Add an internal note",
-          "`/owner [user]` — Set ticket owner (defaults to yourself)",
         ].join("\n"),
         inline: false,
       },
       {
-        name: "Ticket Commands (use inside a ticket thread)",
+        name: "Ticket Management (use inside a ticket thread)",
         value: [
-          "`/ticket info` — Show ticket details",
-          "`/ticket link` — Get a link to the Zammad ticket",
-          "`/ticket reply <text> [file]` — Reply to the customer (same as /reply)",
-          "`/ticket note <text> [file]` — Add an internal note (same as /note)",
-          "`/ticket close` — Close the ticket",
-          "`/ticket state <name>` — Change state (open, pending reminder, pending close, closed)",
-          "`/ticket assign <user>` — Assign to a Discord user",
-          "`/ticket priority <level>` — Change priority (1 low, 2 normal, 3 high)",
-          "`/ticket time <minutes>` — Log time accounting",
+          "`/info` — Show ticket details",
+          "`/link` — Get a link to the Zammad ticket",
+          "`/owner [user]` — Set ticket owner (defaults to yourself)",
+          "`/assign <user>` — Assign to a Discord user",
+          "`/close` — Close the ticket",
+          "`/state <name>` — Change state (open, pending reminder, pending close, closed)",
+          "`/pending <type> <duration>` — Set pending state with expiration",
+          "`/priority <level>` — Change priority (1 low, 2 normal, 3 high)",
+          "`/time <minutes>` — Log time accounting",
         ].join("\n"),
         inline: false,
       },

@@ -8,10 +8,21 @@ import { createClient } from "./client.js";
 import { startWebServer } from "./web/server.js";
 import { syncAllTickets } from "./services/backfill.js";
 import { startHealthCheck, stopHealthCheck } from "./services/health.js";
-import { ticketCommand } from "./commands/ticket.js";
 import { setupCommand } from "./commands/setup.js";
 import { helpCommand } from "./commands/help.js";
-import { replyCommand, noteCommand, ownerCommand, pendingCommand } from "./commands/shortcuts.js";
+import {
+  replyCommand,
+  noteCommand,
+  closeCommand,
+  assignCommand,
+  ownerCommand,
+  timeCommand,
+  priorityCommand,
+  stateCommand,
+  pendingCommand,
+  infoCommand,
+  linkCommand,
+} from "./commands/shortcuts.js";
 
 let discordClient: Client | null = null;
 let server: Awaited<ReturnType<typeof startWebServer>> | null = null;
@@ -22,13 +33,19 @@ let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 async function deployCommands() {
   const config = env();
   const commands = [
-    ticketCommand.toJSON(),
     setupCommand.toJSON(),
     helpCommand.toJSON(),
     replyCommand.toJSON(),
     noteCommand.toJSON(),
+    closeCommand.toJSON(),
+    assignCommand.toJSON(),
     ownerCommand.toJSON(),
+    timeCommand.toJSON(),
+    priorityCommand.toJSON(),
+    stateCommand.toJSON(),
     pendingCommand.toJSON(),
+    infoCommand.toJSON(),
+    linkCommand.toJSON(),
   ];
 
   const rest = new REST().setToken(config.DISCORD_TOKEN);

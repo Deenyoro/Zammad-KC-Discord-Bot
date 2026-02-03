@@ -4,13 +4,26 @@
  *
  * Deploys guild commands (instant) when DISCORD_GUILD_ID is set,
  * otherwise deploys global commands (~1h propagation).
+ *
+ * NOTE: Commands are also auto-deployed on bot startup via index.ts.
  */
 import "dotenv/config";
 import { REST, Routes } from "discord.js";
-import { ticketCommand } from "./ticket.js";
 import { setupCommand } from "./setup.js";
 import { helpCommand } from "./help.js";
-import { replyCommand, noteCommand, ownerCommand, pendingCommand } from "./shortcuts.js";
+import {
+  replyCommand,
+  noteCommand,
+  closeCommand,
+  assignCommand,
+  ownerCommand,
+  timeCommand,
+  priorityCommand,
+  stateCommand,
+  pendingCommand,
+  infoCommand,
+  linkCommand,
+} from "./shortcuts.js";
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -22,13 +35,19 @@ if (!token || !clientId) {
 }
 
 const commands = [
-  ticketCommand.toJSON(),
   setupCommand.toJSON(),
   helpCommand.toJSON(),
   replyCommand.toJSON(),
   noteCommand.toJSON(),
+  closeCommand.toJSON(),
+  assignCommand.toJSON(),
   ownerCommand.toJSON(),
+  timeCommand.toJSON(),
+  priorityCommand.toJSON(),
+  stateCommand.toJSON(),
   pendingCommand.toJSON(),
+  infoCommand.toJSON(),
+  linkCommand.toJSON(),
 ];
 const rest = new REST().setToken(token);
 
