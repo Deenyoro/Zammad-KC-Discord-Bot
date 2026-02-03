@@ -20,6 +20,7 @@ export interface ZammadTicket {
   customer: string;
   created_at: string;
   updated_at: string;
+  preferences?: Record<string, any>;
 }
 
 export interface ZammadArticle {
