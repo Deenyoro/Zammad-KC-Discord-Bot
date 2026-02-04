@@ -6,7 +6,7 @@ import {
   updateThreadState,
   updateThreadTitle,
 } from "../db/index.js";
-import { getAllOpenTickets, getUser } from "./zammad.js";
+import { getAllOpenTickets, getTicket, getUser } from "./zammad.js";
 import {
   addRoleMembersToThread,
   createTicketThread,
@@ -84,24 +84,37 @@ export async function syncAllTickets(client: Client): Promise<void> {
 
           // Reopen thread if it was closed but ticket is now open
           // BUT: Add grace period to avoid race condition with /ticket close command
+          // or stale Zammad API data (the API list can lag behind individual ticket state)
           if (existing.state === "closed" && ticketInfo.state !== "closed") {
             // Skip recently closed threads to avoid race condition:
             // If /ticket close was just run, the Zammad API might still show stale
-            // "open" state while the webhook is processing. Wait 30 seconds before
-            // reopening to avoid fighting with the close command.
+            // "open" state while the webhook is processing. Wait 60 seconds before
+            // reopening to avoid fighting with the close command or stale API data.
             const updatedAt = new Date(existing.updated_at);
             const ageSeconds = (Date.now() - updatedAt.getTime()) / 1000;
-            if (ageSeconds < 30) {
+            if (ageSeconds < 60) {
               logger.debug(
-                { ticketId: ticket.id, ageSeconds },
+                { ticketId: ticket.id, ageSeconds, dbState: existing.state, apiState: ticketInfo.state },
                 "Skipping reopen of recently closed thread (grace period)"
               );
             } else {
+              // Double-check by fetching fresh ticket data directly (bypasses any list caching)
               try {
-                await reopenTicketThread(client, existing.thread_id);
-                logger.info({ ticketId: ticket.id }, "Reopened thread for ticket that is no longer closed");
+                const freshTicket = await getTicket(ticket.id);
+                const freshState = freshTicket.state.toLowerCase();
+                if (freshState === "closed") {
+                  logger.info(
+                    { ticketId: ticket.id, listState: ticketInfo.state, freshState },
+                    "Skipping reopen - fresh API confirms ticket is closed (list was stale)"
+                  );
+                  // Update the DB state to match and skip reopen
+                  updateThreadState(ticket.id, "closed");
+                } else {
+                  await reopenTicketThread(client, existing.thread_id);
+                  logger.info({ ticketId: ticket.id, freshState }, "Reopened thread for ticket that is no longer closed");
+                }
               } catch (err) {
-                logger.warn({ ticketId: ticket.id, err }, "Failed to reopen thread");
+                logger.warn({ ticketId: ticket.id, err }, "Failed to verify/reopen thread");
               }
             }
           }
