@@ -1,6 +1,6 @@
 import { ChatInputCommandInteraction } from "discord.js";
 import { logger } from "../util/logger.js";
-import { getThreadByThreadId, getUserMap, type TicketThread } from "../db/index.js";
+import { getThreadByThreadId, getUserMap, updateThreadState, type TicketThread } from "../db/index.js";
 import {
   updateTicket,
   getStateByName,
@@ -55,6 +55,10 @@ export async function handleClose(interaction: ChatInputCommandInteraction) {
   if (!closedState) throw new Error("Could not find 'closed' state in Zammad");
 
   await updateTicket(mapping.ticket_id, { state_id: closedState.id });
+
+  // Update local DB state IMMEDIATELY so the grace period starts now,
+  // preventing the backfill from reopening the thread due to stale Zammad API data
+  updateThreadState(mapping.ticket_id, "closed");
 
   // Immediately close the Discord thread (archive, lock, remove members)
   if (interaction.client && mapping.thread_id) {
