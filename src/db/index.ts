@@ -36,6 +36,18 @@ CREATE TABLE IF NOT EXISTS webhook_dedup (
   received_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS templates (
+  name        TEXT PRIMARY KEY,
+  body        TEXT NOT NULL,
+  created_by  TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key    TEXT PRIMARY KEY,
+  value  TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_synced_articles_ticket ON synced_articles(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_threads_thread  ON ticket_threads(thread_id);
 `;
@@ -220,4 +232,75 @@ export function pruneSyncedArticles(): void {
   if (result.changes > 0) {
     logger.debug({ pruned: result.changes }, "Pruned synced articles entries");
   }
+}
+
+// ---------------------------------------------------------------
+// templates
+// ---------------------------------------------------------------
+
+export interface Template {
+  name: string;
+  body: string;
+  created_by: string;
+  created_at: string;
+}
+
+export function getTemplate(name: string): Template | undefined {
+  return db()
+    .prepare("SELECT * FROM templates WHERE name = ?")
+    .get(name) as Template | undefined;
+}
+
+export function getAllTemplates(): Template[] {
+  return db().prepare("SELECT * FROM templates ORDER BY name").all() as Template[];
+}
+
+export function upsertTemplate(name: string, body: string, createdBy: string): void {
+  db()
+    .prepare(
+      `INSERT INTO templates (name, body, created_by)
+       VALUES (?, ?, ?)
+       ON CONFLICT(name) DO UPDATE SET body = ?, created_by = ?, created_at = datetime('now')`
+    )
+    .run(name, body, createdBy, body, createdBy);
+}
+
+export function deleteTemplate(name: string): boolean {
+  const result = db().prepare("DELETE FROM templates WHERE name = ?").run(name);
+  return result.changes > 0;
+}
+
+// ---------------------------------------------------------------
+// settings (runtime config — overrides env vars)
+// ---------------------------------------------------------------
+
+export function getSetting(key: string): string | undefined {
+  const row = db()
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(key) as { value: string } | undefined;
+  return row?.value;
+}
+
+export function setSetting(key: string, value: string): void {
+  db()
+    .prepare(
+      `INSERT INTO settings (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = ?`
+    )
+    .run(key, value, value);
+}
+
+export function deleteSetting(key: string): boolean {
+  const result = db().prepare("DELETE FROM settings WHERE key = ?").run(key);
+  return result.changes > 0;
+}
+
+/**
+ * Get a configuration value: check SQLite settings first, fall back to env var.
+ * This allows runtime configuration via /setup commands to override .env values.
+ */
+export function getSettingOrEnv(key: string): string | undefined {
+  const dbVal = getSetting(key);
+  if (dbVal !== undefined) return dbVal;
+  return process.env[key] || undefined;
 }

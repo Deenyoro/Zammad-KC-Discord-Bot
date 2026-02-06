@@ -20,7 +20,9 @@ export interface ZammadTicket {
   customer: string;
   created_at: string;
   updated_at: string;
+  escalation_at?: string | null;
   preferences?: Record<string, any>;
+  tags?: string[];
 }
 
 export interface ZammadArticle {
@@ -287,3 +289,160 @@ export async function addTimeAccounting(data: {
     body: JSON.stringify(data),
   });
 }
+
+// ---------------------------------------------------------------
+// Ticket Search
+// ---------------------------------------------------------------
+
+export async function searchTickets(query: string, limit = 10): Promise<ZammadTicket[]> {
+  const res = await zammadFetch(
+    `/tickets/search?query=${encodeURIComponent(query)}&limit=${limit}&expand=true`
+  );
+  return res.json() as Promise<ZammadTicket[]>;
+}
+
+export async function getTicketByNumber(ticketNumber: string): Promise<ZammadTicket | undefined> {
+  try {
+    const results = await searchTickets(`number:${ticketNumber}`, 1);
+    return results.find((t) => t.number === ticketNumber);
+  } catch {
+    return undefined;
+  }
+}
+
+// ---------------------------------------------------------------
+// Ticket Creation
+// ---------------------------------------------------------------
+
+export async function createTicket(data: {
+  title: string;
+  group: string;
+  customer_id?: number;
+  customer?: string;
+  article: {
+    subject?: string;
+    body: string;
+    type?: string;
+    sender?: string;
+    internal?: boolean;
+    content_type?: string;
+    to?: string;
+    from?: string;
+  };
+}): Promise<ZammadTicket> {
+  const res = await zammadFetch("/tickets", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.json() as Promise<ZammadTicket>;
+}
+
+// ---------------------------------------------------------------
+// Tags
+// ---------------------------------------------------------------
+
+export async function getTicketTags(ticketId: number): Promise<string[]> {
+  const res = await zammadFetch(`/tags?object=Ticket&o_id=${ticketId}`);
+  const data = (await res.json()) as { tags: string[] };
+  return data.tags ?? [];
+}
+
+export async function addTicketTag(ticketId: number, tag: string): Promise<void> {
+  await zammadFetch("/tags/add", {
+    method: "POST",
+    body: JSON.stringify({ object: "Ticket", o_id: ticketId, item: tag }),
+  });
+}
+
+export async function removeTicketTag(ticketId: number, tag: string): Promise<void> {
+  await zammadFetch("/tags/remove", {
+    method: "DELETE",
+    body: JSON.stringify({ object: "Ticket", o_id: ticketId, item: tag }),
+  });
+}
+
+// ---------------------------------------------------------------
+// Merge
+// ---------------------------------------------------------------
+
+export async function mergeTickets(sourceTicketId: number, targetTicketId: number): Promise<void> {
+  await zammadFetch(`/ticket_merge/${sourceTicketId}/${targetTicketId}`, {
+    method: "PUT",
+  });
+}
+
+// ---------------------------------------------------------------
+// History
+// ---------------------------------------------------------------
+
+export interface ZammadHistoryEntry {
+  id: number;
+  created_at: string;
+  object: string;
+  type: string;
+  attribute?: string;
+  value_from?: string;
+  value_to?: string;
+  created_by_id: number;
+}
+
+export async function getTicketHistory(ticketId: number): Promise<ZammadHistoryEntry[]> {
+  const res = await zammadFetch(`/ticket_history/${ticketId}`);
+  const data = (await res.json()) as { history: ZammadHistoryEntry[] };
+  return data.history ?? [];
+}
+
+// ---------------------------------------------------------------
+// KC Scheduled Articles
+// ---------------------------------------------------------------
+
+export interface KcScheduledArticle {
+  id: number;
+  ticket_id: number;
+  scheduled_at: string;
+  body: string;
+  article_type?: string;
+  created_at: string;
+}
+
+export async function createScheduledArticle(data: {
+  ticket_id: number;
+  body: string;
+  scheduled_at: string;
+  article_type?: string;
+  to?: string;
+}): Promise<KcScheduledArticle> {
+  const res = await zammadFetch("/kc/scheduled_articles", {
+    method: "POST",
+    body: JSON.stringify({ scheduled_article: data }),
+  });
+  return res.json() as Promise<KcScheduledArticle>;
+}
+
+export async function getScheduledArticles(ticketId: number): Promise<KcScheduledArticle[]> {
+  const res = await zammadFetch(`/kc/scheduled_articles?ticket_id=${ticketId}`);
+  return res.json() as Promise<KcScheduledArticle[]>;
+}
+
+export async function cancelScheduledArticle(articleId: number): Promise<void> {
+  await zammadFetch(`/kc/scheduled_articles/${articleId}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------
+// KC SMS Conversation
+// ---------------------------------------------------------------
+
+export async function createSmsConversation(data: {
+  to: string;
+  body: string;
+  channel_id?: number;
+}): Promise<ZammadTicket> {
+  const res = await zammadFetch("/kc/conversations/sms", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.json() as Promise<ZammadTicket>;
+}
+

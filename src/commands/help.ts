@@ -20,6 +20,7 @@ export async function handleHelpCommand(
         value: [
           "`/reply <text> [cc] [file]` — Reply to the customer (email/SMS/Teams)",
           "`/note <text> [file]` — Add an internal note",
+          "`/template use <name>` — Send a canned template as reply",
         ].join("\n"),
         inline: false,
       },
@@ -32,17 +33,58 @@ export async function handleHelpCommand(
           "`/assign <user>` — Assign to a Discord user",
           "`/close` — Close the ticket",
           "`/lock` — Close and lock (prevents customer from reopening)",
-          "`/state <name>` — Change state (open, waiting for reply, pending reminder, pending close, closed, closed (locked))",
+          "`/state <name>` — Change state",
           "`/pending <type> <duration>` — Set pending state with expiration",
           "`/priority <level>` — Change priority (1 low, 2 normal, 3 high)",
           "`/time <minutes>` — Log time accounting",
+          "`/tags list|add|remove` — Manage ticket tags",
+          "`/merge <target>` — Merge this ticket into another",
+          "`/history` — Show recent ticket history",
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name: "Scheduled Replies (use inside a ticket thread)",
+        value: [
+          "`/schedule <text> <time>` — Schedule a reply (2h, 1d, tomorrow 9am)",
+          "`/schedules` — List pending scheduled replies",
+          "`/unschedule <id>` — Cancel a scheduled reply",
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name: "Search & Create",
+        value: [
+          "`/search <query>` — Search Zammad tickets",
+          "`/newticket <type> <to> <subject> <body>` — Create a new ticket (email/sms/phone-log)",
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name: "AI Features (use inside a ticket thread)",
+        value: [
+          "`/ai` — Get AI-suggested response for this ticket",
+          "`/aihelp` — AI troubleshooting with web search",
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name: "Templates",
+        value: [
+          "`/template list` — List saved templates",
+          "`/template add <name> <body>` — Add template (admin)",
+          "`/template remove <name>` — Remove template (admin)",
         ].join("\n"),
         inline: false,
       },
       {
         name: "Setup Commands (admin only)",
-        value:
-          "`/setup usermap <discord_user> <zammad_email>` — Map a Discord user to a Zammad agent",
+        value: [
+          "`/setup usermap <user> <email>` — Map Discord user to Zammad agent",
+          "`/setup ai <api_key> [provider] [model]` — Configure AI provider",
+          "`/setup search <api_key> [provider]` — Configure web search",
+          "`/setup summary <hour|off>` — Configure daily summary",
+        ].join("\n"),
         inline: false,
       },
       {

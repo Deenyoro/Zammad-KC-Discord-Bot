@@ -16,6 +16,24 @@ const envSchema = z.object({
     .transform((v) => v.split(",").map((s) => s.trim()).filter(Boolean)),
   PORT: z.coerce.number().default(3100),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
+
+  // AI provider configuration (all optional — features degrade gracefully)
+  AI_API_KEY: z.string().min(1).optional(),
+  AI_PROVIDER: z.enum(["openrouter", "openai", "anthropic"]).default("openrouter"),
+  AI_MODEL: z.string().min(1).optional(),
+  AI_BASE_URL: z.string().url().optional(),
+  AI_FALLBACK_API_KEY: z.string().min(1).optional(),
+  AI_FALLBACK_PROVIDER: z.enum(["openrouter", "openai", "anthropic"]).optional(),
+  AI_FALLBACK_MODEL: z.string().min(1).optional(),
+
+  // Web search configuration (all optional)
+  SEARCH_API_KEY: z.string().min(1).optional(),
+  SEARCH_PROVIDER: z.enum(["tavily", "brave"]).default("tavily"),
+  SEARCH_FALLBACK_API_KEY: z.string().min(1).optional(),
+  SEARCH_FALLBACK_PROVIDER: z.enum(["tavily", "brave"]).optional(),
+
+  // Daily summary (disabled if unset)
+  DAILY_SUMMARY_HOUR: z.coerce.number().min(0).max(23).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

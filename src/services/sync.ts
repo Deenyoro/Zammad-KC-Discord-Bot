@@ -28,6 +28,7 @@ import {
   addRoleMembersToThread,
   type TicketInfo,
 } from "./threads.js";
+import { discordQueue } from "../queue/index.js";
 
 /** Extract a display name from an article "from" field like "John Doe <john@example.com>" */
 function extractDisplayName(from: string | undefined): string | undefined {
@@ -166,6 +167,7 @@ async function processWebhook(
     owner_id: fullTicket.owner_id,
     group: fullTicket.group,
     created_at: fullTicket.created_at,
+    escalation_at: fullTicket.escalation_at,
     url: ticketUrl(ticketId),
   };
 
@@ -183,10 +185,18 @@ async function processWebhook(
     if (normalizedState === "closed" || normalizedState === "closed (locked)") {
       await closeTicketThread(client, mapping.thread_id);
       logger.info({ ticketId }, "Closed newly created thread for closed ticket");
-    } else if (normalizedState === "pending close") {
-      // Don't add members to newly created "pending close" threads
+    } else if (normalizedState === "pending close" || normalizedState === "waiting for reply") {
+      // Don't add members to newly created hidden-state threads; archive "waiting for reply"
       await removeRoleMembersFromThread(client, mapping.thread_id);
-      logger.info({ ticketId }, "Removed members from newly created pending close thread");
+      if (normalizedState === "waiting for reply") {
+        const thread = (await client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
+        if (thread?.isThread() && !thread.archived) {
+          await discordQueue.add(async () => {
+            await thread.edit({ archived: true, reason: "Ticket is waiting for reply" });
+          });
+        }
+      }
+      logger.info({ ticketId, state: normalizedState }, "Hidden newly created thread for ticket in hidden state");
     }
   }
 
@@ -204,21 +214,52 @@ async function processWebhook(
   if (normalizedState !== oldState) {
     updateThreadState(ticketId, normalizedState);
 
+    // "Waiting for reply" → "open" with a customer article = customer replied
+    if (
+      oldState === "waiting for reply" &&
+      normalizedState === "open" &&
+      webhookArticle &&
+      webhookArticle.sender === "Customer"
+    ) {
+      sendToThread(
+        client,
+        mapping.thread_id,
+        "**Customer replied** — ticket moved from _waiting for reply_ to _open_."
+      ).catch((err) =>
+        logger.warn({ ticketId, err }, "Failed to send waiting-for-reply notification")
+      );
+    }
+
     if (isClosedState(normalizedState)) {
       await closeTicketThread(client, mapping.thread_id);
     } else if (isClosedState(oldState)) {
       await reopenTicketThread(client, mapping.thread_id);
     }
 
-    // "pending close" → remove role members (thread stays open/unlocked)
-    if (normalizedState === "pending close") {
+    // "waiting for reply" → archive thread and remove members (hides from ticket list)
+    const isHiddenState = (s: string) => s === "pending close" || s === "waiting for reply";
+    if (isHiddenState(normalizedState) && !isHiddenState(oldState)) {
       await removeRoleMembersFromThread(client, mapping.thread_id);
+      // Archive "waiting for reply" threads so they disappear from channel lists
+      if (normalizedState === "waiting for reply") {
+        const thread = (await client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
+        if (thread?.isThread() && !thread.archived) {
+          await discordQueue.add(async () => {
+            await thread.edit({ archived: true, reason: "Ticket set to waiting for reply" });
+          });
+        }
+      }
     }
 
-    // Transition OUT of "pending close" → re-add members (but NOT if closing)
-    if (oldState === "pending close" && normalizedState !== "pending close" && !isClosedState(normalizedState)) {
+    // Transition OUT of a hidden state → unarchive and re-add members (but NOT if closing)
+    if (isHiddenState(oldState) && !isHiddenState(normalizedState) && !isClosedState(normalizedState)) {
       const thread = (await client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
-      if (thread?.isThread() && !thread.archived) {
+      if (thread?.isThread()) {
+        if (thread.archived) {
+          await discordQueue.add(async () => {
+            await thread.edit({ archived: false, reason: "Ticket no longer waiting for reply" });
+          });
+        }
         await addRoleMembersToThread(thread);
       }
     }
@@ -245,6 +286,44 @@ async function processWebhook(
   // arrive out of order due to concurrent Zammad processing.
   if (webhookArticle) {
     await syncAllUnsyncedArticles(client, mapping.thread_id, ticketId);
+
+    // Fire-and-forget: AI auto-suggestion on customer reply
+    if (webhookArticle.sender === "Customer") {
+      generateAutoSuggestion(client, mapping.thread_id, ticketId).catch((err) =>
+        logger.debug({ ticketId, err }, "Auto-suggestion failed (non-critical)")
+      );
+    }
+  }
+}
+
+/**
+ * Generate an AI auto-suggestion when a customer replies.
+ * Non-blocking fire-and-forget — errors are logged but never crash the sync pipeline.
+ */
+async function generateAutoSuggestion(
+  client: Client,
+  threadId: string,
+  ticketId: number
+): Promise<void> {
+  try {
+    const { isAIConfigured, buildTicketContext, aiChat } = await import("./ai.js");
+    if (!isAIConfigured()) return;
+
+    const context = await buildTicketContext(ticketId);
+    const suggestion = await aiChat(
+      "You are a support agent assistant. A customer just replied to this ticket. Suggest a brief, professional response the agent could send. Keep it under 200 words.",
+      context
+    );
+
+    if (suggestion) {
+      await sendToThread(
+        client,
+        threadId,
+        `**AI Suggestion:** ${suggestion}`
+      );
+    }
+  } catch (err) {
+    logger.debug({ ticketId, err }, "Auto-suggestion generation failed");
   }
 }
 

@@ -8,6 +8,7 @@ import { createClient } from "./client.js";
 import { startWebServer } from "./web/server.js";
 import { syncAllTickets } from "./services/backfill.js";
 import { startHealthCheck, stopHealthCheck } from "./services/health.js";
+import { startDailySummary, stopDailySummary } from "./services/dailySummary.js";
 import { setupCommand } from "./commands/setup.js";
 import { helpCommand } from "./commands/help.js";
 import {
@@ -23,6 +24,17 @@ import {
   infoCommand,
   linkCommand,
   lockCommand,
+  searchCommand,
+  tagsCommand,
+  mergeCommand,
+  historyCommand,
+  scheduleCommand,
+  schedulesCommand,
+  unscheduleCommand,
+  newticketCommand,
+  templateCommand,
+  aiCommand,
+  aihelpCommand,
 } from "./commands/shortcuts.js";
 
 let discordClient: Client | null = null;
@@ -48,6 +60,17 @@ async function deployCommands() {
     infoCommand.toJSON(),
     linkCommand.toJSON(),
     lockCommand.toJSON(),
+    searchCommand.toJSON(),
+    tagsCommand.toJSON(),
+    mergeCommand.toJSON(),
+    historyCommand.toJSON(),
+    scheduleCommand.toJSON(),
+    schedulesCommand.toJSON(),
+    unscheduleCommand.toJSON(),
+    newticketCommand.toJSON(),
+    templateCommand.toJSON(),
+    aiCommand.toJSON(),
+    aihelpCommand.toJSON(),
   ];
 
   const rest = new REST().setToken(config.DISCORD_TOKEN);
@@ -117,6 +140,9 @@ async function main() {
   // 9. Zammad health monitoring — alerts @everyone if Zammad goes down
   startHealthCheck(client);
 
+  // 10. Daily summary posting (checks every 60s if configured hour matches)
+  startDailySummary(client);
+
   logger.info("Bot fully started");
 }
 
@@ -130,6 +156,7 @@ async function shutdown(signal: string) {
   if (syncTimer) clearInterval(syncTimer);
   if (cleanupTimer) clearInterval(cleanupTimer);
   stopHealthCheck();
+  stopDailySummary();
 
   // Stop accepting new webhooks
   if (server) {

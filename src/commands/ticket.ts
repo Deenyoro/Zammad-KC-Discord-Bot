@@ -1,6 +1,15 @@
 import { ChatInputCommandInteraction } from "discord.js";
 import { logger } from "../util/logger.js";
-import { getThreadByThreadId, getUserMap, updateThreadState, type TicketThread } from "../db/index.js";
+import {
+  getThreadByThreadId,
+  getUserMap,
+  updateThreadState,
+  getTemplate,
+  getAllTemplates,
+  upsertTemplate,
+  deleteTemplate,
+  type TicketThread,
+} from "../db/index.js";
 import {
   updateTicket,
   getStateByName,
@@ -9,9 +18,24 @@ import {
   getArticles,
   getTicket,
   getUser,
+  searchTickets,
+  getTicketByNumber,
+  createTicket,
+  getTicketTags,
+  addTicketTag,
+  removeTicketTag,
+  mergeTickets,
+  getTicketHistory,
+  createScheduledArticle,
+  getScheduledArticles,
+  cancelScheduledArticle,
+  createSmsConversation,
   type ArticleAttachment,
 } from "../services/zammad.js";
 import { ticketUrl, closeTicketThread } from "../services/threads.js";
+import { parseTime } from "../util/parseTime.js";
+import { truncate } from "../util/truncate.js";
+import { env } from "../util/env.js";
 
 // ---------------------------------------------------------------
 // Handler utilities
@@ -181,8 +205,34 @@ export async function handleInfo(interaction: ChatInputCommandInteraction) {
     `Assigned: ${ownerName}`,
     `Customer: ${ticket.customer}`,
     `Created: ${ticket.created_at}`,
-    `[Open in Zammad](${ticketUrl(ticket.id)})`,
   ];
+
+  // SLA indicator
+  if (ticket.escalation_at) {
+    const escalation = new Date(ticket.escalation_at);
+    if (escalation <= new Date()) {
+      lines.push(`SLA: **BREACHED**`);
+    } else {
+      const diffMs = escalation.getTime() - Date.now();
+      const diffMins = Math.round(diffMs / 60_000);
+      const timeLeft = diffMins >= 60
+        ? `${Math.floor(diffMins / 60)}h ${diffMins % 60}m`
+        : `${diffMins}m`;
+      lines.push(`SLA: ${timeLeft} remaining`);
+    }
+  }
+
+  // Tags
+  try {
+    const tags = await getTicketTags(mapping.ticket_id);
+    if (tags.length > 0) {
+      lines.push(`Tags: ${tags.join(", ")}`);
+    }
+  } catch {
+    /* non-critical */
+  }
+
+  lines.push(`[Open in Zammad](${ticketUrl(ticket.id)})`);
   await interaction.editReply(lines.join("\n"));
 }
 
@@ -239,7 +289,7 @@ export async function handleNote(interaction: ChatInputCommandInteraction) {
  * Detect the ticket's channel type from its articles.
  * Returns the article type name and the "to" address for replies.
  */
-async function detectReplyChannel(
+export async function detectReplyChannel(
   ticketId: number
 ): Promise<{ type: string; to: string; label: string } | null> {
   const articles = await getArticles(ticketId);
@@ -450,4 +500,452 @@ export async function handleOwner(interaction: ChatInputCommandInteraction) {
   await interaction.editReply(
     `Ticket #${mapping.ticket_number} assigned to ${discordUser.username}.`
   );
+}
+
+// ---------------------------------------------------------------
+// Admin check (reuses env ADMIN_USER_IDS)
+// ---------------------------------------------------------------
+
+function isAdmin(userId: string): boolean {
+  const ids = env().ADMIN_USER_IDS;
+  return ids.length === 0 || ids.includes(userId);
+}
+
+// ---------------------------------------------------------------
+// /search
+// ---------------------------------------------------------------
+
+export async function handleSearch(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const query = interaction.options.getString("query", true);
+  const results = await searchTickets(query, 10);
+
+  if (results.length === 0) {
+    await interaction.editReply("No tickets found.");
+    return;
+  }
+
+  const lines = results.map(
+    (t) => `**#${t.number}** — ${truncate(t.title, 60)} [${t.state}] — [Open](${ticketUrl(t.id)})`
+  );
+  await interaction.editReply(truncate(lines.join("\n"), 2000));
+}
+
+// ---------------------------------------------------------------
+// /tags (list | add | remove)
+// ---------------------------------------------------------------
+
+export async function handleTags(interaction: ChatInputCommandInteraction) {
+  const sub = interaction.options.getSubcommand();
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply({ ephemeral: true });
+
+  switch (sub) {
+    case "list": {
+      const tags = await getTicketTags(mapping.ticket_id);
+      await interaction.editReply(
+        tags.length > 0 ? `Tags: ${tags.join(", ")}` : "No tags on this ticket."
+      );
+      break;
+    }
+    case "add": {
+      const tag = interaction.options.getString("tag", true);
+      await addTicketTag(mapping.ticket_id, tag);
+      await interaction.editReply(`Tag **${tag}** added to ticket #${mapping.ticket_number}.`);
+      break;
+    }
+    case "remove": {
+      const tag = interaction.options.getString("tag", true);
+      await removeTicketTag(mapping.ticket_id, tag);
+      await interaction.editReply(`Tag **${tag}** removed from ticket #${mapping.ticket_number}.`);
+      break;
+    }
+  }
+}
+
+// ---------------------------------------------------------------
+// /merge
+// ---------------------------------------------------------------
+
+export async function handleMerge(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply();
+
+  const targetNumber = interaction.options.getString("target", true);
+  const targetTicket = await getTicketByNumber(targetNumber);
+
+  if (!targetTicket) {
+    await interaction.editReply(`Could not find ticket #${targetNumber}.`);
+    return;
+  }
+
+  if (targetTicket.id === mapping.ticket_id) {
+    await interaction.editReply("Cannot merge a ticket into itself.");
+    return;
+  }
+
+  await mergeTickets(mapping.ticket_id, targetTicket.id);
+  updateThreadState(mapping.ticket_id, "merged");
+  await closeTicketThread(interaction.client, mapping.thread_id);
+  await interaction.editReply(
+    `Ticket #${mapping.ticket_number} merged into #${targetNumber}. Thread closed.`
+  );
+}
+
+// ---------------------------------------------------------------
+// /history
+// ---------------------------------------------------------------
+
+export async function handleHistory(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply({ ephemeral: true });
+
+  const history = await getTicketHistory(mapping.ticket_id);
+
+  if (history.length === 0) {
+    await interaction.editReply("No history entries found.");
+    return;
+  }
+
+  // Show last 15 entries
+  const recent = history.slice(-15);
+  const lines = recent.map((h) => {
+    const ts = new Date(h.created_at).toLocaleString();
+    if (h.attribute && h.value_from !== undefined) {
+      return `\`${ts}\` **${h.attribute}**: ${h.value_from || "(empty)"} → ${h.value_to || "(empty)"}`;
+    }
+    return `\`${ts}\` ${h.type}: ${h.object}`;
+  });
+
+  await interaction.editReply(truncate(lines.join("\n"), 2000));
+}
+
+// ---------------------------------------------------------------
+// /schedule, /schedules, /unschedule
+// ---------------------------------------------------------------
+
+export async function handleSchedule(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply({ ephemeral: true });
+
+  const text = interaction.options.getString("text", true);
+  const timeInput = interaction.options.getString("time", true);
+  const scheduledAt = parseTime(timeInput);
+
+  if (!scheduledAt) {
+    await interaction.editReply(
+      'Could not parse time. Use formats like: `2h`, `1d`, `tomorrow 9am`, or an ISO date.'
+    );
+    return;
+  }
+
+  // Detect reply channel to set article type
+  const channel = await detectReplyChannel(mapping.ticket_id);
+  const articleType = channel?.type ?? "email";
+
+  await createScheduledArticle({
+    ticket_id: mapping.ticket_id,
+    body: text,
+    scheduled_at: scheduledAt,
+    article_type: articleType,
+    to: channel?.to,
+  });
+
+  await interaction.editReply(
+    `Reply scheduled for ${new Date(scheduledAt).toLocaleString()} on ticket #${mapping.ticket_number}.`
+  );
+}
+
+export async function handleSchedules(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply({ ephemeral: true });
+
+  const articles = await getScheduledArticles(mapping.ticket_id);
+
+  if (articles.length === 0) {
+    await interaction.editReply("No scheduled replies for this ticket.");
+    return;
+  }
+
+  const lines = articles.map(
+    (a) =>
+      `**ID ${a.id}** — ${new Date(a.scheduled_at).toLocaleString()}: ${truncate(a.body, 80)}`
+  );
+  await interaction.editReply(truncate(lines.join("\n"), 2000));
+}
+
+export async function handleUnschedule(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply({ ephemeral: true });
+
+  const idStr = interaction.options.getString("id", true);
+  const id = parseInt(idStr, 10);
+  if (isNaN(id)) {
+    await interaction.editReply("Invalid ID. Please provide a numeric ID.");
+    return;
+  }
+
+  await cancelScheduledArticle(id);
+  await interaction.editReply(`Scheduled reply #${id} cancelled.`);
+}
+
+// ---------------------------------------------------------------
+// /newticket
+// ---------------------------------------------------------------
+
+export async function handleNewTicket(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const type = interaction.options.getString("type", true);
+  const to = interaction.options.getString("to", true);
+  const subject = interaction.options.getString("subject", true);
+  const body = interaction.options.getString("body", true);
+
+  const userEntry = getUserMap(interaction.user.id);
+  if (!userEntry) {
+    await interaction.editReply(
+      "You must be mapped to a Zammad agent. Ask an admin to run `/setup usermap`."
+    );
+    return;
+  }
+
+  try {
+    let ticket;
+
+    switch (type) {
+      case "email":
+        ticket = await createTicket({
+          title: subject,
+          group: "Users",
+          customer: to,
+          article: {
+            subject,
+            body,
+            type: "email",
+            sender: "Agent",
+            internal: false,
+            content_type: "text/plain",
+            to,
+          },
+        });
+        break;
+
+      case "sms":
+        ticket = await createSmsConversation({ to, body });
+        break;
+
+      case "phone":
+        ticket = await createTicket({
+          title: subject,
+          group: "Users",
+          customer: to,
+          article: {
+            subject,
+            body,
+            type: "note",
+            sender: "Agent",
+            internal: true,
+            content_type: "text/plain",
+          },
+        });
+        break;
+
+      default:
+        await interaction.editReply("Unknown ticket type.");
+        return;
+    }
+
+    await interaction.editReply(
+      `Ticket #${ticket.number} created (${type}). ${ticketUrl(ticket.id)}`
+    );
+  } catch (err) {
+    logger.error({ err, type, to }, "Failed to create new ticket");
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    await interaction.editReply(`Failed to create ticket: ${msg}`);
+  }
+}
+
+// ---------------------------------------------------------------
+// /template (use | list | add | remove)
+// ---------------------------------------------------------------
+
+export async function handleTemplate(interaction: ChatInputCommandInteraction) {
+  const sub = interaction.options.getSubcommand();
+
+  switch (sub) {
+    case "use": {
+      const mapping = await requireMapping(interaction);
+      if (!mapping) return;
+      await interaction.deferReply({ ephemeral: true });
+
+      const name = interaction.options.getString("name", true);
+      const template = getTemplate(name);
+      if (!template) {
+        await interaction.editReply(`Template "${name}" not found. Use \`/template list\` to see available templates.`);
+        return;
+      }
+
+      const channel = await detectReplyChannel(mapping.ticket_id);
+      if (!channel) {
+        await interaction.editReply(
+          "Could not determine reply channel for this ticket."
+        );
+        return;
+      }
+
+      const userEntry = getUserMap(interaction.user.id);
+
+      await createArticle({
+        ticket_id: mapping.ticket_id,
+        body: template.body,
+        subject: channel.type === "email" ? (mapping.title || undefined) : undefined,
+        type: channel.type,
+        sender: "Agent",
+        internal: false,
+        content_type: "text/plain",
+        to: channel.to,
+        origin_by_id: channel.type === "email" ? (userEntry?.zammad_id ?? undefined) : undefined,
+      });
+
+      await interaction.editReply(
+        `Template "${name}" sent (${channel.label}) on ticket #${mapping.ticket_number}.`
+      );
+      break;
+    }
+
+    case "list": {
+      await interaction.deferReply({ ephemeral: true });
+      const templates = getAllTemplates();
+      if (templates.length === 0) {
+        await interaction.editReply("No templates saved. Use `/template add` to create one.");
+        return;
+      }
+      const lines = templates.map(
+        (t) => `**${t.name}** — ${truncate(t.body, 60)}`
+      );
+      await interaction.editReply(truncate(lines.join("\n"), 2000));
+      break;
+    }
+
+    case "add": {
+      if (!isAdmin(interaction.user.id)) {
+        await interaction.reply({ content: "Only admins can add templates.", ephemeral: true });
+        return;
+      }
+      await interaction.deferReply({ ephemeral: true });
+      const name = interaction.options.getString("name", true);
+      const body = interaction.options.getString("body", true);
+      upsertTemplate(name, body, interaction.user.id);
+      await interaction.editReply(`Template "${name}" saved.`);
+      break;
+    }
+
+    case "remove": {
+      if (!isAdmin(interaction.user.id)) {
+        await interaction.reply({ content: "Only admins can remove templates.", ephemeral: true });
+        return;
+      }
+      await interaction.deferReply({ ephemeral: true });
+      const name = interaction.options.getString("name", true);
+      const deleted = deleteTemplate(name);
+      await interaction.editReply(
+        deleted ? `Template "${name}" removed.` : `Template "${name}" not found.`
+      );
+      break;
+    }
+  }
+}
+
+// ---------------------------------------------------------------
+// /ai — AI suggested response
+// ---------------------------------------------------------------
+
+export async function handleAi(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    // Dynamic import to avoid errors when AI deps aren't installed
+    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+
+    if (!isAIConfigured()) {
+      await interaction.editReply(
+        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+      );
+      return;
+    }
+
+    const context = await buildTicketContext(mapping.ticket_id);
+    const response = await aiChat(
+      "You are a helpful support agent assistant. Based on the ticket context below, suggest a professional and helpful response to send to the customer. Keep it concise and actionable.\n\n" +
+        context,
+      "Please suggest a response for this support ticket."
+    );
+
+    await interaction.editReply(truncate(`**AI Suggested Response:**\n${response}`, 2000));
+  } catch (err) {
+    logger.error({ err }, "AI command failed");
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    await interaction.editReply(`AI suggestion failed: ${msg}`);
+  }
+}
+
+// ---------------------------------------------------------------
+// /aihelp — AI troubleshooting with web search
+// ---------------------------------------------------------------
+
+export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+    const { isSearchConfigured, webSearch } = await import("../services/search.js");
+
+    if (!isAIConfigured()) {
+      await interaction.editReply(
+        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+      );
+      return;
+    }
+
+    const context = await buildTicketContext(mapping.ticket_id);
+
+    // If search is configured, augment with web results
+    let searchResults = "";
+    if (isSearchConfigured()) {
+      try {
+        const ticket = await getTicket(mapping.ticket_id);
+        const searchQuery = ticket.title;
+        const results = await webSearch(searchQuery);
+        if (results) {
+          searchResults = `\n\nWeb search results for "${searchQuery}":\n${results}`;
+        }
+      } catch (err) {
+        logger.warn({ err }, "Web search failed for aihelp, proceeding without");
+      }
+    }
+
+    const response = await aiChat(
+      "You are a technical support specialist. Based on the ticket context and any web search results provided, give detailed troubleshooting steps. Be specific and actionable.\n\n" +
+        context +
+        searchResults,
+      "Please provide troubleshooting steps for this issue."
+    );
+
+    await interaction.editReply(truncate(`**AI Troubleshooting Help:**\n${response}`, 2000));
+  } catch (err) {
+    logger.error({ err }, "AI help command failed");
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    await interaction.editReply(`AI help failed: ${msg}`);
+  }
 }
