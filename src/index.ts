@@ -36,6 +36,7 @@ import {
   aireplyCommand,
   aisummaryCommand,
   aihelpCommand,
+  aiproofreadCommand,
 } from "./commands/shortcuts.js";
 
 let discordClient: Client | null = null;
@@ -73,6 +74,7 @@ async function deployCommands() {
     aireplyCommand.toJSON(),
     aisummaryCommand.toJSON(),
     aihelpCommand.toJSON(),
+    aiproofreadCommand.toJSON(),
   ];
 
   const rest = new REST().setToken(config.DISCORD_TOKEN);

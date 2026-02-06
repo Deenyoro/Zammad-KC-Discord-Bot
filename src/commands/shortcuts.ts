@@ -264,18 +264,42 @@ export const templateCommand = new SlashCommandBuilder()
 
 export const aireplyCommand = new SlashCommandBuilder()
   .setName("aireply")
-  .setDescription("Get an AI-suggested reply for this ticket");
+  .setDescription("Get an AI-suggested reply for this ticket")
+  .addStringOption((o) =>
+    o
+      .setName("context")
+      .setDescription("Additional context for the AI")
+      .setRequired(false)
+  )
+  .addStringOption((o) =>
+    o
+      .setName("language")
+      .setDescription("Response language (uses bot default if not set)")
+      .setRequired(false)
+      .addChoices(
+        { name: "English", value: "en" },
+        { name: "Portuguese (Brazilian)", value: "pt-br" },
+        { name: "Arabic", value: "ar" },
+        { name: "Chinese", value: "zh" }
+      )
+  );
 
 export const aisummaryCommand = new SlashCommandBuilder()
   .setName("aisummary")
   .setDescription("Get an AI summary of the ticket with suggested next steps")
   .addStringOption((o) =>
     o
+      .setName("context")
+      .setDescription("Additional context for the AI")
+      .setRequired(false)
+  )
+  .addStringOption((o) =>
+    o
       .setName("language")
-      .setDescription("Response language (default: English)")
+      .setDescription("Response language (uses bot default if not set)")
       .setRequired(false)
       .addChoices(
-        { name: "English (default)", value: "en" },
+        { name: "English", value: "en" },
         { name: "Portuguese (Brazilian)", value: "pt-br" },
         { name: "Arabic", value: "ar" },
         { name: "Chinese", value: "zh" }
@@ -287,11 +311,39 @@ export const aihelpCommand = new SlashCommandBuilder()
   .setDescription("Get AI troubleshooting help with web search for this ticket")
   .addStringOption((o) =>
     o
+      .setName("context")
+      .setDescription("Additional context for the AI")
+      .setRequired(false)
+  )
+  .addStringOption((o) =>
+    o
       .setName("language")
-      .setDescription("Response language")
+      .setDescription("Response language (uses bot default if not set)")
       .setRequired(false)
       .addChoices(
-        { name: "English (default)", value: "en" },
+        { name: "English", value: "en" },
+        { name: "Portuguese (Brazilian)", value: "pt-br" },
+        { name: "Arabic", value: "ar" },
+        { name: "Chinese", value: "zh" }
+      )
+  );
+
+export const aiproofreadCommand = new SlashCommandBuilder()
+  .setName("aiproofread")
+  .setDescription("Proofread a message for spelling, grammar, and flow")
+  .addStringOption((o) =>
+    o
+      .setName("message")
+      .setDescription("The message to proofread")
+      .setRequired(true)
+  )
+  .addStringOption((o) =>
+    o
+      .setName("language")
+      .setDescription("Response language (uses bot default if not set)")
+      .setRequired(false)
+      .addChoices(
+        { name: "English", value: "en" },
         { name: "Portuguese (Brazilian)", value: "pt-br" },
         { name: "Arabic", value: "ar" },
         { name: "Chinese", value: "zh" }
