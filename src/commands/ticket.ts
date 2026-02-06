@@ -166,6 +166,11 @@ export async function handleState(interaction: ChatInputCommandInteraction) {
         });
       }
     }
+  } else if (normalizedState === "pending close") {
+    updateThreadState(mapping.ticket_id, normalizedState);
+    if (interaction.client && mapping.thread_id) {
+      await removeRoleMembersFromThread(interaction.client, mapping.thread_id);
+    }
   }
 
   await interaction.editReply(

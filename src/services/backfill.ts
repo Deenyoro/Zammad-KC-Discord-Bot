@@ -9,6 +9,7 @@ import {
 import { getAllOpenTickets, getTicket, getUser } from "./zammad.js";
 import {
   addRoleMembersToThread,
+  removeRoleMembersFromThread,
   createTicketThread,
   updateHeaderEmbed,
   closeTicketThread,
@@ -17,6 +18,7 @@ import {
   ticketUrl,
   type TicketInfo,
 } from "./threads.js";
+import { discordQueue } from "../queue/index.js";
 
 /**
  * Sync all non-closed Zammad tickets to Discord threads.
@@ -118,6 +120,41 @@ export async function syncAllTickets(client: Client): Promise<void> {
               } catch (err) {
                 logger.warn({ ticketId: ticket.id, err }, "Failed to verify/reopen thread");
               }
+            }
+          }
+
+          // Handle hidden state transitions (catches changes that happened while bot was down)
+          const isHiddenStateFn = (s: string) => s === "pending close" || s === "waiting for reply";
+          if (isHiddenStateFn(ticketInfo.state) && !isHiddenStateFn(existing.state)) {
+            try {
+              await removeRoleMembersFromThread(client, existing.thread_id);
+              if (ticketInfo.state === "waiting for reply") {
+                const thread = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
+                if (thread?.isThread() && !thread.archived) {
+                  await discordQueue.add(async () => {
+                    await thread.edit({ archived: true, reason: "Ticket is waiting for reply" });
+                  });
+                }
+              }
+            } catch (err) {
+              logger.warn({ ticketId: ticket.id, err }, "Failed to hide thread for hidden state");
+            }
+          }
+
+          // Transition OUT of hidden state → unarchive and re-add members
+          if (isHiddenStateFn(existing.state) && !isHiddenStateFn(ticketInfo.state) && !isClosedState(ticketInfo.state)) {
+            try {
+              const thread = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
+              if (thread?.isThread()) {
+                if (thread.archived) {
+                  await discordQueue.add(async () => {
+                    await thread.edit({ archived: false, reason: "Ticket no longer in hidden state" });
+                  });
+                }
+                await addRoleMembersToThread(thread);
+              }
+            } catch (err) {
+              logger.warn({ ticketId: ticket.id, err }, "Failed to unhide thread from hidden state");
             }
           }
         }
