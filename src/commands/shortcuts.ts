@@ -262,9 +262,13 @@ export const templateCommand = new SlashCommandBuilder()
       )
   );
 
-export const aiCommand = new SlashCommandBuilder()
-  .setName("ai")
-  .setDescription("Get an AI-suggested response for this ticket");
+export const aireplyCommand = new SlashCommandBuilder()
+  .setName("aireply")
+  .setDescription("Get an AI-suggested reply for this ticket");
+
+export const aisummaryCommand = new SlashCommandBuilder()
+  .setName("aisummary")
+  .setDescription("Get an AI summary of the ticket with suggested next steps");
 
 export const aihelpCommand = new SlashCommandBuilder()
   .setName("aihelp")
