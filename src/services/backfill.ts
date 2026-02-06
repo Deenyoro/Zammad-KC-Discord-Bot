@@ -97,7 +97,7 @@ export async function syncAllTickets(client: Client): Promise<void> {
         // Update state if changed
         if (ticketInfo.state !== existing.state) {
           updateThreadState(ticket.id, ticketInfo.state);
-          const isClosedState = (s: string) => s === "closed" || s === "closed (locked)";
+          const isClosedState = (s: string) => s === "closed" || s === "closed (locked)" || s === "closed (locked until)";
 
           // Reopen thread if it was closed but ticket is now open
           // BUT: Add grace period to avoid race condition with /ticket close command
@@ -192,7 +192,7 @@ export async function syncAllTickets(client: Client): Promise<void> {
   // Close threads for tickets that are no longer open
   const allMappings = getAllTicketThreads();
   for (const mapping of allMappings) {
-    if (mapping.state === "closed" || mapping.state === "closed (locked)") continue; // already closed
+    if (mapping.state === "closed" || mapping.state === "closed (locked)" || mapping.state === "closed (locked until)") continue; // already closed
     if (openTicketIds.has(mapping.ticket_id)) continue; // still open
 
     // Skip recently created threads to avoid race condition:

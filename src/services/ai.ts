@@ -149,6 +149,7 @@ export async function aiChat(
 
 /**
  * Build a text summary of a ticket and its articles for AI context.
+ * Includes agent/owner identity so the AI knows who it's drafting for.
  */
 export async function buildTicketContext(ticketId: number): Promise<string> {
   const ticket = await getTicket(ticketId);
@@ -164,12 +165,27 @@ export async function buildTicketContext(ticketId: number): Promise<string> {
     }
   }
 
+  let agentName = "Unassigned";
+  if (ticket.owner_id && ticket.owner_id > 1) {
+    try {
+      const owner = await getUser(ticket.owner_id);
+      agentName = `${owner.firstname} ${owner.lastname}`.trim() || agentName;
+    } catch {
+      // non-critical
+    }
+  }
+
   const lines = [
     `Ticket #${ticket.number}: ${ticket.title}`,
     `State: ${ticket.state}`,
     `Priority: ${ticket.priority}`,
     `Customer: ${customerName}`,
+    `Assigned Agent: ${agentName}`,
     `Group: ${ticket.group}`,
+    "",
+    "IMPORTANT: You are drafting a response on behalf of the assigned AGENT, not any of the customers.",
+    `The agent's name is "${agentName}". Do NOT sign as or impersonate any customer in the conversation.`,
+    "Customers are external people contacting support. Agents are internal staff responding.",
     "",
     "--- Conversation ---",
   ];
@@ -178,9 +194,22 @@ export async function buildTicketContext(ticketId: number): Promise<string> {
   const recent = articles.slice(-20);
   for (const article of recent) {
     if (article.sender === "System") continue;
-    const label = article.internal
-      ? `${article.sender} (Internal)`
-      : article.sender;
+
+    // Extract the person's name from the "from" field for clearer attribution
+    let personName = article.sender; // fallback: "Customer" or "Agent"
+    if (article.from) {
+      const nameMatch = article.from.match(/^(.+?)\s*<[^>]+>$/);
+      if (nameMatch) {
+        personName = nameMatch[1].trim();
+      } else if (!article.from.includes("@") || article.from.includes(" ")) {
+        personName = article.from.trim();
+      }
+    }
+
+    const role = article.sender; // "Customer" or "Agent"
+    const internalTag = article.internal ? " (Internal Note)" : "";
+    const label = `${personName} [${role}]${internalTag}`;
+
     const body = article.body
       .replace(/<[^>]+>/g, "")
       .replace(/&nbsp;/g, " ")
