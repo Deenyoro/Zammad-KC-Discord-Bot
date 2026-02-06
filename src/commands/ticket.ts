@@ -35,7 +35,7 @@ import {
 import { ticketUrl, closeTicketThread, removeRoleMembersFromThread } from "../services/threads.js";
 import { discordQueue } from "../queue/index.js";
 import { parseTime } from "../util/parseTime.js";
-import { truncate } from "../util/truncate.js";
+import { truncate, splitMessage } from "../util/truncate.js";
 import { env } from "../util/env.js";
 
 // ---------------------------------------------------------------
@@ -921,10 +921,10 @@ export async function handleTemplate(interaction: ChatInputCommandInteraction) {
 }
 
 // ---------------------------------------------------------------
-// /ai — AI suggested response
+// /aireply — AI suggested response
 // ---------------------------------------------------------------
 
-export async function handleAi(interaction: ChatInputCommandInteraction) {
+export async function handleAiReply(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
   // Public reply - visible to everyone in the thread
@@ -955,16 +955,71 @@ export async function handleAi(interaction: ChatInputCommandInteraction) {
     );
 
     // Clear AI labeling - this does NOT go to Zammad, stays in Discord only
-    await interaction.editReply(truncate(
+    const fullMessage =
       "🤖 **AI Generated - For Agent Reference Only**\n" +
       "_This suggestion is not sent to the customer. Copy/edit and use `/reply` to send._\n\n" +
-      `**Suggested Response:**\n\`\`\`\n${response}\n\`\`\``,
-      2000
-    ));
+      `**Suggested Response:**\n\`\`\`\n${response}\n\`\`\``;
+
+    const chunks = splitMessage(fullMessage);
+    await interaction.editReply(chunks[0]);
+    for (let i = 1; i < chunks.length; i++) {
+      await interaction.followUp(chunks[i]);
+    }
   } catch (err) {
-    logger.error({ err }, "AI command failed");
+    logger.error({ err }, "AI reply command failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
     await interaction.editReply(`AI suggestion failed: ${msg}`);
+  }
+}
+
+// ---------------------------------------------------------------
+// /aisummary — AI ticket summary with next steps
+// ---------------------------------------------------------------
+
+export async function handleAiSummary(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  // Public reply - visible to everyone in the thread
+  await interaction.deferReply({ ephemeral: false });
+
+  try {
+    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+
+    if (!isAIConfigured()) {
+      await interaction.editReply(
+        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+      );
+      return;
+    }
+
+    const context = await buildTicketContext(mapping.ticket_id);
+    const response = await aiChat(
+      "You are an assistant helping a support agent understand a ticket quickly. " +
+        "The ticket context below includes the conversation history, assigned agent, and customer. " +
+        "It also lists all of our support team agents so you know who is internal staff. " +
+        "Provide a concise summary that helps an agent quickly get up to speed.\n\n" +
+        context,
+      "Summarize this ticket concisely. Include:\n" +
+        "1. A brief summary of the issue and current status (2-3 sentences max)\n" +
+        "2. Key details the agent needs to know\n" +
+        "3. At the end, provide EITHER:\n" +
+        "   - A suggested 1-2 sentence reply if one is appropriate, OR\n" +
+        "   - 2-3 bullet points of recommended next steps\n" +
+        "Keep the entire response brief and actionable."
+    );
+
+    // Clear AI labeling - this does NOT go to Zammad, stays in Discord only
+    const fullMessage = "🤖 **AI Generated - For Agent Reference Only**\n\n" + response;
+
+    const chunks = splitMessage(fullMessage);
+    await interaction.editReply(chunks[0]);
+    for (let i = 1; i < chunks.length; i++) {
+      await interaction.followUp(chunks[i]);
+    }
+  } catch (err) {
+    logger.error({ err }, "AI summary command failed");
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    await interaction.editReply(`AI summary failed: ${msg}`);
   }
 }
 
@@ -1018,12 +1073,16 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
     );
 
     // Clear AI labeling - this does NOT go to Zammad, stays in Discord only
-    await interaction.editReply(truncate(
+    const fullMessage =
       "🤖 **AI Generated - For Agent Reference Only**\n" +
       "_This troubleshooting info is for agent reference. Not sent to customer._\n\n" +
-      `**Troubleshooting Help:**\n\`\`\`\n${response}\n\`\`\``,
-      2000
-    ));
+      `**Troubleshooting Help:**\n\`\`\`\n${response}\n\`\`\``;
+
+    const chunks = splitMessage(fullMessage);
+    await interaction.editReply(chunks[0]);
+    for (let i = 1; i < chunks.length; i++) {
+      await interaction.followUp(chunks[i]);
+    }
   } catch (err) {
     logger.error({ err }, "AI help command failed");
     const msg = err instanceof Error ? err.message : "Unknown error";

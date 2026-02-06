@@ -22,7 +22,8 @@ import {
   handleUnschedule,
   handleNewTicket,
   handleTemplate,
-  handleAi,
+  handleAiReply,
+  handleAiSummary,
   handleAiHelp,
 } from "../commands/ticket.js";
 import { handleSetupCommand } from "../commands/setup.js";
@@ -105,8 +106,11 @@ export function onInteractionCreate(client: Client): void {
         case "template":
           await handleTemplate(interaction);
           break;
-        case "ai":
-          await handleAi(interaction);
+        case "aireply":
+          await handleAiReply(interaction);
+          break;
+        case "aisummary":
+          await handleAiSummary(interaction);
           break;
         case "aihelp":
           await handleAiHelp(interaction);

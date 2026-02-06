@@ -33,7 +33,8 @@ import {
   unscheduleCommand,
   newticketCommand,
   templateCommand,
-  aiCommand,
+  aireplyCommand,
+  aisummaryCommand,
   aihelpCommand,
 } from "./shortcuts.js";
 
@@ -70,7 +71,8 @@ const commands = [
   unscheduleCommand.toJSON(),
   newticketCommand.toJSON(),
   templateCommand.toJSON(),
-  aiCommand.toJSON(),
+  aireplyCommand.toJSON(),
+  aisummaryCommand.toJSON(),
   aihelpCommand.toJSON(),
 ];
 const rest = new REST().setToken(token);

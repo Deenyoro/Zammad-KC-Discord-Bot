@@ -8,7 +8,7 @@ import {
   Message,
 } from "discord.js";
 import { env } from "../util/env.js";
-import { truncate } from "../util/truncate.js";
+import { truncate, splitMessage } from "../util/truncate.js";
 import { logger } from "../util/logger.js";
 import {
   upsertTicketThread,
@@ -225,14 +225,26 @@ export async function sendToThread(
     (a) => new AttachmentBuilder(a.data, { name: a.filename })
   );
 
-  const msg = await discordQueue.add(async () =>
-    thread.send({
-      content: truncate(content, 2000),
-      files,
-      allowedMentions: { parse: [] },
-    })
-  ) as Message | undefined;
-  return msg?.id ?? null;
+  // Split long messages into chunks to avoid Discord's 2000 char limit
+  const chunks = splitMessage(content);
+  let firstMsgId: string | null = null;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const msg = await discordQueue.add(async () =>
+      thread.send({
+        content: chunks[i],
+        // Only attach files to the first message
+        files: i === 0 ? files : undefined,
+        allowedMentions: { parse: [] },
+      })
+    ) as Message | undefined;
+
+    if (i === 0) {
+      firstMsgId = msg?.id ?? null;
+    }
+  }
+
+  return firstMsgId;
 }
 
 // ---------------------------------------------------------------

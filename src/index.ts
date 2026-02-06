@@ -33,7 +33,8 @@ import {
   unscheduleCommand,
   newticketCommand,
   templateCommand,
-  aiCommand,
+  aireplyCommand,
+  aisummaryCommand,
   aihelpCommand,
 } from "./commands/shortcuts.js";
 
@@ -69,7 +70,8 @@ async function deployCommands() {
     unscheduleCommand.toJSON(),
     newticketCommand.toJSON(),
     templateCommand.toJSON(),
-    aiCommand.toJSON(),
+    aireplyCommand.toJSON(),
+    aisummaryCommand.toJSON(),
     aihelpCommand.toJSON(),
   ];
 
