@@ -75,6 +75,14 @@ export const setupCommand = new SlashCommandBuilder()
       .addStringOption((o) =>
         o.setName("hour").setDescription("Hour (0-23) or 'off'").setRequired(true)
       )
+  )
+  .addSubcommand((sc) =>
+    sc
+      .setName("model")
+      .setDescription("Change AI model without re-entering API key")
+      .addStringOption((o) =>
+        o.setName("model").setDescription("Model identifier").setRequired(true)
+      )
   );
 
 export async function handleSetupCommand(
@@ -100,6 +108,8 @@ export async function handleSetupCommand(
         return await handleSearchSetup(interaction);
       case "summary":
         return await handleSummarySetup(interaction);
+      case "model":
+        return await handleModelSetup(interaction);
       default:
         await interaction.reply({ content: "Unknown subcommand.", ephemeral: true });
     }
@@ -189,4 +199,15 @@ async function handleSummarySetup(interaction: ChatInputCommandInteraction) {
   setSetting("DAILY_SUMMARY_HOUR", String(hour));
   await interaction.editReply(`Daily summary set to ${hour}:00.`);
   logger.info({ hour }, "Daily summary hour updated via /setup summary");
+}
+
+async function handleModelSetup(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const model = interaction.options.getString("model", true);
+
+  setSetting("AI_MODEL", model);
+
+  await interaction.editReply(`AI model changed to: ${model}`);
+  logger.info({ model }, "AI model updated via /setup model");
 }
