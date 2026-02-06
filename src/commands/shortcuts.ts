@@ -120,3 +120,135 @@ export const linkCommand = new SlashCommandBuilder()
 export const lockCommand = new SlashCommandBuilder()
   .setName("lock")
   .setDescription("Close and lock the ticket (prevents customer from reopening)");
+
+// ---------------------------------------------------------------
+// New commands
+// ---------------------------------------------------------------
+
+export const searchCommand = new SlashCommandBuilder()
+  .setName("search")
+  .setDescription("Search Zammad tickets")
+  .addStringOption((o) =>
+    o.setName("query").setDescription("Search query (title, number, keyword)").setRequired(true)
+  );
+
+export const tagsCommand = new SlashCommandBuilder()
+  .setName("tags")
+  .setDescription("Manage ticket tags")
+  .addSubcommand((sc) =>
+    sc.setName("list").setDescription("List tags on this ticket")
+  )
+  .addSubcommand((sc) =>
+    sc
+      .setName("add")
+      .setDescription("Add a tag to this ticket")
+      .addStringOption((o) =>
+        o.setName("tag").setDescription("Tag to add").setRequired(true)
+      )
+  )
+  .addSubcommand((sc) =>
+    sc
+      .setName("remove")
+      .setDescription("Remove a tag from this ticket")
+      .addStringOption((o) =>
+        o.setName("tag").setDescription("Tag to remove").setRequired(true)
+      )
+  );
+
+export const mergeCommand = new SlashCommandBuilder()
+  .setName("merge")
+  .setDescription("Merge this ticket into another ticket")
+  .addStringOption((o) =>
+    o.setName("target").setDescription("Target ticket number to merge into").setRequired(true)
+  );
+
+export const historyCommand = new SlashCommandBuilder()
+  .setName("history")
+  .setDescription("Show recent ticket history");
+
+export const scheduleCommand = new SlashCommandBuilder()
+  .setName("schedule")
+  .setDescription("Schedule a reply for later delivery")
+  .addStringOption((o) =>
+    o.setName("text").setDescription("Reply text").setRequired(true)
+  )
+  .addStringOption((o) =>
+    o.setName("time").setDescription("When to send (e.g. 2h, 1d, tomorrow 9am, ISO date)").setRequired(true)
+  );
+
+export const schedulesCommand = new SlashCommandBuilder()
+  .setName("schedules")
+  .setDescription("List scheduled replies for this ticket");
+
+export const unscheduleCommand = new SlashCommandBuilder()
+  .setName("unschedule")
+  .setDescription("Cancel a scheduled reply")
+  .addStringOption((o) =>
+    o.setName("id").setDescription("Scheduled article ID to cancel").setRequired(true)
+  );
+
+export const newticketCommand = new SlashCommandBuilder()
+  .setName("newticket")
+  .setDescription("Create a new ticket")
+  .addStringOption((o) =>
+    o
+      .setName("type")
+      .setDescription("Ticket type")
+      .setRequired(true)
+      .addChoices(
+        { name: "email", value: "email" },
+        { name: "sms", value: "sms" },
+        { name: "phone-log", value: "phone" }
+      )
+  )
+  .addStringOption((o) =>
+    o.setName("to").setDescription("Recipient (email address or phone number)").setRequired(true)
+  )
+  .addStringOption((o) =>
+    o.setName("subject").setDescription("Ticket subject/title").setRequired(true)
+  )
+  .addStringOption((o) =>
+    o.setName("body").setDescription("Message body").setRequired(true)
+  );
+
+export const templateCommand = new SlashCommandBuilder()
+  .setName("template")
+  .setDescription("Manage and use canned response templates")
+  .addSubcommand((sc) =>
+    sc
+      .setName("use")
+      .setDescription("Send a template as a reply to the customer")
+      .addStringOption((o) =>
+        o.setName("name").setDescription("Template name").setRequired(true)
+      )
+  )
+  .addSubcommand((sc) =>
+    sc.setName("list").setDescription("List all saved templates")
+  )
+  .addSubcommand((sc) =>
+    sc
+      .setName("add")
+      .setDescription("Add a new template (admin only)")
+      .addStringOption((o) =>
+        o.setName("name").setDescription("Template name").setRequired(true)
+      )
+      .addStringOption((o) =>
+        o.setName("body").setDescription("Template body text").setRequired(true)
+      )
+  )
+  .addSubcommand((sc) =>
+    sc
+      .setName("remove")
+      .setDescription("Remove a template (admin only)")
+      .addStringOption((o) =>
+        o.setName("name").setDescription("Template name").setRequired(true)
+      )
+  );
+
+export const aiCommand = new SlashCommandBuilder()
+  .setName("ai")
+  .setDescription("Get an AI-suggested response for this ticket");
+
+export const aihelpCommand = new SlashCommandBuilder()
+  .setName("aihelp")
+  .setDescription("Get AI troubleshooting help with web search for this ticket");

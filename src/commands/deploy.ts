@@ -24,6 +24,17 @@ import {
   infoCommand,
   linkCommand,
   lockCommand,
+  searchCommand,
+  tagsCommand,
+  mergeCommand,
+  historyCommand,
+  scheduleCommand,
+  schedulesCommand,
+  unscheduleCommand,
+  newticketCommand,
+  templateCommand,
+  aiCommand,
+  aihelpCommand,
 } from "./shortcuts.js";
 
 const token = process.env.DISCORD_TOKEN;
@@ -50,6 +61,17 @@ const commands = [
   infoCommand.toJSON(),
   linkCommand.toJSON(),
   lockCommand.toJSON(),
+  searchCommand.toJSON(),
+  tagsCommand.toJSON(),
+  mergeCommand.toJSON(),
+  historyCommand.toJSON(),
+  scheduleCommand.toJSON(),
+  schedulesCommand.toJSON(),
+  unscheduleCommand.toJSON(),
+  newticketCommand.toJSON(),
+  templateCommand.toJSON(),
+  aiCommand.toJSON(),
+  aihelpCommand.toJSON(),
 ];
 const rest = new REST().setToken(token);
 
