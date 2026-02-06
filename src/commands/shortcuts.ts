@@ -73,9 +73,11 @@ export const stateCommand = new SlashCommandBuilder()
       .setRequired(true)
       .addChoices(
         { name: "open", value: "open" },
+        { name: "waiting for reply", value: "waiting for reply" },
         { name: "pending reminder", value: "pending reminder" },
         { name: "pending close", value: "pending close" },
-        { name: "closed", value: "closed" }
+        { name: "closed", value: "closed" },
+        { name: "closed (locked)", value: "closed (locked)" }
       )
   );
 
@@ -114,3 +116,7 @@ export const infoCommand = new SlashCommandBuilder()
 export const linkCommand = new SlashCommandBuilder()
   .setName("link")
   .setDescription("Get a link to the Zammad ticket");
+
+export const lockCommand = new SlashCommandBuilder()
+  .setName("lock")
+  .setDescription("Close and lock the ticket (prevents customer from reopening)");

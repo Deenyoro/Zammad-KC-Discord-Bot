@@ -23,6 +23,7 @@ import {
   pendingCommand,
   infoCommand,
   linkCommand,
+  lockCommand,
 } from "./shortcuts.js";
 
 const token = process.env.DISCORD_TOKEN;
@@ -48,6 +49,7 @@ const commands = [
   pendingCommand.toJSON(),
   infoCommand.toJSON(),
   linkCommand.toJSON(),
+  lockCommand.toJSON(),
 ];
 const rest = new REST().setToken(token);
 
