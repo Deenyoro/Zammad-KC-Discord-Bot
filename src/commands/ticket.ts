@@ -973,18 +973,21 @@ export async function handleAiReply(interaction: ChatInputCommandInteraction) {
 
     const ticketContext = await buildTicketContext(mapping.ticket_id);
     const response = await aiChat(
-      "You are an assistant helping a support agent draft a reply. " +
-        `The agent requesting this AI help is: ${callerName}. ` +
-        "The ticket context below identifies the assigned agent and the customer(s). " +
-        "It also lists all of our support team agents so you know who is internal staff. " +
-        "Draft a response FROM the assigned agent TO the customer. " +
-        "Do NOT impersonate or sign as any customer. " +
-        "Do NOT include email signatures, disclaimers, or quoted previous messages. " +
-        "Keep it concise, professional, and actionable." +
+      "You are a skilled customer support assistant helping an agent draft a reply.\n\n" +
+        `Agent requesting help: ${callerName}\n\n` +
+        "INSTRUCTIONS:\n" +
+        "- Draft a response FROM the assigned agent TO the customer\n" +
+        "- Match the communication channel's tone (formal for email, brief for SMS/chat)\n" +
+        "- Address the customer's specific questions/issues from the conversation\n" +
+        "- If SLA is breached or urgent, prioritize speed and resolution\n" +
+        "- For first responses, acknowledge receipt and set expectations\n" +
+        "- Reference any relevant tags for context (billing, technical, etc.)\n" +
+        "- Do NOT add signatures, disclaimers, or quote previous messages\n" +
+        "- Keep it concise, professional, and actionable\n" +
         langInstruction + "\n\n" +
         ticketContext +
-        (extraContext ? `\n\nAdditional context from agent: ${extraContext}` : ""),
-      "Draft a reply that the assigned agent should send to the customer." + langInstruction
+        (extraContext ? `\n\n=== AGENT'S ADDITIONAL CONTEXT ===\n${extraContext}` : ""),
+      "Draft the reply now. Output ONLY the message text, nothing else." + langInstruction
     );
 
     const fullMessage =
@@ -1029,21 +1032,24 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
 
     const ticketContext = await buildTicketContext(mapping.ticket_id);
     const response = await aiChat(
-      "You are an assistant helping a support agent understand a ticket quickly. " +
-        `The agent requesting this summary is: ${callerName}. ` +
-        "The ticket context below includes the conversation history, assigned agent, and customer. " +
-        "It also lists all of our support team agents so you know who is internal staff. " +
-        "Provide a concise summary that helps an agent quickly get up to speed." +
+      "You are a support ticket analyst helping an agent quickly understand a ticket.\n\n" +
+        `Agent requesting summary: ${callerName}\n\n` +
+        "INSTRUCTIONS:\n" +
+        "- Provide a quick executive summary for an agent taking over or reviewing\n" +
+        "- Highlight SLA urgency if breached or close to breach\n" +
+        "- Note communication channel and adjust advice accordingly\n" +
+        "- Identify the core issue and current status\n" +
+        "- Flag any escalation signals or frustrated customer indicators\n" +
+        "- Note if awaiting customer response vs agent action needed\n" +
         langInstruction + "\n\n" +
         ticketContext +
-        (extraContext ? `\n\nAdditional context from agent: ${extraContext}` : ""),
-      "Summarize this ticket concisely. Include:\n" +
-        "1. A brief summary of the issue and current status (2-3 sentences max)\n" +
-        "2. Key details the agent needs to know\n" +
-        "3. At the end, provide EITHER:\n" +
-        "   - A suggested 1-2 sentence reply if one is appropriate, OR\n" +
-        "   - 2-3 bullet points of recommended next steps\n" +
-        "Keep the entire response brief and actionable." + langInstruction
+        (extraContext ? `\n\n=== AGENT'S ADDITIONAL CONTEXT ===\n${extraContext}` : ""),
+      "Provide a brief summary with this structure:\n\n" +
+        "**Issue:** (1-2 sentences - what's the problem?)\n\n" +
+        "**Status:** (current state, who's ball is it in?)\n\n" +
+        "**Key Info:** (bullet points of critical details - customer sentiment, any deadlines, blockers)\n\n" +
+        "**Recommended Action:** (either a 1-2 sentence suggested reply OR 2-3 bullet points of next steps)" +
+        langInstruction
     );
 
     // Clear AI labeling - this does NOT go to Zammad, stays in Discord only
@@ -1103,17 +1109,26 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
     }
 
     const response = await aiChat(
-      "You are an assistant helping a support agent troubleshoot a customer issue. " +
-        `The agent requesting this help is: ${callerName}. ` +
-        "The ticket context below identifies the assigned agent and the customer(s). " +
-        "It also lists all of our support team agents so you know who is internal staff. " +
-        "Provide troubleshooting steps that the AGENT can use or share with the customer. " +
-        "Do NOT impersonate any customer. Be specific and actionable." +
+      "You are a technical support specialist helping an agent troubleshoot a customer issue.\n\n" +
+        `Agent requesting help: ${callerName}\n\n` +
+        "INSTRUCTIONS:\n" +
+        "- Analyze the issue based on conversation history and any tags\n" +
+        "- Provide step-by-step troubleshooting the agent can follow or share\n" +
+        "- Consider the communication channel (SMS needs brief steps, email can be detailed)\n" +
+        "- If web search results are included, use them to inform your advice\n" +
+        "- Prioritize common solutions first, then edge cases\n" +
+        "- Include specific questions to ask if more info is needed\n" +
+        "- Flag if this needs escalation to another team/specialist\n" +
         langInstruction + "\n\n" +
         ticketContext +
         searchResults +
-        (extraContext ? `\n\nAdditional context from agent: ${extraContext}` : ""),
-      "Provide troubleshooting steps for this issue." + langInstruction
+        (extraContext ? `\n\n=== AGENT'S ADDITIONAL CONTEXT ===\n${extraContext}` : ""),
+      "Provide troubleshooting guidance with this structure:\n\n" +
+        "**Likely Cause:** (brief assessment)\n\n" +
+        "**Troubleshooting Steps:**\n1. ...\n2. ...\n\n" +
+        "**If That Doesn't Work:** (alternative approaches or escalation path)\n\n" +
+        "**Questions to Ask Customer:** (if more info needed)" +
+        langInstruction
     );
 
     const fullMessage =
@@ -1143,7 +1158,7 @@ export async function handleAiProofread(interaction: ChatInputCommandInteraction
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    const { isAIConfigured, aiChat } = await import("../services/ai.js");
+    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
 
     if (!isAIConfigured()) {
       await interaction.editReply(
@@ -1156,19 +1171,24 @@ export async function handleAiProofread(interaction: ChatInputCommandInteraction
     const langInstruction = getLanguageInstruction(interaction);
     const messageToProofread = interaction.options.getString("message", true);
 
+    // Get ticket context for customer name and channel info
+    const ticketContext = await buildTicketContext(mapping.ticket_id);
+
     const response = await aiChat(
-      "You are a proofreading assistant helping a support agent polish their message before sending. " +
-        `The agent is: ${callerName}. ` +
-        "Focus EXCLUSIVELY on:\n" +
-        "1. Fixing spelling errors\n" +
-        "2. Fixing grammar issues\n" +
-        "3. Improving flow and readability\n" +
-        "4. Maintaining professional tone\n\n" +
-        "Do NOT change the meaning or add new content. " +
-        "Do NOT add greetings, signatures, or disclaimers that weren't there. " +
-        "Return ONLY the corrected message, nothing else - no explanations, no 'Here's the corrected version', just the fixed text." +
+      "You are a professional proofreader for customer support messages.\n\n" +
+        `Agent: ${callerName}\n\n` +
+        "TICKET CONTEXT (for reference - customer name, channel type, etc.):\n" +
+        ticketContext + "\n\n" +
+        "PROOFREADING RULES:\n" +
+        "- Fix spelling and grammar errors\n" +
+        "- Improve sentence flow and clarity\n" +
+        "- Ensure customer name is spelled correctly if mentioned\n" +
+        "- Match tone to communication channel (formal for email, brief for SMS)\n" +
+        "- Maintain the original meaning - do NOT add or remove content\n" +
+        "- Do NOT add greetings, signatures, or disclaimers unless they exist\n" +
+        "- Output ONLY the corrected message - no explanations or preamble\n" +
         langInstruction,
-      `Proofread this message:\n\n${messageToProofread}`
+      `Proofread and return the corrected version:\n\n${messageToProofread}`
     );
 
     const fullMessage =

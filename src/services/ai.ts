@@ -1,6 +1,6 @@
 import { logger } from "../util/logger.js";
 import { getSettingOrEnv } from "../db/index.js";
-import { getTicket, getArticles, getUser, getAgents } from "./zammad.js";
+import { getTicket, getArticles, getUser, getAgents, getTicketTags } from "./zammad.js";
 
 // ---------------------------------------------------------------
 // Provider abstraction
@@ -148,23 +148,29 @@ export async function aiChat(
 }
 
 /**
- * Build a text summary of a ticket and its articles for AI context.
- * Includes agent/owner identity so the AI knows who it's drafting for.
+ * Build a comprehensive text summary of a ticket for AI context.
+ * Includes ticket metadata, conversation history, and situational awareness.
  */
 export async function buildTicketContext(ticketId: number): Promise<string> {
   const ticket = await getTicket(ticketId);
   const articles = await getArticles(ticketId);
 
+  // Fetch customer details
   let customerName = ticket.customer || "Unknown";
+  let customerEmail = "";
+  let customerPhone = "";
   if (ticket.customer_id) {
     try {
       const customer = await getUser(ticket.customer_id);
       customerName = `${customer.firstname} ${customer.lastname}`.trim() || customerName;
+      customerEmail = customer.email || "";
+      customerPhone = customer.phone || customer.mobile || "";
     } catch {
       // non-critical
     }
   }
 
+  // Fetch assigned agent details
   let agentName = "Unassigned";
   if (ticket.owner_id && ticket.owner_id > 1) {
     try {
@@ -187,31 +193,120 @@ export async function buildTicketContext(ticketId: number): Promise<string> {
     // non-critical
   }
 
+  // Fetch ticket tags
+  let tags: string[] = [];
+  try {
+    tags = await getTicketTags(ticketId);
+  } catch {
+    // non-critical
+  }
+
+  // Calculate time metrics
+  const now = new Date();
+  const createdAt = new Date(ticket.created_at);
+  const updatedAt = new Date(ticket.updated_at);
+  const ticketAgeMs = now.getTime() - createdAt.getTime();
+  const ticketAgeDays = Math.floor(ticketAgeMs / (1000 * 60 * 60 * 24));
+  const ticketAgeHours = Math.floor((ticketAgeMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const lastActivityMs = now.getTime() - updatedAt.getTime();
+  const lastActivityMins = Math.floor(lastActivityMs / (1000 * 60));
+
+  // Analyze conversation metrics
+  const customerMessages = articles.filter(a => a.sender === "Customer" && !a.internal);
+  const agentMessages = articles.filter(a => a.sender === "Agent" && !a.internal);
+  const internalNotes = articles.filter(a => a.internal);
+  const lastCustomerMsg = customerMessages[customerMessages.length - 1];
+  const lastAgentMsg = agentMessages[agentMessages.length - 1];
+
+  // Determine communication channel from most recent article types
+  const channelTypes = articles.slice(-5).map(a => a.type).filter(Boolean);
+  const primaryChannel = channelTypes.length > 0
+    ? getMostCommon(channelTypes)
+    : "unknown";
+
+  // Time since last customer response
+  let timeSinceCustomer = "N/A";
+  if (lastCustomerMsg) {
+    const customerMsgTime = new Date(lastCustomerMsg.created_at);
+    const diffMs = now.getTime() - customerMsgTime.getTime();
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    if (diffMins < 60) {
+      timeSinceCustomer = `${diffMins} minutes ago`;
+    } else if (diffMins < 1440) {
+      timeSinceCustomer = `${Math.floor(diffMins / 60)} hours ago`;
+    } else {
+      timeSinceCustomer = `${Math.floor(diffMins / 1440)} days ago`;
+    }
+  }
+
+  // Check if awaiting first response
+  const isFirstResponse = agentMessages.length === 0;
+
+  // SLA status
+  let slaStatus = "No SLA";
+  if (ticket.escalation_at) {
+    const escalationDate = new Date(ticket.escalation_at);
+    if (escalationDate <= now) {
+      slaStatus = "BREACHED - Respond immediately";
+    } else {
+      const diffMs = escalationDate.getTime() - now.getTime();
+      const diffMins = Math.round(diffMs / 60_000);
+      if (diffMins < 60) {
+        slaStatus = `${diffMins} minutes remaining - URGENT`;
+      } else {
+        slaStatus = `${Math.floor(diffMins / 60)}h ${diffMins % 60}m remaining`;
+      }
+    }
+  }
+
+  // Build context
   const lines = [
+    "=== TICKET INFORMATION ===",
     `Ticket #${ticket.number}: ${ticket.title}`,
     `State: ${ticket.state}`,
     `Priority: ${ticket.priority}`,
-    `Customer: ${customerName}`,
-    `Assigned Agent: ${agentName}`,
     `Group: ${ticket.group}`,
+    tags.length > 0 ? `Tags: ${tags.join(", ")}` : "",
+    `SLA Status: ${slaStatus}`,
     "",
-    agentsList ? `Our support team agents: ${agentsList}` : "",
+    "=== PEOPLE ===",
+    `Customer: ${customerName}${customerEmail ? ` <${customerEmail}>` : ""}${customerPhone ? ` (${customerPhone})` : ""}`,
+    `Assigned Agent: ${agentName}`,
+    agentsList ? `All Support Agents: ${agentsList}` : "",
     "",
-    "IMPORTANT: You are drafting a response on behalf of the assigned AGENT, not any of the customers.",
-    `The agent's name is "${agentName}". Do NOT sign as or impersonate any customer in the conversation.`,
-    "Customers are external people contacting support. Agents are internal staff responding.",
-    agentsList ? `The people listed as "Our support team agents" above are all AGENTS (internal staff), not customers.` : "",
+    "=== SITUATION ===",
+    `Ticket Age: ${ticketAgeDays > 0 ? `${ticketAgeDays} days ` : ""}${ticketAgeHours} hours`,
+    `Last Activity: ${lastActivityMins < 60 ? `${lastActivityMins} mins ago` : `${Math.floor(lastActivityMins / 60)} hours ago`}`,
+    `Last Customer Message: ${timeSinceCustomer}`,
+    `Communication Channel: ${formatChannelType(primaryChannel)}`,
+    `Messages: ${customerMessages.length} from customer, ${agentMessages.length} from agents${internalNotes.length > 0 ? `, ${internalNotes.length} internal notes` : ""}`,
+    isFirstResponse ? "*** THIS WILL BE THE FIRST AGENT RESPONSE TO THIS TICKET ***" : "",
     "",
-    "--- Conversation ---",
+    "=== IMPORTANT CONTEXT ===",
+    "You are drafting a response on behalf of the AGENT, not the customer.",
+    `The assigned agent is "${agentName}". Do NOT sign as or impersonate any customer.`,
+    "Customers are external people contacting support. Agents are internal staff.",
+    agentsList ? `These are all AGENTS (internal staff): ${agentsList}` : "",
+    "",
+    "=== CONVERSATION HISTORY ===",
   ].filter(Boolean);
 
-  // Include last 20 articles max to keep context manageable
+  // Include articles with timestamps and better formatting
   const recent = articles.slice(-20);
   for (const article of recent) {
     if (article.sender === "System") continue;
 
-    // Extract the person's name from the "from" field for clearer attribution
-    let personName = article.sender; // fallback: "Customer" or "Agent"
+    // Format timestamp
+    const msgDate = new Date(article.created_at);
+    const timestamp = msgDate.toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+
+    // Extract the person's name from the "from" field
+    let personName = article.sender;
     if (article.from) {
       const nameMatch = article.from.match(/^(.+?)\s*<[^>]+>$/);
       if (nameMatch) {
@@ -221,9 +316,10 @@ export async function buildTicketContext(ticketId: number): Promise<string> {
       }
     }
 
-    const role = article.sender; // "Customer" or "Agent"
-    const internalTag = article.internal ? " (Internal Note)" : "";
-    const label = `${personName} [${role}]${internalTag}`;
+    const role = article.sender;
+    const channelIndicator = article.type && article.type !== "note" ? ` via ${formatChannelType(article.type)}` : "";
+    const internalTag = article.internal ? " [INTERNAL NOTE]" : "";
+    const label = `[${timestamp}] ${personName} (${role})${channelIndicator}${internalTag}`;
 
     const body = article.body
       .replace(/<[^>]+>/g, "")
@@ -231,12 +327,39 @@ export async function buildTicketContext(ticketId: number): Promise<string> {
       .replace(/&amp;/g, "&")
       .replace(/&lt;/g, "<")
       .replace(/&gt;/g, ">")
+      .replace(/\n{3,}/g, "\n\n")
       .trim();
 
-    // Cap each article at 500 chars to prevent context overflow
-    const truncatedBody = body.length > 500 ? body.slice(0, 500) + "..." : body;
-    lines.push(`[${label}] ${truncatedBody}`);
+    // Cap each article at 600 chars
+    const truncatedBody = body.length > 600 ? body.slice(0, 600) + "..." : body;
+    lines.push(`${label}:\n${truncatedBody}\n`);
   }
 
   return lines.join("\n");
+}
+
+/** Get the most common element in an array */
+function getMostCommon(arr: string[]): string {
+  const counts: Record<string, number> = {};
+  for (const item of arr) {
+    counts[item] = (counts[item] || 0) + 1;
+  }
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? arr[0];
+}
+
+/** Format channel type for display */
+function formatChannelType(type: string): string {
+  const typeMap: Record<string, string> = {
+    email: "Email",
+    note: "Internal Note",
+    phone: "Phone",
+    sms: "SMS",
+    web: "Web Form",
+    twitter: "Twitter",
+    facebook: "Facebook",
+    telegram: "Telegram",
+    teams_chat_message: "Microsoft Teams",
+    ringcentral_sms_message: "SMS (RingCentral)",
+  };
+  return typeMap[type] || type;
 }
