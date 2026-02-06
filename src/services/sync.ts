@@ -182,7 +182,7 @@ async function processWebhook(
     threadJustCreated = true;
 
     // If we just created a thread for a closed/locked ticket, close it immediately
-    if (normalizedState === "closed" || normalizedState === "closed (locked)") {
+    if (normalizedState === "closed" || normalizedState === "closed (locked)" || normalizedState === "closed (locked until)") {
       await closeTicketThread(client, mapping.thread_id);
       logger.info({ ticketId }, "Closed newly created thread for closed ticket");
     } else if (normalizedState === "pending close" || normalizedState === "waiting for reply") {
@@ -209,7 +209,7 @@ async function processWebhook(
 
   // Handle state changes (both sides are lowercase now)
   const oldState = mapping.state;
-  const isClosedState = (s: string) => s === "closed" || s === "closed (locked)";
+  const isClosedState = (s: string) => s === "closed" || s === "closed (locked)" || s === "closed (locked until)";
 
   if (normalizedState !== oldState) {
     updateThreadState(ticketId, normalizedState);
@@ -286,44 +286,6 @@ async function processWebhook(
   // arrive out of order due to concurrent Zammad processing.
   if (webhookArticle) {
     await syncAllUnsyncedArticles(client, mapping.thread_id, ticketId);
-
-    // Fire-and-forget: AI auto-suggestion on customer reply
-    if (webhookArticle.sender === "Customer") {
-      generateAutoSuggestion(client, mapping.thread_id, ticketId).catch((err) =>
-        logger.debug({ ticketId, err }, "Auto-suggestion failed (non-critical)")
-      );
-    }
-  }
-}
-
-/**
- * Generate an AI auto-suggestion when a customer replies.
- * Non-blocking fire-and-forget — errors are logged but never crash the sync pipeline.
- */
-async function generateAutoSuggestion(
-  client: Client,
-  threadId: string,
-  ticketId: number
-): Promise<void> {
-  try {
-    const { isAIConfigured, buildTicketContext, aiChat } = await import("./ai.js");
-    if (!isAIConfigured()) return;
-
-    const context = await buildTicketContext(ticketId);
-    const suggestion = await aiChat(
-      "You are a support agent assistant. A customer just replied to this ticket. Suggest a brief, professional response the agent could send. Keep it under 200 words.",
-      context
-    );
-
-    if (suggestion) {
-      await sendToThread(
-        client,
-        threadId,
-        `**AI Suggestion:** ${suggestion}`
-      );
-    }
-  } catch (err) {
-    logger.debug({ ticketId, err }, "Auto-suggestion generation failed");
   }
 }
 

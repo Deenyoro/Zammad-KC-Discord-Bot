@@ -178,24 +178,64 @@ export async function handleState(interaction: ChatInputCommandInteraction) {
   );
 }
 
+function computeLockExpiry(code: string): string {
+  const now = new Date();
+  switch (code) {
+    case "30m": now.setMinutes(now.getMinutes() + 30); break;
+    case "2h": now.setHours(now.getHours() + 2); break;
+    case "4h": now.setHours(now.getHours() + 4); break;
+    case "8h": now.setHours(now.getHours() + 8); break;
+    case "16h": now.setHours(now.getHours() + 16); break;
+    case "1d": now.setDate(now.getDate() + 1); break;
+    case "2d": now.setDate(now.getDate() + 2); break;
+    case "1w": now.setDate(now.getDate() + 7); break;
+    case "1M": now.setMonth(now.getMonth() + 1); break;
+    default: now.setDate(now.getDate() + 1); break;
+  }
+  return now.toISOString();
+}
+
 export async function handleLock(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
   await interaction.deferReply();
 
-  const lockedState = await getStateByName("closed (locked)");
-  if (!lockedState) throw new Error("Could not find 'closed (locked)' state in Zammad");
+  const duration = interaction.options.getString("duration");
 
-  await updateTicket(mapping.ticket_id, { state_id: lockedState.id });
-  updateThreadState(mapping.ticket_id, "closed (locked)");
+  if (duration) {
+    // Timed lock: use "closed (locked until)" state with pending_time
+    const timedState = await getStateByName("closed (locked until)");
+    if (!timedState) throw new Error("Could not find 'closed (locked until)' state in Zammad. This feature requires Zammad-KC.");
 
-  if (interaction.client && mapping.thread_id) {
-    await closeTicketThread(interaction.client, mapping.thread_id);
+    const pendingTime = computeLockExpiry(duration);
+    await updateTicket(mapping.ticket_id, { state_id: timedState.id, pending_time: pendingTime });
+    updateThreadState(mapping.ticket_id, "closed (locked until)");
+
+    if (interaction.client && mapping.thread_id) {
+      await closeTicketThread(interaction.client, mapping.thread_id);
+    }
+
+    const expiryDate = new Date(pendingTime);
+    const expiryStr = expiryDate.toLocaleString();
+    await interaction.editReply(
+      `${interaction.user} locked ticket #${mapping.ticket_number} until ${expiryStr}. It will auto-unlock after that.`
+    );
+  } else {
+    // Permanent lock
+    const lockedState = await getStateByName("closed (locked)");
+    if (!lockedState) throw new Error("Could not find 'closed (locked)' state in Zammad");
+
+    await updateTicket(mapping.ticket_id, { state_id: lockedState.id });
+    updateThreadState(mapping.ticket_id, "closed (locked)");
+
+    if (interaction.client && mapping.thread_id) {
+      await closeTicketThread(interaction.client, mapping.thread_id);
+    }
+
+    await interaction.editReply(
+      `${interaction.user} permanently locked ticket #${mapping.ticket_number}. Customers cannot reopen this ticket.`
+    );
   }
-
-  await interaction.editReply(
-    `${interaction.user} closed and locked ticket #${mapping.ticket_number}. Customers cannot reopen this ticket.`
-  );
 }
 
 export async function handleInfo(interaction: ChatInputCommandInteraction) {
@@ -902,12 +942,17 @@ export async function handleAi(interaction: ChatInputCommandInteraction) {
 
     const context = await buildTicketContext(mapping.ticket_id);
     const response = await aiChat(
-      "You are a helpful support agent assistant. Based on the ticket context below, suggest a professional and helpful response to send to the customer. Keep it concise and actionable.\n\n" +
+      "You are an assistant helping a support agent draft a reply. " +
+        "The ticket context below identifies the assigned agent and the customer(s). " +
+        "Draft a response FROM the assigned agent TO the customer. " +
+        "Do NOT impersonate or sign as any customer. " +
+        "Do NOT include email signatures, disclaimers, or quoted previous messages. " +
+        "Keep it concise, professional, and actionable.\n\n" +
         context,
-      "Please suggest a response for this support ticket."
+      "Draft a reply that the assigned agent should send to the customer."
     );
 
-    await interaction.editReply(truncate(`**AI Suggested Response:**\n${response}`, 2000));
+    await interaction.editReply(truncate(`**Suggested Response:**\n\`\`\`\n${response}\n\`\`\``, 2000));
   } catch (err) {
     logger.error({ err }, "AI command failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
@@ -953,13 +998,16 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
     }
 
     const response = await aiChat(
-      "You are a technical support specialist. Based on the ticket context and any web search results provided, give detailed troubleshooting steps. Be specific and actionable.\n\n" +
+      "You are an assistant helping a support agent troubleshoot a customer issue. " +
+        "The ticket context below identifies the assigned agent and the customer(s). " +
+        "Provide troubleshooting steps that the AGENT can use or share with the customer. " +
+        "Do NOT impersonate any customer. Be specific and actionable.\n\n" +
         context +
         searchResults,
-      "Please provide troubleshooting steps for this issue."
+      "Provide troubleshooting steps for this issue."
     );
 
-    await interaction.editReply(truncate(`**AI Troubleshooting Help:**\n${response}`, 2000));
+    await interaction.editReply(truncate(`**Troubleshooting Help:**\n\`\`\`\n${response}\n\`\`\``, 2000));
   } catch (err) {
     logger.error({ err }, "AI help command failed");
     const msg = err instanceof Error ? err.message : "Unknown error";

@@ -41,14 +41,16 @@ function stateColor(state: string): number {
     case "open":
       return 0x2ecc71; // green
     case "waiting for reply":
-      return 0xe67e22; // orange — awaiting customer response
+      return 0xe67e22; // orange - awaiting customer response
     case "pending reminder":
     case "pending close":
       return 0xf39c12; // amber
     case "closed":
       return 0x95a5a6; // grey
     case "closed (locked)":
-      return 0x7f8c8d; // dark grey — permanently closed
+      return 0x7f8c8d; // dark grey - permanently closed
+    case "closed (locked until)":
+      return 0x8e44ad; // purple - timed lock
     default:
       return 0x7289da; // discord blurple
   }
