@@ -266,86 +266,162 @@ export const aireplyCommand = new SlashCommandBuilder()
   .setName("aireply")
   .setDescription("Get an AI-suggested reply for this ticket")
   .addStringOption((o) =>
-    o
-      .setName("context")
-      .setDescription("Additional context for the AI")
-      .setRequired(false)
+    o.setName("context").setDescription("Additional context for the AI").setRequired(false)
   )
   .addStringOption((o) =>
-    o
-      .setName("language")
-      .setDescription("Response language (uses bot default if not set)")
-      .setRequired(false)
+    o.setName("language").setDescription("Response language").setRequired(false)
       .addChoices(
         { name: "English", value: "en" },
         { name: "Portuguese (Brazilian)", value: "pt-br" },
         { name: "Arabic", value: "ar" },
         { name: "Chinese", value: "zh" }
       )
+  )
+  .addStringOption((o) =>
+    o.setName("tone").setDescription("Override tone").setRequired(false)
+      .addChoices(
+        { name: "Formal", value: "formal" },
+        { name: "Friendly", value: "friendly" },
+        { name: "Brief", value: "brief" },
+        { name: "Empathetic", value: "empathetic" }
+      )
+  )
+  .addStringOption((o) =>
+    o.setName("audience").setDescription("Technical level").setRequired(false)
+      .addChoices(
+        { name: "Technical", value: "technical" },
+        { name: "Non-technical", value: "non-technical" }
+      )
+  )
+  .addStringOption((o) =>
+    o.setName("length").setDescription("Response length").setRequired(false)
+      .addChoices(
+        { name: "Short", value: "short" },
+        { name: "Medium", value: "medium" },
+        { name: "Detailed", value: "detailed" }
+      )
+  )
+  .addBooleanOption((o) =>
+    o.setName("exclude_internal").setDescription("Ignore internal notes").setRequired(false)
   );
 
 export const aisummaryCommand = new SlashCommandBuilder()
   .setName("aisummary")
   .setDescription("Get an AI summary of the ticket with suggested next steps")
   .addStringOption((o) =>
-    o
-      .setName("context")
-      .setDescription("Additional context for the AI")
-      .setRequired(false)
+    o.setName("context").setDescription("Additional context for the AI").setRequired(false)
   )
   .addStringOption((o) =>
-    o
-      .setName("language")
-      .setDescription("Response language (uses bot default if not set)")
-      .setRequired(false)
+    o.setName("language").setDescription("Response language").setRequired(false)
       .addChoices(
         { name: "English", value: "en" },
         { name: "Portuguese (Brazilian)", value: "pt-br" },
         { name: "Arabic", value: "ar" },
         { name: "Chinese", value: "zh" }
       )
+  )
+  .addStringOption((o) =>
+    o.setName("tone").setDescription("Override tone").setRequired(false)
+      .addChoices(
+        { name: "Formal", value: "formal" },
+        { name: "Friendly", value: "friendly" },
+        { name: "Brief", value: "brief" },
+        { name: "Empathetic", value: "empathetic" }
+      )
+  )
+  .addStringOption((o) =>
+    o.setName("length").setDescription("Response length").setRequired(false)
+      .addChoices(
+        { name: "Short", value: "short" },
+        { name: "Medium", value: "medium" },
+        { name: "Detailed", value: "detailed" }
+      )
+  )
+  .addStringOption((o) =>
+    o.setName("focus").setDescription("What to emphasize").setRequired(false)
+      .addChoices(
+        { name: "Timeline", value: "timeline" },
+        { name: "Technical", value: "technical" },
+        { name: "Escalation", value: "escalation" },
+        { name: "Billing", value: "billing" }
+      )
+  )
+  .addBooleanOption((o) =>
+    o.setName("exclude_internal").setDescription("Ignore internal notes").setRequired(false)
   );
 
 export const aihelpCommand = new SlashCommandBuilder()
   .setName("aihelp")
   .setDescription("Get AI troubleshooting help with web search for this ticket")
   .addStringOption((o) =>
-    o
-      .setName("context")
-      .setDescription("Additional context for the AI")
-      .setRequired(false)
+    o.setName("context").setDescription("Additional context for the AI").setRequired(false)
   )
   .addStringOption((o) =>
-    o
-      .setName("language")
-      .setDescription("Response language (uses bot default if not set)")
-      .setRequired(false)
+    o.setName("language").setDescription("Response language").setRequired(false)
       .addChoices(
         { name: "English", value: "en" },
         { name: "Portuguese (Brazilian)", value: "pt-br" },
         { name: "Arabic", value: "ar" },
         { name: "Chinese", value: "zh" }
       )
+  )
+  .addStringOption((o) =>
+    o.setName("tone").setDescription("Override tone").setRequired(false)
+      .addChoices(
+        { name: "Formal", value: "formal" },
+        { name: "Friendly", value: "friendly" },
+        { name: "Brief", value: "brief" },
+        { name: "Empathetic", value: "empathetic" }
+      )
+  )
+  .addStringOption((o) =>
+    o.setName("audience").setDescription("Technical level").setRequired(false)
+      .addChoices(
+        { name: "Technical", value: "technical" },
+        { name: "Non-technical", value: "non-technical" }
+      )
+  )
+  .addStringOption((o) =>
+    o.setName("length").setDescription("Response length").setRequired(false)
+      .addChoices(
+        { name: "Short", value: "short" },
+        { name: "Medium", value: "medium" },
+        { name: "Detailed", value: "detailed" }
+      )
+  )
+  .addStringOption((o) =>
+    o.setName("format").setDescription("Output style").setRequired(false)
+      .addChoices(
+        { name: "Steps", value: "steps" },
+        { name: "Script (for phone)", value: "script" },
+        { name: "Checklist", value: "checklist" }
+      )
+  )
+  .addBooleanOption((o) =>
+    o.setName("exclude_internal").setDescription("Ignore internal notes").setRequired(false)
   );
 
 export const aiproofreadCommand = new SlashCommandBuilder()
   .setName("aiproofread")
   .setDescription("Proofread a message for spelling, grammar, and flow")
   .addStringOption((o) =>
-    o
-      .setName("message")
-      .setDescription("The message to proofread")
-      .setRequired(true)
+    o.setName("message").setDescription("The message to proofread").setRequired(true)
   )
   .addStringOption((o) =>
-    o
-      .setName("language")
-      .setDescription("Response language (uses bot default if not set)")
-      .setRequired(false)
+    o.setName("language").setDescription("Response language").setRequired(false)
       .addChoices(
         { name: "English", value: "en" },
         { name: "Portuguese (Brazilian)", value: "pt-br" },
         { name: "Arabic", value: "ar" },
         { name: "Chinese", value: "zh" }
+      )
+  )
+  .addStringOption((o) =>
+    o.setName("tone").setDescription("Target tone").setRequired(false)
+      .addChoices(
+        { name: "Formal", value: "formal" },
+        { name: "Friendly", value: "friendly" },
+        { name: "Brief", value: "brief" },
+        { name: "Empathetic", value: "empathetic" }
       )
   );
