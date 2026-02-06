@@ -1,6 +1,6 @@
 import { logger } from "../util/logger.js";
 import { getSettingOrEnv } from "../db/index.js";
-import { getTicket, getArticles, getUser } from "./zammad.js";
+import { getTicket, getArticles, getUser, getAgents } from "./zammad.js";
 
 // ---------------------------------------------------------------
 // Provider abstraction
@@ -175,6 +175,18 @@ export async function buildTicketContext(ticketId: number): Promise<string> {
     }
   }
 
+  // Fetch all agents for context
+  let agentsList = "";
+  try {
+    const agents = await getAgents();
+    const agentNames = agents.map((a) => `${a.firstname} ${a.lastname}`.trim()).filter(Boolean);
+    if (agentNames.length > 0) {
+      agentsList = agentNames.join(", ");
+    }
+  } catch {
+    // non-critical
+  }
+
   const lines = [
     `Ticket #${ticket.number}: ${ticket.title}`,
     `State: ${ticket.state}`,
@@ -183,12 +195,15 @@ export async function buildTicketContext(ticketId: number): Promise<string> {
     `Assigned Agent: ${agentName}`,
     `Group: ${ticket.group}`,
     "",
+    agentsList ? `Our support team agents: ${agentsList}` : "",
+    "",
     "IMPORTANT: You are drafting a response on behalf of the assigned AGENT, not any of the customers.",
     `The agent's name is "${agentName}". Do NOT sign as or impersonate any customer in the conversation.`,
     "Customers are external people contacting support. Agents are internal staff responding.",
+    agentsList ? `The people listed as "Our support team agents" above are all AGENTS (internal staff), not customers.` : "",
     "",
     "--- Conversation ---",
-  ];
+  ].filter(Boolean);
 
   // Include last 20 articles max to keep context manageable
   const recent = articles.slice(-20);
