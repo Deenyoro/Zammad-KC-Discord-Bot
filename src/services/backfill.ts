@@ -79,6 +79,19 @@ export async function syncAllTickets(client: Client): Promise<void> {
           } catch (err) {
             logger.debug({ ticketId: ticket.id, err }, "Failed to sync role members to thread");
           }
+        } else {
+          // Ensure hidden-state threads stay archived (catches manual unarchives or bot restarts)
+          try {
+            const thread = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
+            if (thread?.isThread() && !thread.archived && ticketInfo.state === "waiting for reply") {
+              await discordQueue.add(async () => {
+                await thread.edit({ archived: true, reason: "Re-archiving waiting for reply thread" });
+              });
+              logger.info({ ticketId: ticket.id }, "Re-archived waiting for reply thread");
+            }
+          } catch (err) {
+            logger.debug({ ticketId: ticket.id, err }, "Failed to ensure hidden thread stays archived");
+          }
         }
 
         // Update state if changed
