@@ -211,6 +211,54 @@ export async function getUser(userId: number): Promise<ZammadUser> {
   return res.json() as Promise<ZammadUser>;
 }
 
+// Cache for agents list (refreshed every 5 minutes)
+let _agentsCache: ZammadUser[] | null = null;
+let _agentsCacheFetchedAt = 0;
+const AGENTS_CACHE_TTL = 5 * 60_000; // 5 minutes
+
+/**
+ * Fetch all agents (users with agent permissions) from Zammad.
+ * Uses caching to avoid hammering the API.
+ */
+export async function getAgents(): Promise<ZammadUser[]> {
+  const now = Date.now();
+  if (_agentsCache && now - _agentsCacheFetchedAt < AGENTS_CACHE_TTL) {
+    return _agentsCache;
+  }
+
+  const agents: ZammadUser[] = [];
+  let page = 1;
+  const perPage = 100;
+  const MAX_PAGES = 20; // Safety limit
+
+  while (page <= MAX_PAGES) {
+    const res = await zammadFetch(`/users?page=${page}&per_page=${perPage}&expand=true`);
+    const users = (await res.json()) as (ZammadUser & { role_ids?: number[]; active?: boolean })[];
+    if (users.length === 0) break;
+
+    // Filter for active users who have agent-like role_ids (typically 2 = Agent, 1 = Admin)
+    // Role ID 3 is usually Customer, which we exclude
+    for (const user of users) {
+      if (!user.active) continue;
+      // Skip system user (id 1)
+      if (user.id === 1) continue;
+      // Check if user has agent or admin roles (role_ids 1 or 2)
+      const roleIds = user.role_ids ?? [];
+      if (roleIds.includes(1) || roleIds.includes(2)) {
+        agents.push(user);
+      }
+    }
+
+    if (users.length < perPage) break;
+    page++;
+  }
+
+  _agentsCache = agents;
+  _agentsCacheFetchedAt = now;
+  logger.debug({ count: agents.length }, "Fetched agents list");
+  return agents;
+}
+
 export async function searchUsers(query: string): Promise<ZammadUser[]> {
   const res = await zammadFetch(`/users/search?query=${encodeURIComponent(query)}&limit=10`);
   return res.json() as Promise<ZammadUser[]>;
