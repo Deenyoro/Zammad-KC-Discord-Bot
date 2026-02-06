@@ -932,6 +932,37 @@ const LANG_MAP: Record<string, string> = {
   zh: "Chinese",
 };
 
+const TONE_MAP: Record<string, string> = {
+  formal: "Use a formal, professional tone.",
+  friendly: "Use a warm, friendly tone while remaining professional.",
+  brief: "Be extremely concise and to the point.",
+  empathetic: "Show empathy and understanding for the customer's situation.",
+};
+
+const AUDIENCE_MAP: Record<string, string> = {
+  technical: "The customer is technically savvy - use technical terms freely.",
+  "non-technical": "The customer is not technical - avoid jargon, use simple explanations.",
+};
+
+const LENGTH_MAP: Record<string, string> = {
+  short: "Keep response very brief (2-3 sentences max).",
+  medium: "Keep response moderate length.",
+  detailed: "Provide a comprehensive, detailed response.",
+};
+
+const FOCUS_MAP: Record<string, string> = {
+  timeline: "Focus on the chronological sequence of events.",
+  technical: "Focus on technical details and root cause.",
+  escalation: "Focus on escalation history and urgency indicators.",
+  billing: "Focus on billing, payment, and account status details.",
+};
+
+const FORMAT_MAP: Record<string, string> = {
+  steps: "Format as numbered troubleshooting steps.",
+  script: "Format as a phone script the agent can read aloud to the customer.",
+  checklist: "Format as a checkbox checklist.",
+};
+
 function getLanguageInstruction(interaction: ChatInputCommandInteraction): string {
   const langCode = interaction.options.getString("language")
     ?? getSettingOrEnv("AI_DEFAULT_LANGUAGE")
@@ -946,6 +977,31 @@ function getCallerIdentity(interaction: ChatInputCommandInteraction): string {
   return caller?.zammad_email
     ? `${interaction.user.displayName} (${caller.zammad_email})`
     : interaction.user.displayName;
+}
+
+function getStyleInstructions(interaction: ChatInputCommandInteraction): string {
+  const parts: string[] = [];
+
+  const tone = interaction.options.getString("tone");
+  if (tone && TONE_MAP[tone]) parts.push(TONE_MAP[tone]);
+
+  const audience = interaction.options.getString("audience");
+  if (audience && AUDIENCE_MAP[audience]) parts.push(AUDIENCE_MAP[audience]);
+
+  const length = interaction.options.getString("length");
+  if (length && LENGTH_MAP[length]) parts.push(LENGTH_MAP[length]);
+
+  const focus = interaction.options.getString("focus");
+  if (focus && FOCUS_MAP[focus]) parts.push(FOCUS_MAP[focus]);
+
+  const format = interaction.options.getString("format");
+  if (format && FORMAT_MAP[format]) parts.push(FORMAT_MAP[format]);
+
+  return parts.length > 0 ? "\n\nSTYLE INSTRUCTIONS:\n- " + parts.join("\n- ") : "";
+}
+
+function getExcludeInternal(interaction: ChatInputCommandInteraction): boolean {
+  return interaction.options.getBoolean("exclude_internal") ?? false;
 }
 
 // ---------------------------------------------------------------
@@ -969,9 +1025,11 @@ export async function handleAiReply(interaction: ChatInputCommandInteraction) {
 
     const callerName = getCallerIdentity(interaction);
     const langInstruction = getLanguageInstruction(interaction);
+    const styleInstruction = getStyleInstructions(interaction);
+    const excludeInternal = getExcludeInternal(interaction);
     const extraContext = interaction.options.getString("context") ?? "";
 
-    const ticketContext = await buildTicketContext(mapping.ticket_id);
+    const ticketContext = await buildTicketContext(mapping.ticket_id, { excludeInternal });
     const response = await aiChat(
       "You are a skilled customer support assistant helping an agent draft a reply.\n\n" +
         `Agent requesting help: ${callerName}\n\n` +
@@ -983,7 +1041,8 @@ export async function handleAiReply(interaction: ChatInputCommandInteraction) {
         "- For first responses, acknowledge receipt and set expectations\n" +
         "- Reference any relevant tags for context (billing, technical, etc.)\n" +
         "- Do NOT add signatures, disclaimers, or quote previous messages\n" +
-        "- Keep it concise, professional, and actionable\n" +
+        "- Keep it concise, professional, and actionable" +
+        styleInstruction +
         langInstruction + "\n\n" +
         ticketContext +
         (extraContext ? `\n\n=== AGENT'S ADDITIONAL CONTEXT ===\n${extraContext}` : ""),
@@ -1028,9 +1087,11 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
 
     const callerName = getCallerIdentity(interaction);
     const langInstruction = getLanguageInstruction(interaction);
+    const styleInstruction = getStyleInstructions(interaction);
+    const excludeInternal = getExcludeInternal(interaction);
     const extraContext = interaction.options.getString("context") ?? "";
 
-    const ticketContext = await buildTicketContext(mapping.ticket_id);
+    const ticketContext = await buildTicketContext(mapping.ticket_id, { excludeInternal });
     const response = await aiChat(
       "You are a support ticket analyst helping an agent quickly understand a ticket.\n\n" +
         `Agent requesting summary: ${callerName}\n\n` +
@@ -1040,7 +1101,8 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
         "- Note communication channel and adjust advice accordingly\n" +
         "- Identify the core issue and current status\n" +
         "- Flag any escalation signals or frustrated customer indicators\n" +
-        "- Note if awaiting customer response vs agent action needed\n" +
+        "- Note if awaiting customer response vs agent action needed" +
+        styleInstruction +
         langInstruction + "\n\n" +
         ticketContext +
         (extraContext ? `\n\n=== AGENT'S ADDITIONAL CONTEXT ===\n${extraContext}` : ""),
@@ -1089,9 +1151,11 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
 
     const callerName = getCallerIdentity(interaction);
     const langInstruction = getLanguageInstruction(interaction);
+    const styleInstruction = getStyleInstructions(interaction);
+    const excludeInternal = getExcludeInternal(interaction);
     const extraContext = interaction.options.getString("context") ?? "";
 
-    const ticketContext = await buildTicketContext(mapping.ticket_id);
+    const ticketContext = await buildTicketContext(mapping.ticket_id, { excludeInternal });
 
     // If search is configured, augment with web results
     let searchResults = "";
@@ -1118,7 +1182,8 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
         "- If web search results are included, use them to inform your advice\n" +
         "- Prioritize common solutions first, then edge cases\n" +
         "- Include specific questions to ask if more info is needed\n" +
-        "- Flag if this needs escalation to another team/specialist\n" +
+        "- Flag if this needs escalation to another team/specialist" +
+        styleInstruction +
         langInstruction + "\n\n" +
         ticketContext +
         searchResults +
@@ -1169,6 +1234,8 @@ export async function handleAiProofread(interaction: ChatInputCommandInteraction
 
     const callerName = getCallerIdentity(interaction);
     const langInstruction = getLanguageInstruction(interaction);
+    const tone = interaction.options.getString("tone");
+    const toneInstruction = tone && TONE_MAP[tone] ? `\n- ${TONE_MAP[tone]}` : "";
     const messageToProofread = interaction.options.getString("message", true);
 
     // Get ticket context for customer name and channel info
@@ -1186,7 +1253,8 @@ export async function handleAiProofread(interaction: ChatInputCommandInteraction
         "- Match tone to communication channel (formal for email, brief for SMS)\n" +
         "- Maintain the original meaning - do NOT add or remove content\n" +
         "- Do NOT add greetings, signatures, or disclaimers unless they exist\n" +
-        "- Output ONLY the corrected message - no explanations or preamble\n" +
+        "- Output ONLY the corrected message - no explanations or preamble" +
+        toneInstruction +
         langInstruction,
       `Proofread and return the corrected version:\n\n${messageToProofread}`
     );
