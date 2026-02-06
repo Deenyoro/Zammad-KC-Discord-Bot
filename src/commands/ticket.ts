@@ -1,4 +1,4 @@
-import { ChatInputCommandInteraction } from "discord.js";
+import { ChatInputCommandInteraction, ThreadChannel } from "discord.js";
 import { logger } from "../util/logger.js";
 import {
   getThreadByThreadId,
@@ -32,7 +32,8 @@ import {
   createSmsConversation,
   type ArticleAttachment,
 } from "../services/zammad.js";
-import { ticketUrl, closeTicketThread } from "../services/threads.js";
+import { ticketUrl, closeTicketThread, removeRoleMembersFromThread } from "../services/threads.js";
+import { discordQueue } from "../queue/index.js";
 import { parseTime } from "../util/parseTime.js";
 import { truncate } from "../util/truncate.js";
 import { env } from "../util/env.js";
@@ -147,12 +148,23 @@ export async function handleState(interaction: ChatInputCommandInteraction) {
 
   await updateTicket(mapping.ticket_id, { state_id: state.id });
 
-  // If the new state is a closed variant, immediately close the Discord thread
+  // Immediately update the Discord thread to match the new state
   const normalizedState = stateName.toLowerCase();
   if (normalizedState === "closed" || normalizedState === "closed (locked)") {
     updateThreadState(mapping.ticket_id, normalizedState);
     if (interaction.client && mapping.thread_id) {
       await closeTicketThread(interaction.client, mapping.thread_id);
+    }
+  } else if (normalizedState === "waiting for reply") {
+    updateThreadState(mapping.ticket_id, normalizedState);
+    if (interaction.client && mapping.thread_id) {
+      await removeRoleMembersFromThread(interaction.client, mapping.thread_id);
+      const thread = (await interaction.client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
+      if (thread?.isThread() && !thread.archived) {
+        await discordQueue.add(async () => {
+          await thread.edit({ archived: true, reason: "Ticket set to waiting for reply" });
+        });
+      }
     }
   }
 
