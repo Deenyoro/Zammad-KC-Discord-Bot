@@ -147,13 +147,25 @@ export async function aiChat(
   }
 }
 
+export interface TicketContextOptions {
+  excludeInternal?: boolean;
+}
+
 /**
  * Build a comprehensive text summary of a ticket for AI context.
  * Includes ticket metadata, conversation history, and situational awareness.
  */
-export async function buildTicketContext(ticketId: number): Promise<string> {
+export async function buildTicketContext(
+  ticketId: number,
+  options: TicketContextOptions = {}
+): Promise<string> {
   const ticket = await getTicket(ticketId);
-  const articles = await getArticles(ticketId);
+  let articles = await getArticles(ticketId);
+
+  // Filter out internal notes if requested
+  if (options.excludeInternal) {
+    articles = articles.filter(a => !a.internal);
+  }
 
   // Fetch customer details
   let customerName = ticket.customer || "Unknown";
