@@ -36,6 +36,7 @@ import {
   aireplyCommand,
   aisummaryCommand,
   aihelpCommand,
+  aiproofreadCommand,
 } from "./shortcuts.js";
 
 const token = process.env.DISCORD_TOKEN;
@@ -74,6 +75,7 @@ const commands = [
   aireplyCommand.toJSON(),
   aisummaryCommand.toJSON(),
   aihelpCommand.toJSON(),
+  aiproofreadCommand.toJSON(),
 ];
 const rest = new REST().setToken(token);
 

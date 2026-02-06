@@ -83,6 +83,23 @@ export const setupCommand = new SlashCommandBuilder()
       .addStringOption((o) =>
         o.setName("model").setDescription("Model identifier").setRequired(true)
       )
+  )
+  .addSubcommand((sc) =>
+    sc
+      .setName("language")
+      .setDescription("Set default language for AI responses")
+      .addStringOption((o) =>
+        o
+          .setName("lang")
+          .setDescription("Default language")
+          .setRequired(true)
+          .addChoices(
+            { name: "English (default)", value: "en" },
+            { name: "Portuguese (Brazilian)", value: "pt-br" },
+            { name: "Arabic", value: "ar" },
+            { name: "Chinese", value: "zh" }
+          )
+      )
   );
 
 export async function handleSetupCommand(
@@ -110,6 +127,8 @@ export async function handleSetupCommand(
         return await handleSummarySetup(interaction);
       case "model":
         return await handleModelSetup(interaction);
+      case "language":
+        return await handleLanguageSetup(interaction);
       default:
         await interaction.reply({ content: "Unknown subcommand.", ephemeral: true });
     }
@@ -210,4 +229,21 @@ async function handleModelSetup(interaction: ChatInputCommandInteraction) {
 
   await interaction.editReply(`AI model changed to: ${model}`);
   logger.info({ model }, "AI model updated via /setup model");
+}
+
+async function handleLanguageSetup(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const lang = interaction.options.getString("lang", true);
+  const langNames: Record<string, string> = {
+    en: "English",
+    "pt-br": "Brazilian Portuguese",
+    ar: "Arabic",
+    zh: "Chinese",
+  };
+
+  setSetting("AI_DEFAULT_LANGUAGE", lang);
+
+  await interaction.editReply(`Default AI language set to: ${langNames[lang] ?? lang}`);
+  logger.info({ lang }, "Default AI language updated via /setup language");
 }
