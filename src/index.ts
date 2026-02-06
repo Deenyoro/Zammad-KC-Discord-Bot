@@ -22,6 +22,7 @@ import {
   pendingCommand,
   infoCommand,
   linkCommand,
+  lockCommand,
 } from "./commands/shortcuts.js";
 
 let discordClient: Client | null = null;
@@ -46,6 +47,7 @@ async function deployCommands() {
     pendingCommand.toJSON(),
     infoCommand.toJSON(),
     linkCommand.toJSON(),
+    lockCommand.toJSON(),
   ];
 
   const rest = new REST().setToken(config.DISCORD_TOKEN);

@@ -122,8 +122,38 @@ export async function handleState(interaction: ChatInputCommandInteraction) {
   if (!state) throw new Error(`Unknown state: ${stateName}`);
 
   await updateTicket(mapping.ticket_id, { state_id: state.id });
+
+  // If the new state is a closed variant, immediately close the Discord thread
+  const normalizedState = stateName.toLowerCase();
+  if (normalizedState === "closed" || normalizedState === "closed (locked)") {
+    updateThreadState(mapping.ticket_id, normalizedState);
+    if (interaction.client && mapping.thread_id) {
+      await closeTicketThread(interaction.client, mapping.thread_id);
+    }
+  }
+
   await interaction.editReply(
     `${interaction.user} changed ticket #${mapping.ticket_number} state to **${stateName}**.`
+  );
+}
+
+export async function handleLock(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply();
+
+  const lockedState = await getStateByName("closed (locked)");
+  if (!lockedState) throw new Error("Could not find 'closed (locked)' state in Zammad");
+
+  await updateTicket(mapping.ticket_id, { state_id: lockedState.id });
+  updateThreadState(mapping.ticket_id, "closed (locked)");
+
+  if (interaction.client && mapping.thread_id) {
+    await closeTicketThread(interaction.client, mapping.thread_id);
+  }
+
+  await interaction.editReply(
+    `${interaction.user} closed and locked ticket #${mapping.ticket_number}. Customers cannot reopen this ticket.`
   );
 }
 
