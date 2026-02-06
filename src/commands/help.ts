@@ -65,7 +65,7 @@ export async function handleHelpCommand(
         value: [
           "`/aireply` - Get AI-suggested reply for this ticket",
           "`/aisummary` - Get AI summary with next steps",
-          "`/aihelp` - AI troubleshooting with web search",
+          "`/aihelp [language]` - AI troubleshooting (en/pt/ar)",
         ].join("\n"),
         inline: false,
       },

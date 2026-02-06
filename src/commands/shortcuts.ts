@@ -272,4 +272,16 @@ export const aisummaryCommand = new SlashCommandBuilder()
 
 export const aihelpCommand = new SlashCommandBuilder()
   .setName("aihelp")
-  .setDescription("Get AI troubleshooting help with web search for this ticket");
+  .setDescription("Get AI troubleshooting help with web search for this ticket")
+  .addStringOption((o) =>
+    o
+      .setName("language")
+      .setDescription("Response language")
+      .setRequired(false)
+      .addChoices(
+        { name: "English (default)", value: "en" },
+        { name: "Portuguese (Brazilian)", value: "pt-br" },
+        { name: "Arabic", value: "ar" },
+        { name: "Chinese", value: "zh" }
+      )
+  );
