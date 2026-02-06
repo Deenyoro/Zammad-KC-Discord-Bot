@@ -927,7 +927,8 @@ export async function handleTemplate(interaction: ChatInputCommandInteraction) {
 export async function handleAi(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
-  await interaction.deferReply({ ephemeral: true });
+  // Public reply - visible to everyone in the thread
+  await interaction.deferReply({ ephemeral: false });
 
   try {
     // Dynamic import to avoid errors when AI deps aren't installed
@@ -944,6 +945,7 @@ export async function handleAi(interaction: ChatInputCommandInteraction) {
     const response = await aiChat(
       "You are an assistant helping a support agent draft a reply. " +
         "The ticket context below identifies the assigned agent and the customer(s). " +
+        "It also lists all of our support team agents so you know who is internal staff. " +
         "Draft a response FROM the assigned agent TO the customer. " +
         "Do NOT impersonate or sign as any customer. " +
         "Do NOT include email signatures, disclaimers, or quoted previous messages. " +
@@ -952,7 +954,13 @@ export async function handleAi(interaction: ChatInputCommandInteraction) {
       "Draft a reply that the assigned agent should send to the customer."
     );
 
-    await interaction.editReply(truncate(`**Suggested Response:**\n\`\`\`\n${response}\n\`\`\``, 2000));
+    // Clear AI labeling - this does NOT go to Zammad, stays in Discord only
+    await interaction.editReply(truncate(
+      "🤖 **AI Generated - For Agent Reference Only**\n" +
+      "_This suggestion is not sent to the customer. Copy/edit and use `/reply` to send._\n\n" +
+      `**Suggested Response:**\n\`\`\`\n${response}\n\`\`\``,
+      2000
+    ));
   } catch (err) {
     logger.error({ err }, "AI command failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
@@ -967,7 +975,8 @@ export async function handleAi(interaction: ChatInputCommandInteraction) {
 export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
-  await interaction.deferReply({ ephemeral: true });
+  // Public reply - visible to everyone in the thread
+  await interaction.deferReply({ ephemeral: false });
 
   try {
     const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
@@ -1000,6 +1009,7 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
     const response = await aiChat(
       "You are an assistant helping a support agent troubleshoot a customer issue. " +
         "The ticket context below identifies the assigned agent and the customer(s). " +
+        "It also lists all of our support team agents so you know who is internal staff. " +
         "Provide troubleshooting steps that the AGENT can use or share with the customer. " +
         "Do NOT impersonate any customer. Be specific and actionable.\n\n" +
         context +
@@ -1007,7 +1017,13 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
       "Provide troubleshooting steps for this issue."
     );
 
-    await interaction.editReply(truncate(`**Troubleshooting Help:**\n\`\`\`\n${response}\n\`\`\``, 2000));
+    // Clear AI labeling - this does NOT go to Zammad, stays in Discord only
+    await interaction.editReply(truncate(
+      "🤖 **AI Generated - For Agent Reference Only**\n" +
+      "_This troubleshooting info is for agent reference. Not sent to customer._\n\n" +
+      `**Troubleshooting Help:**\n\`\`\`\n${response}\n\`\`\``,
+      2000
+    ));
   } catch (err) {
     logger.error({ err }, "AI help command failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
