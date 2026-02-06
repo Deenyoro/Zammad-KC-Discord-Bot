@@ -1005,13 +1005,27 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
       ? `${interaction.user.displayName} (${caller.zammad_email})`
       : interaction.user.displayName;
 
+    // Get language preference
+    const langCode = interaction.options.getString("language") ?? "en";
+    const langMap: Record<string, string> = {
+      en: "English",
+      "pt-br": "Brazilian Portuguese",
+      ar: "Arabic",
+      zh: "Chinese",
+    };
+    const language = langMap[langCode] ?? "English";
+    const langInstruction = langCode !== "en"
+      ? ` Respond entirely in ${language}.`
+      : "";
+
     const context = await buildTicketContext(mapping.ticket_id);
     const response = await aiChat(
       "You are an assistant helping a support agent understand a ticket quickly. " +
         `The agent requesting this summary is: ${callerName}. ` +
         "The ticket context below includes the conversation history, assigned agent, and customer. " +
         "It also lists all of our support team agents so you know who is internal staff. " +
-        "Provide a concise summary that helps an agent quickly get up to speed.\n\n" +
+        "Provide a concise summary that helps an agent quickly get up to speed." +
+        langInstruction + "\n\n" +
         context,
       "Summarize this ticket concisely. Include:\n" +
         "1. A brief summary of the issue and current status (2-3 sentences max)\n" +
@@ -1019,7 +1033,7 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
         "3. At the end, provide EITHER:\n" +
         "   - A suggested 1-2 sentence reply if one is appropriate, OR\n" +
         "   - 2-3 bullet points of recommended next steps\n" +
-        "Keep the entire response brief and actionable."
+        "Keep the entire response brief and actionable." + langInstruction
     );
 
     // Clear AI labeling - this does NOT go to Zammad, stays in Discord only
