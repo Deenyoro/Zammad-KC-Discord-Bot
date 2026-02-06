@@ -119,7 +119,24 @@ export const linkCommand = new SlashCommandBuilder()
 
 export const lockCommand = new SlashCommandBuilder()
   .setName("lock")
-  .setDescription("Close and lock the ticket (prevents customer from reopening)");
+  .setDescription("Close and lock the ticket (prevents customer from reopening)")
+  .addStringOption((o) =>
+    o
+      .setName("duration")
+      .setDescription("Auto-unlock after this duration (omit for permanent lock)")
+      .setRequired(false)
+      .addChoices(
+        { name: "30 minutes", value: "30m" },
+        { name: "2 hours", value: "2h" },
+        { name: "4 hours", value: "4h" },
+        { name: "8 hours", value: "8h" },
+        { name: "16 hours", value: "16h" },
+        { name: "1 day", value: "1d" },
+        { name: "2 days", value: "2d" },
+        { name: "1 week", value: "1w" },
+        { name: "1 month", value: "1M" }
+      )
+  );
 
 // ---------------------------------------------------------------
 // New commands
