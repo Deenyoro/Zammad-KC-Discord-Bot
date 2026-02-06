@@ -66,8 +66,9 @@ export async function syncAllTickets(client: Client): Promise<void> {
         }
 
         // Ensure all role members are in the thread (catches newly added members)
-        // Skip for "pending close" — members were intentionally removed
-        if (ticketInfo.state !== "pending close") {
+        // Skip for "pending close" and "waiting for reply" — members were intentionally removed
+        const isHiddenState = ticketInfo.state === "pending close" || ticketInfo.state === "waiting for reply";
+        if (!isHiddenState) {
           try {
             const thread = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
             if (thread?.isThread() && !thread.archived) {
@@ -179,6 +180,7 @@ async function buildTicketInfo(ticket: {
   customer: string;
   group: string;
   created_at: string;
+  escalation_at?: string | null;
 }): Promise<TicketInfo> {
   let ownerName: string | undefined;
   if (ticket.owner_id && ticket.owner_id > 1) {
@@ -211,6 +213,7 @@ async function buildTicketInfo(ticket: {
     owner_id: ticket.owner_id,
     group: ticket.group,
     created_at: ticket.created_at,
+    escalation_at: ticket.escalation_at,
     url: ticketUrl(ticket.id),
   };
 }

@@ -30,6 +30,7 @@ export interface TicketInfo {
   owner_id?: number;
   group?: string;
   created_at?: string;
+  escalation_at?: string | null;
   url: string;
 }
 
@@ -54,10 +55,14 @@ function stateColor(state: string): number {
 }
 
 export function buildTicketEmbed(ticket: TicketInfo): EmbedBuilder {
+  // SLA breach overrides color to red
+  const slaBreached = ticket.escalation_at && new Date(ticket.escalation_at) <= new Date();
+  const color = slaBreached ? 0xe74c3c : stateColor(ticket.state);
+
   const embed = new EmbedBuilder()
     .setTitle(truncate(`#${ticket.number} — ${ticket.title}`, 256))
     .setURL(ticket.url)
-    .setColor(stateColor(ticket.state))
+    .setColor(color)
     .setTimestamp(ticket.created_at ? new Date(ticket.created_at) : new Date());
 
   const fields: { name: string; value: string; inline: boolean }[] = [
@@ -67,6 +72,22 @@ export function buildTicketEmbed(ticket: TicketInfo): EmbedBuilder {
   if (ticket.customer) fields.push({ name: "Customer", value: ticket.customer, inline: true });
   if (ticket.owner) fields.push({ name: "Assigned", value: ticket.owner, inline: true });
   if (ticket.group) fields.push({ name: "Group", value: ticket.group, inline: true });
+
+  // SLA indicator
+  if (ticket.escalation_at) {
+    const escalationDate = new Date(ticket.escalation_at);
+    const now = new Date();
+    if (escalationDate <= now) {
+      fields.push({ name: "SLA", value: `BREACHED (was ${escalationDate.toLocaleString()})`, inline: true });
+    } else {
+      const diffMs = escalationDate.getTime() - now.getTime();
+      const diffMins = Math.round(diffMs / 60_000);
+      const timeLeft = diffMins >= 60
+        ? `${Math.floor(diffMins / 60)}h ${diffMins % 60}m`
+        : `${diffMins}m`;
+      fields.push({ name: "SLA", value: `${timeLeft} remaining`, inline: true });
+    }
+  }
 
   embed.addFields(fields);
   embed.addFields({ name: "Zammad", value: `[Open ticket](${ticket.url})`, inline: false });

@@ -13,6 +13,17 @@ import {
   handleInfo,
   handleLink,
   handleLock,
+  handleSearch,
+  handleTags,
+  handleMerge,
+  handleHistory,
+  handleSchedule,
+  handleSchedules,
+  handleUnschedule,
+  handleNewTicket,
+  handleTemplate,
+  handleAi,
+  handleAiHelp,
 } from "../commands/ticket.js";
 import { handleSetupCommand } from "../commands/setup.js";
 import { handleHelpCommand } from "../commands/help.js";
@@ -67,12 +78,55 @@ export function onInteractionCreate(client: Client): void {
         case "lock":
           await handleLock(interaction);
           break;
+        case "search":
+          await handleSearch(interaction);
+          break;
+        case "tags":
+          await handleTags(interaction);
+          break;
+        case "merge":
+          await handleMerge(interaction);
+          break;
+        case "history":
+          await handleHistory(interaction);
+          break;
+        case "schedule":
+          await handleSchedule(interaction);
+          break;
+        case "schedules":
+          await handleSchedules(interaction);
+          break;
+        case "unschedule":
+          await handleUnschedule(interaction);
+          break;
+        case "newticket":
+          await handleNewTicket(interaction);
+          break;
+        case "template":
+          await handleTemplate(interaction);
+          break;
+        case "ai":
+          await handleAi(interaction);
+          break;
+        case "aihelp":
+          await handleAiHelp(interaction);
+          break;
         default:
           logger.warn({ commandName }, "Unknown command");
           await interaction.reply({ content: "Unknown command.", ephemeral: true });
       }
     } catch (err) {
       logger.error({ commandName, err }, "Unhandled interaction error");
+      try {
+        const msg = err instanceof Error ? err.message : "An unexpected error occurred.";
+        if (interaction.deferred || interaction.replied) {
+          await interaction.editReply(`Error: ${msg}`);
+        } else {
+          await interaction.reply({ content: `Error: ${msg}`, ephemeral: true });
+        }
+      } catch {
+        // Reply itself failed — nothing more we can do
+      }
     }
   });
 }

@@ -4,7 +4,7 @@ import {
   PermissionFlagsBits,
 } from "discord.js";
 import { logger } from "../util/logger.js";
-import { setUserMap } from "../db/index.js";
+import { setUserMap, setSetting, deleteSetting } from "../db/index.js";
 import { findUserByEmail } from "../services/zammad.js";
 import { env } from "../util/env.js";
 
@@ -27,6 +27,54 @@ export const setupCommand = new SlashCommandBuilder()
       .addStringOption((o) =>
         o.setName("zammad_email").setDescription("Zammad user email").setRequired(true)
       )
+  )
+  .addSubcommand((sc) =>
+    sc
+      .setName("ai")
+      .setDescription("Configure AI provider settings")
+      .addStringOption((o) =>
+        o.setName("api_key").setDescription("AI API key").setRequired(true)
+      )
+      .addStringOption((o) =>
+        o
+          .setName("provider")
+          .setDescription("AI provider")
+          .setRequired(false)
+          .addChoices(
+            { name: "OpenRouter (default)", value: "openrouter" },
+            { name: "OpenAI", value: "openai" },
+            { name: "Anthropic", value: "anthropic" }
+          )
+      )
+      .addStringOption((o) =>
+        o.setName("model").setDescription("Model identifier (optional)").setRequired(false)
+      )
+  )
+  .addSubcommand((sc) =>
+    sc
+      .setName("search")
+      .setDescription("Configure web search provider settings")
+      .addStringOption((o) =>
+        o.setName("api_key").setDescription("Search API key").setRequired(true)
+      )
+      .addStringOption((o) =>
+        o
+          .setName("provider")
+          .setDescription("Search provider")
+          .setRequired(false)
+          .addChoices(
+            { name: "Tavily (default)", value: "tavily" },
+            { name: "Brave", value: "brave" }
+          )
+      )
+  )
+  .addSubcommand((sc) =>
+    sc
+      .setName("summary")
+      .setDescription("Configure daily summary hour (0-23, or 'off' to disable)")
+      .addStringOption((o) =>
+        o.setName("hour").setDescription("Hour (0-23) or 'off'").setRequired(true)
+      )
   );
 
 export async function handleSetupCommand(
@@ -46,6 +94,12 @@ export async function handleSetupCommand(
     switch (sub) {
       case "usermap":
         return await handleUsermap(interaction);
+      case "ai":
+        return await handleAiSetup(interaction);
+      case "search":
+        return await handleSearchSetup(interaction);
+      case "summary":
+        return await handleSummarySetup(interaction);
       default:
         await interaction.reply({ content: "Unknown subcommand.", ephemeral: true });
     }
@@ -80,4 +134,59 @@ async function handleUsermap(interaction: ChatInputCommandInteraction) {
     { discordId: discordUser.id, zammadEmail, zammadId: match?.id },
     "User mapping updated"
   );
+}
+
+async function handleAiSetup(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const apiKey = interaction.options.getString("api_key", true);
+  const provider = interaction.options.getString("provider") ?? "openrouter";
+  const model = interaction.options.getString("model");
+
+  setSetting("AI_API_KEY", apiKey);
+  setSetting("AI_PROVIDER", provider);
+  if (model) {
+    setSetting("AI_MODEL", model);
+  }
+
+  await interaction.editReply(
+    `AI configured: provider=${provider}${model ? `, model=${model}` : ""}`
+  );
+  logger.info({ provider, model }, "AI settings updated via /setup ai");
+}
+
+async function handleSearchSetup(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const apiKey = interaction.options.getString("api_key", true);
+  const provider = interaction.options.getString("provider") ?? "tavily";
+
+  setSetting("SEARCH_API_KEY", apiKey);
+  setSetting("SEARCH_PROVIDER", provider);
+
+  await interaction.editReply(`Search configured: provider=${provider}`);
+  logger.info({ provider }, "Search settings updated via /setup search");
+}
+
+async function handleSummarySetup(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const hourInput = interaction.options.getString("hour", true);
+
+  if (hourInput.toLowerCase() === "off") {
+    deleteSetting("DAILY_SUMMARY_HOUR");
+    await interaction.editReply("Daily summary disabled.");
+    logger.info("Daily summary disabled via /setup summary");
+    return;
+  }
+
+  const hour = parseInt(hourInput, 10);
+  if (isNaN(hour) || hour < 0 || hour > 23) {
+    await interaction.editReply("Invalid hour. Provide a number 0-23 or 'off'.");
+    return;
+  }
+
+  setSetting("DAILY_SUMMARY_HOUR", String(hour));
+  await interaction.editReply(`Daily summary set to ${hour}:00.`);
+  logger.info({ hour }, "Daily summary hour updated via /setup summary");
 }
