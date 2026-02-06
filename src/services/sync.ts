@@ -179,8 +179,8 @@ async function processWebhook(
     if (!mapping) throw new Error(`Failed to create mapping for ticket ${ticketId}`);
     threadJustCreated = true;
 
-    // If we just created a thread for a closed ticket, close it immediately
-    if (normalizedState === "closed") {
+    // If we just created a thread for a closed/locked ticket, close it immediately
+    if (normalizedState === "closed" || normalizedState === "closed (locked)") {
       await closeTicketThread(client, mapping.thread_id);
       logger.info({ ticketId }, "Closed newly created thread for closed ticket");
     } else if (normalizedState === "pending close") {
@@ -199,13 +199,14 @@ async function processWebhook(
 
   // Handle state changes (both sides are lowercase now)
   const oldState = mapping.state;
+  const isClosedState = (s: string) => s === "closed" || s === "closed (locked)";
 
   if (normalizedState !== oldState) {
     updateThreadState(ticketId, normalizedState);
 
-    if (normalizedState === "closed") {
+    if (isClosedState(normalizedState)) {
       await closeTicketThread(client, mapping.thread_id);
-    } else if (oldState === "closed") {
+    } else if (isClosedState(oldState)) {
       await reopenTicketThread(client, mapping.thread_id);
     }
 
@@ -215,7 +216,7 @@ async function processWebhook(
     }
 
     // Transition OUT of "pending close" → re-add members (but NOT if closing)
-    if (oldState === "pending close" && normalizedState !== "pending close" && normalizedState !== "closed") {
+    if (oldState === "pending close" && normalizedState !== "pending close" && !isClosedState(normalizedState)) {
       const thread = (await client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
       if (thread?.isThread() && !thread.archived) {
         await addRoleMembersToThread(thread);

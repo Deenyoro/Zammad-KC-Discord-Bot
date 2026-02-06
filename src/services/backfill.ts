@@ -81,11 +81,12 @@ export async function syncAllTickets(client: Client): Promise<void> {
         // Update state if changed
         if (ticketInfo.state !== existing.state) {
           updateThreadState(ticket.id, ticketInfo.state);
+          const isClosedState = (s: string) => s === "closed" || s === "closed (locked)";
 
           // Reopen thread if it was closed but ticket is now open
           // BUT: Add grace period to avoid race condition with /ticket close command
           // or stale Zammad API data (the API list can lag behind individual ticket state)
-          if (existing.state === "closed" && ticketInfo.state !== "closed") {
+          if (isClosedState(existing.state) && !isClosedState(ticketInfo.state)) {
             // Skip recently closed threads to avoid race condition:
             // If /ticket close was just run, the Zammad API might still show stale
             // "open" state while the webhook is processing. Wait 60 seconds before
@@ -102,13 +103,13 @@ export async function syncAllTickets(client: Client): Promise<void> {
               try {
                 const freshTicket = await getTicket(ticket.id);
                 const freshState = freshTicket.state.toLowerCase();
-                if (freshState === "closed") {
+                if (isClosedState(freshState)) {
                   logger.info(
                     { ticketId: ticket.id, listState: ticketInfo.state, freshState },
                     "Skipping reopen - fresh API confirms ticket is closed (list was stale)"
                   );
                   // Update the DB state to match and skip reopen
-                  updateThreadState(ticket.id, "closed");
+                  updateThreadState(ticket.id, freshState);
                 } else {
                   await reopenTicketThread(client, existing.thread_id);
                   logger.info({ ticketId: ticket.id, freshState }, "Reopened thread for ticket that is no longer closed");
@@ -140,7 +141,7 @@ export async function syncAllTickets(client: Client): Promise<void> {
   // Close threads for tickets that are no longer open
   const allMappings = getAllTicketThreads();
   for (const mapping of allMappings) {
-    if (mapping.state === "closed") continue; // already closed
+    if (mapping.state === "closed" || mapping.state === "closed (locked)") continue; // already closed
     if (openTicketIds.has(mapping.ticket_id)) continue; // still open
 
     // Skip recently created threads to avoid race condition:
