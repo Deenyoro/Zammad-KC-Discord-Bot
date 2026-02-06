@@ -941,9 +941,16 @@ export async function handleAiReply(interaction: ChatInputCommandInteraction) {
       return;
     }
 
+    // Get requesting user's Zammad identity
+    const caller = getUserMap(interaction.user.id);
+    const callerName = caller?.zammad_email
+      ? `${interaction.user.displayName} (${caller.zammad_email})`
+      : interaction.user.displayName;
+
     const context = await buildTicketContext(mapping.ticket_id);
     const response = await aiChat(
       "You are an assistant helping a support agent draft a reply. " +
+        `The agent requesting this AI help is: ${callerName}. ` +
         "The ticket context below identifies the assigned agent and the customer(s). " +
         "It also lists all of our support team agents so you know who is internal staff. " +
         "Draft a response FROM the assigned agent TO the customer. " +
@@ -992,9 +999,16 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
       return;
     }
 
+    // Get requesting user's Zammad identity
+    const caller = getUserMap(interaction.user.id);
+    const callerName = caller?.zammad_email
+      ? `${interaction.user.displayName} (${caller.zammad_email})`
+      : interaction.user.displayName;
+
     const context = await buildTicketContext(mapping.ticket_id);
     const response = await aiChat(
       "You are an assistant helping a support agent understand a ticket quickly. " +
+        `The agent requesting this summary is: ${callerName}. ` +
         "The ticket context below includes the conversation history, assigned agent, and customer. " +
         "It also lists all of our support team agents so you know who is internal staff. " +
         "Provide a concise summary that helps an agent quickly get up to speed.\n\n" +
@@ -1044,6 +1058,25 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
       return;
     }
 
+    // Get requesting user's Zammad identity
+    const caller = getUserMap(interaction.user.id);
+    const callerName = caller?.zammad_email
+      ? `${interaction.user.displayName} (${caller.zammad_email})`
+      : interaction.user.displayName;
+
+    // Get language preference
+    const langCode = interaction.options.getString("language") ?? "en";
+    const langMap: Record<string, string> = {
+      en: "English",
+      "pt-br": "Brazilian Portuguese",
+      ar: "Arabic",
+      zh: "Chinese",
+    };
+    const language = langMap[langCode] ?? "English";
+    const langInstruction = langCode !== "en"
+      ? ` Respond entirely in ${language}.`
+      : "";
+
     const context = await buildTicketContext(mapping.ticket_id);
 
     // If search is configured, augment with web results
@@ -1063,13 +1096,15 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
 
     const response = await aiChat(
       "You are an assistant helping a support agent troubleshoot a customer issue. " +
+        `The agent requesting this help is: ${callerName}. ` +
         "The ticket context below identifies the assigned agent and the customer(s). " +
         "It also lists all of our support team agents so you know who is internal staff. " +
         "Provide troubleshooting steps that the AGENT can use or share with the customer. " +
-        "Do NOT impersonate any customer. Be specific and actionable.\n\n" +
+        "Do NOT impersonate any customer. Be specific and actionable." +
+        langInstruction + "\n\n" +
         context +
         searchResults,
-      "Provide troubleshooting steps for this issue."
+      "Provide troubleshooting steps for this issue." + langInstruction
     );
 
     // Clear AI labeling - this does NOT go to Zammad, stays in Discord only
