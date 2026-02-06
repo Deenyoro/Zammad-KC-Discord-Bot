@@ -63,9 +63,10 @@ export async function handleHelpCommand(
       {
         name: "AI Features (use inside a ticket thread)",
         value: [
-          "`/aireply` - Get AI-suggested reply for this ticket",
-          "`/aisummary` - Get AI summary with next steps",
-          "`/aihelp [language]` - AI troubleshooting (en/pt/ar)",
+          "`/aireply [context] [language]` - AI-suggested reply",
+          "`/aisummary [context] [language]` - Ticket summary with next steps",
+          "`/aihelp [context] [language]` - Troubleshooting with web search",
+          "`/aiproofread <message> [language]` - Fix spelling/grammar/flow",
         ].join("\n"),
         inline: false,
       },

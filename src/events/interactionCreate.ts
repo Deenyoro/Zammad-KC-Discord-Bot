@@ -25,6 +25,7 @@ import {
   handleAiReply,
   handleAiSummary,
   handleAiHelp,
+  handleAiProofread,
 } from "../commands/ticket.js";
 import { handleSetupCommand } from "../commands/setup.js";
 import { handleHelpCommand } from "../commands/help.js";
@@ -114,6 +115,9 @@ export function onInteractionCreate(client: Client): void {
           break;
         case "aihelp":
           await handleAiHelp(interaction);
+          break;
+        case "aiproofread":
+          await handleAiProofread(interaction);
           break;
         default:
           logger.warn({ commandName }, "Unknown command");

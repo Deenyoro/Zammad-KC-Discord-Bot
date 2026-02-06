@@ -8,6 +8,7 @@ import {
   getAllTemplates,
   upsertTemplate,
   deleteTemplate,
+  getSettingOrEnv,
   type TicketThread,
 } from "../db/index.js";
 import {
@@ -921,17 +922,42 @@ export async function handleTemplate(interaction: ChatInputCommandInteraction) {
 }
 
 // ---------------------------------------------------------------
+// AI command helpers
+// ---------------------------------------------------------------
+
+const LANG_MAP: Record<string, string> = {
+  en: "English",
+  "pt-br": "Brazilian Portuguese",
+  ar: "Arabic",
+  zh: "Chinese",
+};
+
+function getLanguageInstruction(interaction: ChatInputCommandInteraction): string {
+  const langCode = interaction.options.getString("language")
+    ?? getSettingOrEnv("AI_DEFAULT_LANGUAGE")
+    ?? "en";
+  if (langCode === "en") return "";
+  const language = LANG_MAP[langCode] ?? "English";
+  return ` Respond entirely in ${language}.`;
+}
+
+function getCallerIdentity(interaction: ChatInputCommandInteraction): string {
+  const caller = getUserMap(interaction.user.id);
+  return caller?.zammad_email
+    ? `${interaction.user.displayName} (${caller.zammad_email})`
+    : interaction.user.displayName;
+}
+
+// ---------------------------------------------------------------
 // /aireply — AI suggested response
 // ---------------------------------------------------------------
 
 export async function handleAiReply(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
-  // Public reply - visible to everyone in the thread
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    // Dynamic import to avoid errors when AI deps aren't installed
     const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
 
     if (!isAIConfigured()) {
@@ -941,13 +967,11 @@ export async function handleAiReply(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    // Get requesting user's Zammad identity
-    const caller = getUserMap(interaction.user.id);
-    const callerName = caller?.zammad_email
-      ? `${interaction.user.displayName} (${caller.zammad_email})`
-      : interaction.user.displayName;
+    const callerName = getCallerIdentity(interaction);
+    const langInstruction = getLanguageInstruction(interaction);
+    const extraContext = interaction.options.getString("context") ?? "";
 
-    const context = await buildTicketContext(mapping.ticket_id);
+    const ticketContext = await buildTicketContext(mapping.ticket_id);
     const response = await aiChat(
       "You are an assistant helping a support agent draft a reply. " +
         `The agent requesting this AI help is: ${callerName}. ` +
@@ -956,12 +980,13 @@ export async function handleAiReply(interaction: ChatInputCommandInteraction) {
         "Draft a response FROM the assigned agent TO the customer. " +
         "Do NOT impersonate or sign as any customer. " +
         "Do NOT include email signatures, disclaimers, or quoted previous messages. " +
-        "Keep it concise, professional, and actionable.\n\n" +
-        context,
-      "Draft a reply that the assigned agent should send to the customer."
+        "Keep it concise, professional, and actionable." +
+        langInstruction + "\n\n" +
+        ticketContext +
+        (extraContext ? `\n\nAdditional context from agent: ${extraContext}` : ""),
+      "Draft a reply that the assigned agent should send to the customer." + langInstruction
     );
 
-    // Clear AI labeling - this does NOT go to Zammad, stays in Discord only
     const fullMessage =
       "🤖 **AI Generated - For Agent Reference Only**\n" +
       "_This suggestion is not sent to the customer. Copy/edit and use `/reply` to send._\n\n" +
@@ -986,7 +1011,6 @@ export async function handleAiReply(interaction: ChatInputCommandInteraction) {
 export async function handleAiSummary(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
-  // Public reply - visible to everyone in the thread
   await interaction.deferReply({ ephemeral: false });
 
   try {
@@ -999,26 +1023,11 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
       return;
     }
 
-    // Get requesting user's Zammad identity
-    const caller = getUserMap(interaction.user.id);
-    const callerName = caller?.zammad_email
-      ? `${interaction.user.displayName} (${caller.zammad_email})`
-      : interaction.user.displayName;
+    const callerName = getCallerIdentity(interaction);
+    const langInstruction = getLanguageInstruction(interaction);
+    const extraContext = interaction.options.getString("context") ?? "";
 
-    // Get language preference
-    const langCode = interaction.options.getString("language") ?? "en";
-    const langMap: Record<string, string> = {
-      en: "English",
-      "pt-br": "Brazilian Portuguese",
-      ar: "Arabic",
-      zh: "Chinese",
-    };
-    const language = langMap[langCode] ?? "English";
-    const langInstruction = langCode !== "en"
-      ? ` Respond entirely in ${language}.`
-      : "";
-
-    const context = await buildTicketContext(mapping.ticket_id);
+    const ticketContext = await buildTicketContext(mapping.ticket_id);
     const response = await aiChat(
       "You are an assistant helping a support agent understand a ticket quickly. " +
         `The agent requesting this summary is: ${callerName}. ` +
@@ -1026,7 +1035,8 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
         "It also lists all of our support team agents so you know who is internal staff. " +
         "Provide a concise summary that helps an agent quickly get up to speed." +
         langInstruction + "\n\n" +
-        context,
+        ticketContext +
+        (extraContext ? `\n\nAdditional context from agent: ${extraContext}` : ""),
       "Summarize this ticket concisely. Include:\n" +
         "1. A brief summary of the issue and current status (2-3 sentences max)\n" +
         "2. Key details the agent needs to know\n" +
@@ -1058,7 +1068,6 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
 export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
-  // Public reply - visible to everyone in the thread
   await interaction.deferReply({ ephemeral: false });
 
   try {
@@ -1072,26 +1081,11 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    // Get requesting user's Zammad identity
-    const caller = getUserMap(interaction.user.id);
-    const callerName = caller?.zammad_email
-      ? `${interaction.user.displayName} (${caller.zammad_email})`
-      : interaction.user.displayName;
+    const callerName = getCallerIdentity(interaction);
+    const langInstruction = getLanguageInstruction(interaction);
+    const extraContext = interaction.options.getString("context") ?? "";
 
-    // Get language preference
-    const langCode = interaction.options.getString("language") ?? "en";
-    const langMap: Record<string, string> = {
-      en: "English",
-      "pt-br": "Brazilian Portuguese",
-      ar: "Arabic",
-      zh: "Chinese",
-    };
-    const language = langMap[langCode] ?? "English";
-    const langInstruction = langCode !== "en"
-      ? ` Respond entirely in ${language}.`
-      : "";
-
-    const context = await buildTicketContext(mapping.ticket_id);
+    const ticketContext = await buildTicketContext(mapping.ticket_id);
 
     // If search is configured, augment with web results
     let searchResults = "";
@@ -1116,12 +1110,12 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
         "Provide troubleshooting steps that the AGENT can use or share with the customer. " +
         "Do NOT impersonate any customer. Be specific and actionable." +
         langInstruction + "\n\n" +
-        context +
-        searchResults,
+        ticketContext +
+        searchResults +
+        (extraContext ? `\n\nAdditional context from agent: ${extraContext}` : ""),
       "Provide troubleshooting steps for this issue." + langInstruction
     );
 
-    // Clear AI labeling - this does NOT go to Zammad, stays in Discord only
     const fullMessage =
       "🤖 **AI Generated - For Agent Reference Only**\n" +
       "_This troubleshooting info is for agent reference. Not sent to customer._\n\n" +
@@ -1136,5 +1130,60 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
     logger.error({ err }, "AI help command failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
     await interaction.editReply(`AI help failed: ${msg}`);
+  }
+}
+
+// ---------------------------------------------------------------
+// /aiproofread — Proofread a message
+// ---------------------------------------------------------------
+
+export async function handleAiProofread(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply({ ephemeral: false });
+
+  try {
+    const { isAIConfigured, aiChat } = await import("../services/ai.js");
+
+    if (!isAIConfigured()) {
+      await interaction.editReply(
+        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+      );
+      return;
+    }
+
+    const callerName = getCallerIdentity(interaction);
+    const langInstruction = getLanguageInstruction(interaction);
+    const messageToProofread = interaction.options.getString("message", true);
+
+    const response = await aiChat(
+      "You are a proofreading assistant helping a support agent polish their message before sending. " +
+        `The agent is: ${callerName}. ` +
+        "Focus EXCLUSIVELY on:\n" +
+        "1. Fixing spelling errors\n" +
+        "2. Fixing grammar issues\n" +
+        "3. Improving flow and readability\n" +
+        "4. Maintaining professional tone\n\n" +
+        "Do NOT change the meaning or add new content. " +
+        "Do NOT add greetings, signatures, or disclaimers that weren't there. " +
+        "Return ONLY the corrected message, nothing else - no explanations, no 'Here's the corrected version', just the fixed text." +
+        langInstruction,
+      `Proofread this message:\n\n${messageToProofread}`
+    );
+
+    const fullMessage =
+      "🤖 **AI Proofread - For Agent Reference Only**\n" +
+      "_Copy and use with `/reply` to send._\n\n" +
+      `**Corrected Message:**\n\`\`\`\n${response}\n\`\`\``;
+
+    const chunks = splitMessage(fullMessage);
+    await interaction.editReply(chunks[0]);
+    for (let i = 1; i < chunks.length; i++) {
+      await interaction.followUp(chunks[i]);
+    }
+  } catch (err) {
+    logger.error({ err }, "AI proofread command failed");
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    await interaction.editReply(`AI proofread failed: ${msg}`);
   }
 }
