@@ -312,7 +312,7 @@ export async function handleNote(interaction: ChatInputCommandInteraction) {
   const fileOption = interaction.options.getAttachment("file");
 
   // Expand ::shortcut text modules before sending
-  const { expanded: text } = await expandTextModules(rawText);
+  const { expanded: text, contentType } = await expandTextModules(rawText);
 
   // Get user mapping for attribution
   const userEntry = getUserMap(interaction.user.id);
@@ -338,6 +338,7 @@ export async function handleNote(interaction: ChatInputCommandInteraction) {
     internal: true,
     type: "note",
     sender: "Agent",
+    content_type: contentType,
     origin_by_id: userEntry?.zammad_id ?? undefined,
     attachments,
   });
@@ -441,7 +442,7 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   const fileOption = interaction.options.getAttachment("file");
 
   // Expand ::shortcut text modules before sending
-  const { expanded: text, used: expandedModules } = await expandTextModules(rawText);
+  const { expanded: text, contentType, used: expandedModules } = await expandTextModules(rawText);
 
   const channel = await detectReplyChannel(mapping.ticket_id);
   if (!channel) {
@@ -494,7 +495,7 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     type: channel.type,
     sender: "Agent",
     internal: false,
-    content_type: "text/plain",
+    content_type: contentType,
     to: channel.to,
     cc,
     origin_by_id: channel.type === "email" ? (userEntry?.zammad_id ?? undefined) : undefined,
@@ -777,7 +778,7 @@ export async function handleNewTicket(interaction: ChatInputCommandInteraction) 
   const rawBody = interaction.options.getString("body", true);
 
   // Expand ::shortcut text modules before sending
-  const { expanded: body } = await expandTextModules(rawBody);
+  const { expanded: body, contentType: newTicketContentType } = await expandTextModules(rawBody);
 
   const userEntry = getUserMap(interaction.user.id);
   if (!userEntry) {
@@ -802,7 +803,7 @@ export async function handleNewTicket(interaction: ChatInputCommandInteraction) 
             type: "email",
             sender: "Agent",
             internal: false,
-            content_type: "text/plain",
+            content_type: newTicketContentType,
             to,
           },
         });
@@ -823,7 +824,7 @@ export async function handleNewTicket(interaction: ChatInputCommandInteraction) 
             type: "note",
             sender: "Agent",
             internal: true,
-            content_type: "text/plain",
+            content_type: newTicketContentType,
           },
         });
         break;
@@ -910,17 +911,15 @@ export async function handleTextModule(interaction: ChatInputCommandInteraction)
       }
 
       const userEntry = getUserMap(interaction.user.id);
-      // Strip HTML tags from content for plain text replies
-      const plainContent = module.content.replace(/<[^>]+>/g, "").trim();
 
       await createArticle({
         ticket_id: mapping.ticket_id,
-        body: plainContent,
+        body: module.content,
         subject: channel.type === "email" ? (mapping.title || undefined) : undefined,
         type: channel.type,
         sender: "Agent",
         internal: false,
-        content_type: "text/plain",
+        content_type: "text/html",
         to: channel.to,
         origin_by_id: channel.type === "email" ? (userEntry?.zammad_id ?? undefined) : undefined,
       });
