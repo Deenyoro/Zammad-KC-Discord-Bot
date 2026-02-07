@@ -950,13 +950,6 @@ const LENGTH_MAP: Record<string, string> = {
   detailed: "Provide a comprehensive, detailed response.",
 };
 
-const FOCUS_MAP: Record<string, string> = {
-  timeline: "Focus on the chronological sequence of events.",
-  technical: "Focus on technical details and root cause.",
-  escalation: "Focus on escalation history and urgency indicators.",
-  billing: "Focus on billing, payment, and account status details.",
-};
-
 const FORMAT_MAP: Record<string, string> = {
   steps: "Format as numbered troubleshooting steps.",
   script: "Format as a phone script the agent can read aloud to the customer.",
@@ -990,9 +983,6 @@ function getStyleInstructions(interaction: ChatInputCommandInteraction): string 
 
   const length = interaction.options.getString("length");
   if (length && LENGTH_MAP[length]) parts.push(LENGTH_MAP[length]);
-
-  const focus = interaction.options.getString("focus");
-  if (focus && FOCUS_MAP[focus]) parts.push(FOCUS_MAP[focus]);
 
   const format = interaction.options.getString("format");
   if (format && FORMAT_MAP[format]) parts.push(FORMAT_MAP[format]);

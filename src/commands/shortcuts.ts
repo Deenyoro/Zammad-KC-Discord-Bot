@@ -337,15 +337,6 @@ export const aisummaryCommand = new SlashCommandBuilder()
         { name: "Detailed", value: "detailed" }
       )
   )
-  .addStringOption((o) =>
-    o.setName("focus").setDescription("What to emphasize").setRequired(false)
-      .addChoices(
-        { name: "Timeline", value: "timeline" },
-        { name: "Technical", value: "technical" },
-        { name: "Escalation", value: "escalation" },
-        { name: "Billing", value: "billing" }
-      )
-  )
   .addBooleanOption((o) =>
     o.setName("exclude_internal").setDescription("Ignore internal notes").setRequired(false)
   );
