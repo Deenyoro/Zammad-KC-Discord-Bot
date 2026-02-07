@@ -20,7 +20,8 @@ export async function handleHelpCommand(
         value: [
           "`/reply <text> [cc] [file]` -Reply to the customer (email/SMS/Teams)",
           "`/note <text> [file]` -Add an internal note",
-          "`/template use <name>` -Send a canned template as reply",
+          "`/textmodule use <name>` -Send a Zammad text module as reply",
+          "Use `::shortcut` in /reply or /note text to auto-expand text modules",
         ].join("\n"),
         inline: false,
       },
@@ -71,11 +72,13 @@ export async function handleHelpCommand(
         inline: false,
       },
       {
-        name: "Templates",
+        name: "Text Modules (from Zammad)",
         value: [
-          "`/template list` -List saved templates",
-          "`/template add <name> <body>` -Add template (admin)",
-          "`/template remove <name>` -Remove template (admin)",
+          "`/textmodule list` -List all available text modules",
+          "`/textmodule search <query>` -Search by name or keyword",
+          "`/textmodule use <name>` -Send as reply to customer",
+          "`/textmodule preview <name>` -Preview without sending",
+          "`/textmodule refresh` -Refresh cache from Zammad",
         ].join("\n"),
         inline: false,
       },

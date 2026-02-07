@@ -4,10 +4,6 @@ import {
   getThreadByThreadId,
   getUserMap,
   updateThreadState,
-  getTemplate,
-  getAllTemplates,
-  upsertTemplate,
-  deleteTemplate,
   getSettingOrEnv,
   type TicketThread,
 } from "../db/index.js";
@@ -31,6 +27,10 @@ import {
   getScheduledArticles,
   cancelScheduledArticle,
   createSmsConversation,
+  getTextModules,
+  findTextModule,
+  expandTextModules,
+  clearTextModulesCache,
   type ArticleAttachment,
 } from "../services/zammad.js";
 import { ticketUrl, closeTicketThread, removeRoleMembersFromThread } from "../services/threads.js";
@@ -308,8 +308,11 @@ export async function handleNote(interaction: ChatInputCommandInteraction) {
   if (!mapping) return;
   await interaction.deferReply({ ephemeral: true });
 
-  const text = interaction.options.getString("text", true);
+  const rawText = interaction.options.getString("text", true);
   const fileOption = interaction.options.getAttachment("file");
+
+  // Expand ::shortcut text modules before sending
+  const { expanded: text } = await expandTextModules(rawText);
 
   // Get user mapping for attribution
   const userEntry = getUserMap(interaction.user.id);
@@ -433,9 +436,12 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   if (!mapping) return;
   await interaction.deferReply({ ephemeral: true });
 
-  const text = interaction.options.getString("text", true);
+  const rawText = interaction.options.getString("text", true);
   const ccInput = interaction.options.getString("cc");
   const fileOption = interaction.options.getAttachment("file");
+
+  // Expand ::shortcut text modules before sending
+  const { expanded: text, used: expandedModules } = await expandTextModules(rawText);
 
   const channel = await detectReplyChannel(mapping.ticket_id);
   if (!channel) {
@@ -498,8 +504,9 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   const fileSuffix = fileOption ? ` with attachment "${fileOption.name}"` : "";
   const ccSuffix = cc ? ` (CC: ${cc})` : "";
   const ccWarning = ccIgnored ? "\n⚠️ CC was ignored — only supported for email tickets." : "";
+  const tmSuffix = expandedModules.length > 0 ? `\n📝 Expanded: ${expandedModules.join(", ")}` : "";
   await interaction.editReply(
-    `Reply sent (${channel.label})${fileSuffix}${ccSuffix} on ticket #${mapping.ticket_number}.${ccWarning}`
+    `Reply sent (${channel.label})${fileSuffix}${ccSuffix} on ticket #${mapping.ticket_number}.${ccWarning}${tmSuffix}`
   );
 }
 
@@ -691,8 +698,11 @@ export async function handleSchedule(interaction: ChatInputCommandInteraction) {
   if (!mapping) return;
   await interaction.deferReply({ ephemeral: true });
 
-  const text = interaction.options.getString("text", true);
+  const rawText = interaction.options.getString("text", true);
   const timeInput = interaction.options.getString("time", true);
+
+  // Expand ::shortcut text modules before scheduling
+  const { expanded: text } = await expandTextModules(rawText);
   const scheduledAt = parseTime(timeInput);
 
   if (!scheduledAt) {
@@ -764,7 +774,10 @@ export async function handleNewTicket(interaction: ChatInputCommandInteraction) 
   const type = interaction.options.getString("type", true);
   const to = interaction.options.getString("to", true);
   const subject = interaction.options.getString("subject", true);
-  const body = interaction.options.getString("body", true);
+  const rawBody = interaction.options.getString("body", true);
+
+  // Expand ::shortcut text modules before sending
+  const { expanded: body } = await expandTextModules(rawBody);
 
   const userEntry = getUserMap(interaction.user.id);
   if (!userEntry) {
@@ -831,22 +844,60 @@ export async function handleNewTicket(interaction: ChatInputCommandInteraction) 
 }
 
 // ---------------------------------------------------------------
-// /template (use | list | add | remove)
+// /textmodule (list | search | use | preview | refresh)
 // ---------------------------------------------------------------
 
-export async function handleTemplate(interaction: ChatInputCommandInteraction) {
+export async function handleTextModule(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
 
   switch (sub) {
+    case "list": {
+      await interaction.deferReply({ ephemeral: true });
+      const modules = await getTextModules();
+      if (modules.length === 0) {
+        await interaction.editReply("No text modules found in Zammad.");
+        return;
+      }
+      const lines = modules.map((m) => {
+        const keywords = m.keywords ? ` (${m.keywords})` : "";
+        return `**${m.name}**${keywords}`;
+      });
+      await interaction.editReply(truncate(lines.join("\n"), 2000));
+      break;
+    }
+
+    case "search": {
+      await interaction.deferReply({ ephemeral: true });
+      const query = interaction.options.getString("query", true).toLowerCase();
+      const modules = await getTextModules();
+      const matches = modules.filter((m) => {
+        const nameMatch = m.name.toLowerCase().includes(query);
+        const keywordMatch = m.keywords?.toLowerCase().includes(query) ?? false;
+        return nameMatch || keywordMatch;
+      });
+      if (matches.length === 0) {
+        await interaction.editReply(`No text modules matching "${query}".`);
+        return;
+      }
+      const lines = matches.map((m) => {
+        const keywords = m.keywords ? ` (${m.keywords})` : "";
+        return `**${m.name}**${keywords}`;
+      });
+      await interaction.editReply(truncate(lines.join("\n"), 2000));
+      break;
+    }
+
     case "use": {
       const mapping = await requireMapping(interaction);
       if (!mapping) return;
       await interaction.deferReply({ ephemeral: true });
 
       const name = interaction.options.getString("name", true);
-      const template = getTemplate(name);
-      if (!template) {
-        await interaction.editReply(`Template "${name}" not found. Use \`/template list\` to see available templates.`);
+      const module = await findTextModule(name);
+      if (!module) {
+        await interaction.editReply(
+          `Text module "${name}" not found. Use \`/textmodule list\` to see available modules.`
+        );
         return;
       }
 
@@ -859,10 +910,12 @@ export async function handleTemplate(interaction: ChatInputCommandInteraction) {
       }
 
       const userEntry = getUserMap(interaction.user.id);
+      // Strip HTML tags from content for plain text replies
+      const plainContent = module.content.replace(/<[^>]+>/g, "").trim();
 
       await createArticle({
         ticket_id: mapping.ticket_id,
-        body: template.body,
+        body: plainContent,
         subject: channel.type === "email" ? (mapping.title || undefined) : undefined,
         type: channel.type,
         sender: "Agent",
@@ -873,49 +926,34 @@ export async function handleTemplate(interaction: ChatInputCommandInteraction) {
       });
 
       await interaction.editReply(
-        `Template "${name}" sent (${channel.label}) on ticket #${mapping.ticket_number}.`
+        `Text module "${module.name}" sent (${channel.label}) on ticket #${mapping.ticket_number}.`
       );
       break;
     }
 
-    case "list": {
-      await interaction.deferReply({ ephemeral: true });
-      const templates = getAllTemplates();
-      if (templates.length === 0) {
-        await interaction.editReply("No templates saved. Use `/template add` to create one.");
-        return;
-      }
-      const lines = templates.map(
-        (t) => `**${t.name}** — ${truncate(t.body, 60)}`
-      );
-      await interaction.editReply(truncate(lines.join("\n"), 2000));
-      break;
-    }
-
-    case "add": {
-      if (!isAdmin(interaction.user.id)) {
-        await interaction.reply({ content: "Only admins can add templates.", ephemeral: true });
-        return;
-      }
+    case "preview": {
       await interaction.deferReply({ ephemeral: true });
       const name = interaction.options.getString("name", true);
-      const body = interaction.options.getString("body", true);
-      upsertTemplate(name, body, interaction.user.id);
-      await interaction.editReply(`Template "${name}" saved.`);
-      break;
-    }
-
-    case "remove": {
-      if (!isAdmin(interaction.user.id)) {
-        await interaction.reply({ content: "Only admins can remove templates.", ephemeral: true });
+      const module = await findTextModule(name);
+      if (!module) {
+        await interaction.editReply(
+          `Text module "${name}" not found. Use \`/textmodule list\` to see available modules.`
+        );
         return;
       }
-      await interaction.deferReply({ ephemeral: true });
-      const name = interaction.options.getString("name", true);
-      const deleted = deleteTemplate(name);
+      const plainContent = module.content.replace(/<[^>]+>/g, "").trim();
+      const keywords = module.keywords ? `\nKeywords: ${module.keywords}` : "";
       await interaction.editReply(
-        deleted ? `Template "${name}" removed.` : `Template "${name}" not found.`
+        truncate(`**${module.name}**${keywords}\n\n${plainContent}`, 2000)
       );
+      break;
+    }
+
+    case "refresh": {
+      await interaction.deferReply({ ephemeral: true });
+      clearTextModulesCache();
+      const modules = await getTextModules();
+      await interaction.editReply(`Text modules cache refreshed. ${modules.length} active modules loaded.`);
       break;
     }
   }
