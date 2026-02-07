@@ -563,32 +563,66 @@ export async function findTextModule(shortcut: string): Promise<ZammadTextModule
 }
 
 /**
- * Expand all ::shortcut patterns in text with their corresponding text module content.
- * Returns the expanded text and a list of which modules were used.
+ * Escape HTML special characters in plain text.
  */
-export async function expandTextModules(text: string): Promise<{ expanded: string; used: string[] }> {
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Expand all ::shortcut patterns in text with their corresponding text module content.
+ * When text modules are found, the result is returned as HTML (content_type: "text/html")
+ * so that images, formatting, and line breaks from the text module are preserved.
+ * Returns the expanded body, content type, and a list of which modules were used.
+ */
+export async function expandTextModules(text: string): Promise<{
+  expanded: string;
+  contentType: "text/plain" | "text/html";
+  used: string[];
+}> {
   const pattern = /::(\w+)/g;
   const matches = [...text.matchAll(pattern)];
 
   if (matches.length === 0) {
-    return { expanded: text, used: [] };
+    return { expanded: text, contentType: "text/plain", used: [] };
   }
 
   const used: string[] = [];
   let result = text;
+  let hasModule = false;
 
   // Process in reverse order to maintain correct offsets
   for (const match of matches.reverse()) {
     const shortcut = match[1];
     const module = await findTextModule(shortcut);
     if (module) {
-      // Strip HTML tags from content for plain text replies
-      const plainContent = module.content.replace(/<[^>]+>/g, "").trim();
-      result = result.slice(0, match.index!) + plainContent + result.slice(match.index! + match[0].length);
+      hasModule = true;
+      result = result.slice(0, match.index!) + `\x00TM_START\x00${module.content}\x00TM_END\x00` + result.slice(match.index! + match[0].length);
       used.unshift(`::${shortcut} → ${module.name}`);
     }
   }
 
-  return { expanded: result, used };
+  if (!hasModule) {
+    return { expanded: result, contentType: "text/plain", used: [] };
+  }
+
+  // Build final HTML: escape plain text parts, preserve text module HTML as-is
+  const parts = result.split(/\x00TM_START\x00|\x00TM_END\x00/);
+  let html = "";
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 0) {
+      // Plain text segment — escape and convert newlines to <br>
+      html += escapeHtml(parts[i]).replace(/\n/g, "<br>");
+    } else {
+      // Text module HTML content — insert as-is
+      html += parts[i];
+    }
+  }
+
+  return { expanded: html, contentType: "text/html", used };
 }
 

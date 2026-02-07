@@ -40,7 +40,7 @@ async function forwardToZammad(
 ): Promise<void> {
   // Expand ::shortcut text modules before sending
   const rawBody = message.content || "";
-  const { expanded: body } = await expandTextModules(rawBody);
+  const { expanded: body, contentType } = await expandTextModules(rawBody);
 
   // Download Discord attachments and base64-encode for Zammad
   const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB
@@ -96,7 +96,7 @@ async function forwardToZammad(
     type: articleType,
     sender: "Agent",
     internal: articleType === "note",
-    content_type: "text/plain",
+    content_type: contentType,
     origin_by_id: userEntry.zammad_id ?? undefined,
     attachments: attachments.length > 0 ? attachments : undefined,
     preferences: Object.keys(articlePreferences).length > 0 ? articlePreferences : undefined,
