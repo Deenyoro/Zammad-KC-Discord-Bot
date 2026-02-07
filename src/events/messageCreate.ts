@@ -1,7 +1,7 @@
 import { Client, Events, Message } from "discord.js";
 import { logger } from "../util/logger.js";
 import { getThreadByThreadId, getUserMap, markArticleSynced, type UserMapEntry } from "../db/index.js";
-import { createArticle, getTicket, type ArticleAttachment } from "../services/zammad.js";
+import { createArticle, getTicket, expandTextModules, type ArticleAttachment } from "../services/zammad.js";
 import { enqueueForTicket } from "../queue/index.js";
 
 export function onMessageCreate(client: Client): void {
@@ -38,7 +38,9 @@ async function forwardToZammad(
   threadId: string,
   userEntry: UserMapEntry
 ): Promise<void> {
-  const body = message.content || "";
+  // Expand ::shortcut text modules before sending
+  const rawBody = message.content || "";
+  const { expanded: body } = await expandTextModules(rawBody);
 
   // Download Discord attachments and base64-encode for Zammad
   const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB

@@ -21,7 +21,7 @@ import {
   handleSchedules,
   handleUnschedule,
   handleNewTicket,
-  handleTemplate,
+  handleTextModule,
   handleAiReply,
   handleAiSummary,
   handleAiHelp,
@@ -104,8 +104,8 @@ export function onInteractionCreate(client: Client): void {
         case "newticket":
           await handleNewTicket(interaction);
           break;
-        case "template":
-          await handleTemplate(interaction);
+        case "textmodule":
+          await handleTextModule(interaction);
           break;
         case "aireply":
           await handleAiReply(interaction);

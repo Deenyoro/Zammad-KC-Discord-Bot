@@ -228,38 +228,40 @@ export const newticketCommand = new SlashCommandBuilder()
     o.setName("body").setDescription("Message body").setRequired(true)
   );
 
-export const templateCommand = new SlashCommandBuilder()
-  .setName("template")
-  .setDescription("Manage and use canned response templates")
+// templateCommand removed — replaced by Zammad text modules (see textmoduleCommand)
+
+export const textmoduleCommand = new SlashCommandBuilder()
+  .setName("textmodule")
+  .setDescription("Use Zammad text modules (::shortcut)")
+  .addSubcommand((sc) =>
+    sc.setName("list").setDescription("List all available text modules")
+  )
+  .addSubcommand((sc) =>
+    sc
+      .setName("search")
+      .setDescription("Search text modules by name or keyword")
+      .addStringOption((o) =>
+        o.setName("query").setDescription("Search query").setRequired(true)
+      )
+  )
   .addSubcommand((sc) =>
     sc
       .setName("use")
-      .setDescription("Send a template as a reply to the customer")
+      .setDescription("Send a text module as a reply to the customer")
       .addStringOption((o) =>
-        o.setName("name").setDescription("Template name").setRequired(true)
-      )
-  )
-  .addSubcommand((sc) =>
-    sc.setName("list").setDescription("List all saved templates")
-  )
-  .addSubcommand((sc) =>
-    sc
-      .setName("add")
-      .setDescription("Add a new template (admin only)")
-      .addStringOption((o) =>
-        o.setName("name").setDescription("Template name").setRequired(true)
-      )
-      .addStringOption((o) =>
-        o.setName("body").setDescription("Template body text").setRequired(true)
+        o.setName("name").setDescription("Text module name or keyword (e.g. fpn)").setRequired(true)
       )
   )
   .addSubcommand((sc) =>
     sc
-      .setName("remove")
-      .setDescription("Remove a template (admin only)")
+      .setName("preview")
+      .setDescription("Preview a text module without sending")
       .addStringOption((o) =>
-        o.setName("name").setDescription("Template name").setRequired(true)
+        o.setName("name").setDescription("Text module name or keyword (e.g. fpn)").setRequired(true)
       )
+  )
+  .addSubcommand((sc) =>
+    sc.setName("refresh").setDescription("Refresh the text modules cache from Zammad")
   );
 
 export const aireplyCommand = new SlashCommandBuilder()

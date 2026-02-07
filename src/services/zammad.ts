@@ -494,3 +494,101 @@ export async function createSmsConversation(data: {
   return res.json() as Promise<ZammadTicket>;
 }
 
+// ---------------------------------------------------------------
+// Text Modules
+// ---------------------------------------------------------------
+
+export interface ZammadTextModule {
+  id: number;
+  name: string;
+  keywords: string | null;
+  content: string;
+  active: boolean;
+  group_ids?: number[];
+}
+
+// Cache for text modules (refreshed every 5 minutes)
+let _textModulesCache: ZammadTextModule[] | null = null;
+let _textModulesCacheFetchedAt = 0;
+const TEXT_MODULES_CACHE_TTL = 5 * 60_000; // 5 minutes
+
+/** Fetch all active text modules from Zammad. */
+export async function getTextModules(): Promise<ZammadTextModule[]> {
+  const now = Date.now();
+  if (_textModulesCache && now - _textModulesCacheFetchedAt < TEXT_MODULES_CACHE_TTL) {
+    return _textModulesCache;
+  }
+
+  const res = await zammadFetch("/text_modules.json");
+  const modules = (await res.json()) as ZammadTextModule[];
+  _textModulesCache = modules.filter((m) => m.active);
+  _textModulesCacheFetchedAt = now;
+  logger.debug({ count: _textModulesCache.length }, "Fetched text modules");
+  return _textModulesCache;
+}
+
+/** Clear the text modules cache (e.g. after a change). */
+export function clearTextModulesCache(): void {
+  _textModulesCache = null;
+  _textModulesCacheFetchedAt = 0;
+}
+
+/**
+ * Find a text module by keyword or name.
+ * Matches against the keywords field (comma-separated) and the name.
+ */
+export async function findTextModule(shortcut: string): Promise<ZammadTextModule | undefined> {
+  const modules = await getTextModules();
+  const lower = shortcut.toLowerCase();
+
+  // First try exact keyword match
+  for (const m of modules) {
+    if (m.keywords) {
+      const keywords = m.keywords.split(/[,\s]+/).map((k) => k.trim().toLowerCase()).filter(Boolean);
+      if (keywords.includes(lower)) return m;
+    }
+  }
+
+  // Then try exact name match (case-insensitive)
+  for (const m of modules) {
+    if (m.name.toLowerCase() === lower) return m;
+  }
+
+  // Then try partial name match
+  for (const m of modules) {
+    if (m.name.toLowerCase().includes(lower)) return m;
+  }
+
+  return undefined;
+}
+
+/**
+ * Expand all ::shortcut patterns in text with their corresponding text module content.
+ * Returns the expanded text and a list of which modules were used.
+ */
+export async function expandTextModules(text: string): Promise<{ expanded: string; used: string[] }> {
+  const pattern = /::(\w+)/g;
+  const matches = [...text.matchAll(pattern)];
+
+  if (matches.length === 0) {
+    return { expanded: text, used: [] };
+  }
+
+  const used: string[] = [];
+  let result = text;
+
+  // Process in reverse order to maintain correct offsets
+  for (const match of matches.reverse()) {
+    const shortcut = match[1];
+    const module = await findTextModule(shortcut);
+    if (module) {
+      // Strip HTML tags from content for plain text replies
+      const plainContent = module.content.replace(/<[^>]+>/g, "").trim();
+      result = result.slice(0, match.index!) + plainContent + result.slice(match.index! + match[0].length);
+      used.unshift(`::${shortcut} → ${module.name}`);
+    }
+  }
+
+  return { expanded: result, used };
+}
+

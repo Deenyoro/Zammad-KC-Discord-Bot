@@ -235,40 +235,40 @@ export function pruneSyncedArticles(): void {
 }
 
 // ---------------------------------------------------------------
-// templates
+// templates (DEPRECATED — replaced by Zammad text modules)
 // ---------------------------------------------------------------
 
-export interface Template {
-  name: string;
-  body: string;
-  created_by: string;
-  created_at: string;
-}
-
-export function getTemplate(name: string): Template | undefined {
-  return db()
-    .prepare("SELECT * FROM templates WHERE name = ?")
-    .get(name) as Template | undefined;
-}
-
-export function getAllTemplates(): Template[] {
-  return db().prepare("SELECT * FROM templates ORDER BY name").all() as Template[];
-}
-
-export function upsertTemplate(name: string, body: string, createdBy: string): void {
-  db()
-    .prepare(
-      `INSERT INTO templates (name, body, created_by)
-       VALUES (?, ?, ?)
-       ON CONFLICT(name) DO UPDATE SET body = ?, created_by = ?, created_at = datetime('now')`
-    )
-    .run(name, body, createdBy, body, createdBy);
-}
-
-export function deleteTemplate(name: string): boolean {
-  const result = db().prepare("DELETE FROM templates WHERE name = ?").run(name);
-  return result.changes > 0;
-}
+// export interface Template {
+//   name: string;
+//   body: string;
+//   created_by: string;
+//   created_at: string;
+// }
+//
+// export function getTemplate(name: string): Template | undefined {
+//   return db()
+//     .prepare("SELECT * FROM templates WHERE name = ?")
+//     .get(name) as Template | undefined;
+// }
+//
+// export function getAllTemplates(): Template[] {
+//   return db().prepare("SELECT * FROM templates ORDER BY name").all() as Template[];
+// }
+//
+// export function upsertTemplate(name: string, body: string, createdBy: string): void {
+//   db()
+//     .prepare(
+//       `INSERT INTO templates (name, body, created_by)
+//        VALUES (?, ?, ?)
+//        ON CONFLICT(name) DO UPDATE SET body = ?, created_by = ?, created_at = datetime('now')`
+//     )
+//     .run(name, body, createdBy, body, createdBy);
+// }
+//
+// export function deleteTemplate(name: string): boolean {
+//   const result = db().prepare("DELETE FROM templates WHERE name = ?").run(name);
+//   return result.changes > 0;
+// }
 
 // ---------------------------------------------------------------
 // settings (runtime config — overrides env vars)
