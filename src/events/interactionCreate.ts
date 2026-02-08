@@ -3,7 +3,6 @@ import { logger } from "../util/logger.js";
 import {
   handleReply,
   handleNote,
-  handleOwner,
   handlePending,
   handleClose,
   handleAssign,
@@ -49,9 +48,6 @@ export function onInteractionCreate(client: Client): void {
           break;
         case "note":
           await handleNote(interaction);
-          break;
-        case "owner":
-          await handleOwner(interaction);
           break;
         case "pending":
           await handlePending(interaction);

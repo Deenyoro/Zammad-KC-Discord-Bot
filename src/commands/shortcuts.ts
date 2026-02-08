@@ -32,14 +32,7 @@ export const closeCommand = new SlashCommandBuilder()
 
 export const assignCommand = new SlashCommandBuilder()
   .setName("assign")
-  .setDescription("Assign ticket to a user")
-  .addUserOption((o) =>
-    o.setName("user").setDescription("Discord user to assign").setRequired(true)
-  );
-
-export const ownerCommand = new SlashCommandBuilder()
-  .setName("owner")
-  .setDescription("Set ticket owner (defaults to yourself)")
+  .setDescription("Assign ticket to a user (defaults to yourself)")
   .addUserOption((o) =>
     o.setName("user").setDescription("Discord user to assign (leave empty for yourself)").setRequired(false)
   );

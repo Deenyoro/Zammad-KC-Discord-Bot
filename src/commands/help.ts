@@ -30,9 +30,8 @@ export async function handleHelpCommand(
         value: [
           "`/info` -Show ticket details",
           "`/link` -Get a link to the Zammad ticket",
-          "`/owner [user]` -Set ticket owner (defaults to yourself)",
-          "`/assign <user>` -Assign to a Discord user",
-          "`/close` -Close the ticket",
+          "`/assign [user]` -Assign ticket (defaults to yourself)",
+          "`/close [note]` -Close the ticket (optional internal note)",
           "`/lock [duration]` - Lock ticket (permanent or timed: 30m, 2h, 4h, 8h, 16h, 1d, 2d, 1w, 1mo)",
           "`/state <name>` -Change state",
           "`/pending <type> <duration>` -Set pending state with expiration",

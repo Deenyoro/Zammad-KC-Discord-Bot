@@ -16,6 +16,7 @@ import {
   reopenTicketThread,
   renameTicketThread,
   ticketUrl,
+  formatOwnerLabelFromFull,
   type TicketInfo,
 } from "./threads.js";
 import { discordQueue } from "../queue/index.js";
@@ -172,15 +173,16 @@ export async function syncAllTickets(client: Client): Promise<void> {
           }
         }
 
-        // Update title if changed
+        // Update title/owner in thread name
+        const ownerLabel = ticketInfo.owner ? formatOwnerLabelFromFull(ticketInfo.owner) : undefined;
         if (ticket.title !== existing.title) {
-          try {
-            await renameTicketThread(client, existing.thread_id, existing.ticket_number, ticket.title);
-            updateThreadTitle(ticket.id, ticket.title);
-            logger.info({ ticketId: ticket.id, oldTitle: existing.title, newTitle: ticket.title }, "Renamed thread via sync for title change");
-          } catch (err) {
-            logger.warn({ ticketId: ticket.id, err }, "Failed to rename thread");
-          }
+          updateThreadTitle(ticket.id, ticket.title);
+        }
+        // Always pass current owner to rename — it will skip if the name hasn't actually changed
+        try {
+          await renameTicketThread(client, existing.thread_id, existing.ticket_number, ticket.title, ownerLabel);
+        } catch (err) {
+          logger.warn({ ticketId: ticket.id, err }, "Failed to rename thread");
         }
       }
     } catch (err) {
