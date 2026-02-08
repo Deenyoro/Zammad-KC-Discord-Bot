@@ -25,7 +25,10 @@ export const noteCommand = new SlashCommandBuilder()
 
 export const closeCommand = new SlashCommandBuilder()
   .setName("close")
-  .setDescription("Close the ticket linked to this thread");
+  .setDescription("Close the ticket linked to this thread")
+  .addStringOption((o) =>
+    o.setName("note").setDescription("Optional internal note to add before closing").setRequired(false)
+  );
 
 export const assignCommand = new SlashCommandBuilder()
   .setName("assign")
