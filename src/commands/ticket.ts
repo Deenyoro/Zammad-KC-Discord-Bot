@@ -77,6 +77,22 @@ export async function handleClose(interaction: ChatInputCommandInteraction) {
   if (!mapping) return;
   await interaction.deferReply();
 
+  // Add an internal note before closing if provided
+  const noteText = interaction.options.getString("note");
+  if (noteText) {
+    const userEntry = getUserMap(interaction.user.id);
+    const { expanded: body, contentType } = await expandTextModules(noteText);
+    await createArticle({
+      ticket_id: mapping.ticket_id,
+      body,
+      internal: true,
+      type: "note",
+      sender: "Agent",
+      content_type: contentType,
+      origin_by_id: userEntry?.zammad_id ?? undefined,
+    });
+  }
+
   const closedState = await getStateByName("closed");
   if (!closedState) throw new Error("Could not find 'closed' state in Zammad");
 
@@ -91,7 +107,8 @@ export async function handleClose(interaction: ChatInputCommandInteraction) {
     await closeTicketThread(interaction.client, mapping.thread_id);
   }
 
-  await interaction.editReply(`${interaction.user} closed ticket #${mapping.ticket_number}.`);
+  const noteSuffix = noteText ? " (internal note added)" : "";
+  await interaction.editReply(`${interaction.user} closed ticket #${mapping.ticket_number}.${noteSuffix}`);
 }
 
 export async function handleAssign(interaction: ChatInputCommandInteraction) {
