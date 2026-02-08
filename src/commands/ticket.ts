@@ -33,7 +33,7 @@ import {
   clearTextModulesCache,
   type ArticleAttachment,
 } from "../services/zammad.js";
-import { ticketUrl, closeTicketThread, removeRoleMembersFromThread } from "../services/threads.js";
+import { ticketUrl, closeTicketThread, removeRoleMembersFromThread, renameTicketThread, formatOwnerLabel } from "../services/threads.js";
 import { discordQueue } from "../queue/index.js";
 import { parseTime } from "../util/parseTime.js";
 import { truncate, splitMessage } from "../util/truncate.js";
@@ -116,7 +116,8 @@ export async function handleAssign(interaction: ChatInputCommandInteraction) {
   if (!mapping) return;
   await interaction.deferReply({ ephemeral: true });
 
-  const discordUser = interaction.options.getUser("user", true);
+  // Default to the caller if no user specified
+  const discordUser = interaction.options.getUser("user") ?? interaction.user;
   const userEntry = getUserMap(discordUser.id);
   if (!userEntry?.zammad_id) {
     await interaction.editReply(
@@ -126,6 +127,22 @@ export async function handleAssign(interaction: ChatInputCommandInteraction) {
   }
 
   await updateTicket(mapping.ticket_id, { owner_id: userEntry.zammad_id });
+
+  // Rename thread to reflect new owner
+  try {
+    const owner = await getUser(userEntry.zammad_id);
+    const ownerLabel = formatOwnerLabel(owner.firstname, owner.lastname);
+    await renameTicketThread(
+      interaction.client,
+      mapping.thread_id,
+      mapping.ticket_number,
+      mapping.title || "",
+      ownerLabel
+    );
+  } catch (err) {
+    logger.warn({ err, ticketId: mapping.ticket_id }, "Failed to rename thread after assign");
+  }
+
   await interaction.editReply(
     `Ticket #${mapping.ticket_number} assigned to ${discordUser.username}.`
   );
@@ -564,26 +581,7 @@ export async function handlePending(interaction: ChatInputCommandInteraction) {
   );
 }
 
-export async function handleOwner(interaction: ChatInputCommandInteraction) {
-  const mapping = await requireMapping(interaction);
-  if (!mapping) return;
-  await interaction.deferReply({ ephemeral: true });
-
-  // Default to the caller if no user specified
-  const discordUser = interaction.options.getUser("user") ?? interaction.user;
-  const userEntry = getUserMap(discordUser.id);
-  if (!userEntry?.zammad_id) {
-    await interaction.editReply(
-      `No Zammad mapping for ${discordUser.username}. Use \`/setup usermap\` first.`
-    );
-    return;
-  }
-
-  await updateTicket(mapping.ticket_id, { owner_id: userEntry.zammad_id });
-  await interaction.editReply(
-    `Ticket #${mapping.ticket_number} assigned to ${discordUser.username}.`
-  );
-}
+// handleOwner removed — merged into handleAssign
 
 // ---------------------------------------------------------------
 // Admin check (reuses env ADMIN_USER_IDS)

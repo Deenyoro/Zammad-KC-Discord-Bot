@@ -26,6 +26,7 @@ import {
   ticketUrl,
   removeRoleMembersFromThread,
   addRoleMembersToThread,
+  formatOwnerLabelFromFull,
   type TicketInfo,
 } from "./threads.js";
 import { discordQueue } from "../queue/index.js";
@@ -274,11 +275,16 @@ async function processWebhook(
     }
   }
 
-  // Handle title changes (use fullTicket.title not webhookTicket.title - webhook payload can be stale)
+  // Handle title or owner changes — rename thread to reflect current state
+  const ownerLabel = ownerName ? formatOwnerLabelFromFull(ownerName) : undefined;
   if (fullTicket.title !== mapping.title) {
     updateThreadTitle(ticketId, fullTicket.title);
-    await renameTicketThread(client, mapping.thread_id, mapping.ticket_number, fullTicket.title);
-    logger.info({ ticketId, oldTitle: mapping.title, newTitle: fullTicket.title }, "Renamed thread via webhook for title change");
+  }
+  // Always pass current owner to rename — it will skip if the name hasn't actually changed
+  try {
+    await renameTicketThread(client, mapping.thread_id, mapping.ticket_number, fullTicket.title, ownerLabel);
+  } catch (err) {
+    logger.warn({ ticketId, err }, "Failed to rename thread during webhook sync");
   }
 
   // Sync ALL unsynced articles in order (by article ID).
