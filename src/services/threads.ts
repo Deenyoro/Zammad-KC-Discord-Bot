@@ -34,6 +34,37 @@ export interface TicketInfo {
   url: string;
 }
 
+/**
+ * Format owner name as "FirstnameL." for thread titles.
+ * Returns undefined if no valid name.
+ */
+export function formatOwnerLabel(firstname?: string, lastname?: string): string | undefined {
+  const first = firstname?.trim();
+  const last = lastname?.trim();
+  if (!first) return undefined;
+  if (last) return `${first}${last[0].toUpperCase()}.`;
+  return first;
+}
+
+/**
+ * Format a full "Firstname Lastname" string into "FirstnameL." label.
+ */
+export function formatOwnerLabelFromFull(fullName: string): string | undefined {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length === 0 || !parts[0]) return undefined;
+  return formatOwnerLabel(parts[0], parts.length > 1 ? parts[parts.length - 1] : undefined);
+}
+
+/**
+ * Build a thread name with optional owner prefix.
+ */
+function buildThreadName(ticketNumber: string, title: string, ownerLabel?: string): string {
+  if (ownerLabel) {
+    return truncate(`#${ticketNumber} 👤${ownerLabel} ${title}`, 100);
+  }
+  return truncate(`#${ticketNumber} ${title}`, 100);
+}
+
 function stateColor(state: string): number {
   switch (state.toLowerCase()) {
     case "new":
@@ -121,9 +152,10 @@ export async function createTicketThread(
   ) as Message | undefined;
   if (!headerMessage) throw new Error("Failed to send header message");
 
+  const ownerLabel = ticket.owner ? formatOwnerLabelFromFull(ticket.owner) : undefined;
   const thread = await discordQueue.add(async () =>
     headerMessage.startThread({
-      name: truncate(`#${ticket.number} ${ticket.title}`, 100),
+      name: buildThreadName(ticket.number, ticket.title, ownerLabel),
       autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
       reason: `Zammad ticket ${ticket.id}`,
     })
@@ -196,18 +228,20 @@ export async function renameTicketThread(
   client: Client,
   threadId: string,
   ticketNumber: string,
-  newTitle: string
+  newTitle: string,
+  ownerLabel?: string
 ): Promise<void> {
   const thread = (await client.channels.fetch(threadId)) as ThreadChannel | null;
   if (!thread?.isThread()) {
     logger.warn({ threadId }, "Thread not found or not a thread for rename");
     return;
   }
-  const name = truncate(`#${ticketNumber} ${newTitle}`, 100);
+  const name = buildThreadName(ticketNumber, newTitle, ownerLabel);
   const oldName = thread.name;
+  if (name === oldName) return; // no change needed
   logger.info({ threadId, oldName, newName: name }, "About to rename thread");
   await discordQueue.add(async () => {
-    await thread.setName(name, "Ticket title updated in Zammad");
+    await thread.setName(name, "Ticket updated in Zammad");
     logger.info({ threadId, oldName, newName: name }, "Discord API rename completed");
   });
 }
