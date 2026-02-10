@@ -119,7 +119,7 @@ async function main() {
   // 6. Initial sync — pull all open tickets from Zammad and create threads
   await syncAllTickets(client);
 
-  // 7. Periodic ticket sync every 10 seconds — catches title changes and anything webhooks missed
+  // 7. Periodic ticket sync every 30 seconds — catches title changes and anything webhooks missed
   let syncing = false;
   syncTimer = setInterval(async () => {
     if (syncing) return; // skip if previous sync still running
@@ -131,7 +131,7 @@ async function main() {
     } finally {
       syncing = false;
     }
-  }, 10 * 1000);
+  }, 30 * 1000);
 
   // 8. Periodic maintenance (hourly) — prune old dedup/sync entries
   cleanupTimer = setInterval(() => {

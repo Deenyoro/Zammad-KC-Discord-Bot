@@ -105,7 +105,7 @@ export async function getTickets(page = 1, perPage = 100): Promise<ZammadTicket[
 
 /** Fetch all non-closed tickets by paginating the tickets API. */
 export async function getAllOpenTickets(): Promise<ZammadTicket[]> {
-  const closedStates = new Set(["closed", "closed (locked)", "merged", "removed"]);
+  const closedStates = new Set(["closed", "closed (locked)", "closed (locked until)", "merged", "removed"]);
   const all: ZammadTicket[] = [];
   let page = 1;
   const perPage = 100;
