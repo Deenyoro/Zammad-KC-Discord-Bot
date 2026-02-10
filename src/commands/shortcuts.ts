@@ -73,7 +73,8 @@ export const stateCommand = new SlashCommandBuilder()
         { name: "pending reminder", value: "pending reminder" },
         { name: "pending close", value: "pending close" },
         { name: "closed", value: "closed" },
-        { name: "closed (locked)", value: "closed (locked)" }
+        { name: "closed (locked)", value: "closed (locked)" },
+        { name: "closed (locked until)", value: "closed (locked until)" }
       )
   );
 

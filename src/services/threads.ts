@@ -317,6 +317,7 @@ async function getRoleMemberIds(guild: import("discord.js").Guild): Promise<stri
 export async function addRoleMembersToThread(thread: ThreadChannel): Promise<void> {
   try {
     const memberIds = await getRoleMemberIds(thread.guild);
+    logger.info({ threadId: thread.id, memberCount: memberIds.length }, "Adding role members to thread");
     await Promise.allSettled(
       memberIds.map((memberId) =>
         discordQueue.add(async () => { await thread.members.add(memberId); }).catch((err) => {
@@ -324,6 +325,7 @@ export async function addRoleMembersToThread(thread: ThreadChannel): Promise<voi
         })
       )
     );
+    logger.info({ threadId: thread.id, memberCount: memberIds.length }, "Role members added to thread");
   } catch (err) {
     logger.warn({ threadId: thread.id, err }, "Failed to add role members to thread");
   }

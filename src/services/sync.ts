@@ -234,7 +234,23 @@ async function processWebhook(
     if (isClosedState(normalizedState)) {
       await closeTicketThread(client, mapping.thread_id);
     } else if (isClosedState(oldState)) {
-      await reopenTicketThread(client, mapping.thread_id);
+      // Double-check with a fresh API call to avoid stale data causing a false reopen.
+      // The Zammad API frequently returns stale state data on webhook-triggered fetches.
+      try {
+        const freshTicket = await getTicket(ticketId);
+        const freshState = freshTicket.state.toLowerCase();
+        if (isClosedState(freshState)) {
+          logger.info(
+            { ticketId, webhookState: normalizedState, freshState },
+            "Skipping reopen in webhook - fresh API confirms ticket is closed (stale data)"
+          );
+          updateThreadState(ticketId, freshState);
+        } else {
+          await reopenTicketThread(client, mapping.thread_id);
+        }
+      } catch (err) {
+        logger.warn({ ticketId, err }, "Failed to verify ticket state before reopen");
+      }
     }
 
     // "waiting for reply" → archive thread and remove members (hides from ticket list)
