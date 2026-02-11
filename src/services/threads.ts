@@ -130,8 +130,7 @@ export function buildTicketEmbed(ticket: TicketInfo): EmbedBuilder {
 
 export function ticketUrl(ticketId: number): string {
   const base = env().ZAMMAD_PUBLIC_URL ?? env().ZAMMAD_BASE_URL;
-  // Use path-based URL (no fragment) — Discord embeds reject URLs with # fragments
-  return `${base}/ticket/zoom/${ticketId}`;
+  return `${base}/#ticket/zoom/${ticketId}`;
 }
 
 // ---------------------------------------------------------------
