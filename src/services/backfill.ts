@@ -7,6 +7,7 @@ import {
   updateThreadTitle,
 } from "../db/index.js";
 import { getAllOpenTickets, getTicket, getUser } from "./zammad.js";
+import { syncAllUnsyncedArticles } from "./sync.js";
 import {
   addRoleMembersToThread,
   removeRoleMembersFromThread,
@@ -20,6 +21,7 @@ import {
   type TicketInfo,
 } from "./threads.js";
 import { discordQueue } from "../queue/index.js";
+import { isClosedState, isHiddenState } from "../util/states.js";
 
 /**
  * Sync all non-closed Zammad tickets to Discord threads.
@@ -70,8 +72,7 @@ export async function syncAllTickets(client: Client): Promise<void> {
 
         // Ensure all role members are in the thread (catches newly added members)
         // Skip for "pending close" and "waiting for reply" — members were intentionally removed
-        const isHiddenState = ticketInfo.state === "pending close" || ticketInfo.state === "waiting for reply";
-        if (!isHiddenState) {
+        if (!isHiddenState(ticketInfo.state)) {
           try {
             const thread = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
             if (thread?.isThread() && !thread.archived) {
@@ -98,23 +99,24 @@ export async function syncAllTickets(client: Client): Promise<void> {
         // Update state if changed
         if (ticketInfo.state !== existing.state) {
           updateThreadState(ticket.id, ticketInfo.state);
-          const isClosedState = (s: string) => s === "closed" || s === "closed (locked)" || s === "closed (locked until)";
 
           // Reopen thread if it was closed but ticket is now open
           // BUT: Add grace period to avoid race condition with /ticket close command
           // or stale Zammad API data (the API list can lag behind individual ticket state)
           if (isClosedState(existing.state) && !isClosedState(ticketInfo.state)) {
-            // Skip recently closed threads to avoid race condition:
+            // Skip recently changed threads to avoid race condition:
             // If /ticket close was just run, the Zammad API might still show stale
-            // "open" state while the webhook is processing. Wait 60 seconds before
+            // "open" state while the webhook is processing. Wait 120 seconds before
             // reopening to avoid fighting with the close command or stale API data.
             const updatedAt = new Date(existing.updated_at);
             const ageSeconds = (Date.now() - updatedAt.getTime()) / 1000;
-            if (ageSeconds < 60) {
+            if (ageSeconds < 120) {
               logger.debug(
                 { ticketId: ticket.id, ageSeconds, dbState: existing.state, apiState: ticketInfo.state },
                 "Skipping reopen of recently closed thread (grace period)"
               );
+              // Revert DB state — don't adopt stale list state during grace period
+              updateThreadState(ticket.id, existing.state);
             } else {
               // Double-check by fetching fresh ticket data directly (bypasses any list caching)
               try {
@@ -130,6 +132,9 @@ export async function syncAllTickets(client: Client): Promise<void> {
                 } else {
                   await reopenTicketThread(client, existing.thread_id);
                   logger.info({ ticketId: ticket.id, freshState }, "Reopened thread for ticket that is no longer closed");
+                  // Sync any articles that were missed while the ticket was closed
+                  // (e.g. customer reply that triggered the reopen)
+                  await syncAllUnsyncedArticles(client, existing.thread_id, ticket.id);
                 }
               } catch (err) {
                 logger.warn({ ticketId: ticket.id, err }, "Failed to verify/reopen thread");
@@ -138,8 +143,7 @@ export async function syncAllTickets(client: Client): Promise<void> {
           }
 
           // Handle hidden state transitions (catches changes that happened while bot was down)
-          const isHiddenStateFn = (s: string) => s === "pending close" || s === "waiting for reply";
-          if (isHiddenStateFn(ticketInfo.state) && !isHiddenStateFn(existing.state)) {
+          if (isHiddenState(ticketInfo.state) && !isHiddenState(existing.state)) {
             try {
               await removeRoleMembersFromThread(client, existing.thread_id);
               if (ticketInfo.state === "waiting for reply") {
@@ -156,7 +160,7 @@ export async function syncAllTickets(client: Client): Promise<void> {
           }
 
           // Transition OUT of hidden state → unarchive and re-add members
-          if (isHiddenStateFn(existing.state) && !isHiddenStateFn(ticketInfo.state) && !isClosedState(ticketInfo.state)) {
+          if (isHiddenState(existing.state) && !isHiddenState(ticketInfo.state) && !isClosedState(ticketInfo.state)) {
             try {
               const thread = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
               if (thread?.isThread()) {
@@ -194,27 +198,46 @@ export async function syncAllTickets(client: Client): Promise<void> {
   // Close threads for tickets that are no longer open
   const allMappings = getAllTicketThreads();
   for (const mapping of allMappings) {
-    if (mapping.state === "closed" || mapping.state === "closed (locked)" || mapping.state === "closed (locked until)") continue; // already closed
+    if (isClosedState(mapping.state)) continue; // already closed
     if (openTicketIds.has(mapping.ticket_id)) continue; // still open
 
-    // Skip recently created threads to avoid race condition:
-    // If a webhook creates a thread DURING this sync (after we fetched tickets),
-    // the thread won't be in openTicketIds but the ticket IS actually open.
-    // Wait 2 minutes before considering a thread "stale" to avoid false positives.
+    // Skip recently created OR recently updated threads to avoid race conditions:
+    // - A webhook may create a thread DURING this sync (after we fetched tickets)
+    // - A ticket may temporarily be missing from the paginated list due to API lag
     const createdAt = new Date(mapping.created_at);
-    const ageMinutes = (Date.now() - createdAt.getTime()) / (1000 * 60);
-    if (ageMinutes < 2) {
-      logger.debug({ ticketId: mapping.ticket_id, ageMinutes }, "Skipping recently created thread");
+    const updatedAt = new Date(mapping.updated_at);
+    const createAgeMinutes = (Date.now() - createdAt.getTime()) / (1000 * 60);
+    const updateAgeMinutes = (Date.now() - updatedAt.getTime()) / (1000 * 60);
+    if (createAgeMinutes < 2 || updateAgeMinutes < 2) {
+      logger.debug(
+        { ticketId: mapping.ticket_id, createAgeMinutes, updateAgeMinutes },
+        "Skipping recently created/updated thread"
+      );
       continue;
     }
 
+    // Always verify with a fresh individual ticket fetch before closing.
+    // The paginated list can miss tickets due to pagination race conditions
+    // or API caching; closing an open ticket is far worse than a brief delay.
     try {
-      updateThreadState(mapping.ticket_id, "closed");
+      const freshTicket = await getTicket(mapping.ticket_id);
+      const freshState = freshTicket.state.toLowerCase();
+      if (!isClosedState(freshState)) {
+        logger.info(
+          { ticketId: mapping.ticket_id, listMissing: true, freshState },
+          "Skipping close - fresh API shows ticket is still open (list was incomplete)"
+        );
+        // Update DB state to match reality
+        updateThreadState(mapping.ticket_id, freshState);
+        continue;
+      }
+
+      updateThreadState(mapping.ticket_id, freshState);
       await closeTicketThread(client, mapping.thread_id);
       closed++;
-      logger.info({ ticketId: mapping.ticket_id }, "Closed thread for ticket no longer open");
+      logger.info({ ticketId: mapping.ticket_id, freshState }, "Closed thread for ticket confirmed closed");
     } catch (err) {
-      logger.warn({ ticketId: mapping.ticket_id, err }, "Failed to close stale thread");
+      logger.warn({ ticketId: mapping.ticket_id, err }, "Failed to verify/close stale thread");
     }
   }
 
