@@ -336,8 +336,16 @@ export async function syncAllUnsyncedArticles(
   // Sort explicitly by ID to guarantee chronological order regardless of API behavior.
   articles.sort((a: { id: number }, b: { id: number }) => a.id - b.id);
 
+  // Track whether we've already synced a non-system article for this ticket.
+  // The first article gets the full email body; subsequent ones strip the
+  // quoted reply chain since it's already visible earlier in the thread.
+  let hasFirstArticle = false;
+
   for (const article of articles) {
-    if (isArticleSynced(article.id)) continue;
+    if (isArticleSynced(article.id)) {
+      if (article.sender !== "System") hasFirstArticle = true;
+      continue;
+    }
 
     // Skip system-generated articles (state changes etc.)
     if (article.sender === "System") {
@@ -350,14 +358,25 @@ export async function syncAllUnsyncedArticles(
     const senderLabel = fromName
       ? `${fromName} (${article.sender})`
       : article.sender;
-    const body = stripHtml(article.body);
+
+    // First article keeps the full body; replies strip the quoted email chain
+    const rawBody = hasFirstArticle
+      ? stripQuotedEmail(article.body)
+      : article.body;
+    const body = stripHtml(rawBody);
     const content = `**${senderLabel}:** ${prefix}${body}`;
+    hasFirstArticle = true;
 
     // Download attachments (skip tiny placeholders <10B and oversized >25MB)
     const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+    const MAX_DISCORD_ATTACHMENTS = 10;
     const attachments: { data: Buffer; filename: string }[] = [];
     if (article.attachments?.length) {
       for (const att of article.attachments) {
+        if (attachments.length >= MAX_DISCORD_ATTACHMENTS) {
+          logger.info({ articleId: article.id, total: article.attachments.length, limit: MAX_DISCORD_ATTACHMENTS }, "Capping attachments at Discord limit");
+          break;
+        }
         if (att.size < 10) continue;
         if (att.size > MAX_ATTACHMENT_BYTES) {
           logger.warn({ articleId: article.id, attachmentId: att.id, size: att.size }, "Skipping oversized Zammad attachment");
@@ -422,6 +441,43 @@ function ensureFileExtension(filename: string, contentType: string): string {
   if (subtype && subtype !== "octet-stream") return `${filename}.${subtype}`;
 
   return filename;
+}
+
+/**
+ * Remove quoted email content from HTML before converting to plain text.
+ * Strips <blockquote> elements, Gmail/Outlook quote containers, and
+ * common text-based reply separators so only the new reply remains.
+ */
+function stripQuotedEmail(html: string): string {
+  let cleaned = html;
+
+  // Remove <blockquote> elements and everything inside (handles nesting)
+  // Use a loop because nested blockquotes need multiple passes
+  let prev = "";
+  while (prev !== cleaned) {
+    prev = cleaned;
+    cleaned = cleaned.replace(/<blockquote[\s\S]*?<\/blockquote>/gi, "");
+  }
+
+  // Gmail: <div class="gmail_quote">...</div>  (greedy — captures to the end)
+  cleaned = cleaned.replace(/<div\s[^>]*class=["']gmail_quote["'][\s\S]*/gi, "");
+
+  // Outlook / generic: <div id="appendonsend">...</div>
+  cleaned = cleaned.replace(/<div\s[^>]*id=["']appendonsend["'][\s\S]*/gi, "");
+
+  // Yahoo: <div class="yahoo_quoted">...</div>
+  cleaned = cleaned.replace(/<div\s[^>]*class=["']yahoo_quoted["'][\s\S]*/gi, "");
+
+  // Zammad's own quote marker: <div data-signature="true">
+  cleaned = cleaned.replace(/<div\s[^>]*data-signature=["']true["'][\s\S]*/gi, "");
+
+  // Strip "On <date> <person> wrote:" line (plain-text style, sometimes outside blockquotes)
+  cleaned = cleaned.replace(/On\s.+wrote:\s*$/gim, "");
+
+  // Strip Outlook-style header block: "From: ... Sent: ... To: ... Subject: ..."
+  cleaned = cleaned.replace(/[-_]{2,}[\s\S]*?From:\s.+[\s\S]*?Subject:\s.+/gi, "");
+
+  return cleaned;
 }
 
 /** Convert HTML to plain text with basic formatting. */
