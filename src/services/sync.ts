@@ -30,6 +30,7 @@ import {
   type TicketInfo,
 } from "./threads.js";
 import { discordQueue } from "../queue/index.js";
+import { isClosedState, isHiddenState } from "../util/states.js";
 
 /** Extract a display name from an article "from" field like "John Doe <john@example.com>" */
 function extractDisplayName(from: string | undefined): string | undefined {
@@ -183,10 +184,10 @@ async function processWebhook(
     threadJustCreated = true;
 
     // If we just created a thread for a closed/locked ticket, close it immediately
-    if (normalizedState === "closed" || normalizedState === "closed (locked)" || normalizedState === "closed (locked until)") {
+    if (isClosedState(normalizedState)) {
       await closeTicketThread(client, mapping.thread_id);
       logger.info({ ticketId }, "Closed newly created thread for closed ticket");
-    } else if (normalizedState === "pending close" || normalizedState === "waiting for reply") {
+    } else if (isHiddenState(normalizedState)) {
       // Don't add members to newly created hidden-state threads; archive "waiting for reply"
       await removeRoleMembersFromThread(client, mapping.thread_id);
       if (normalizedState === "waiting for reply") {
@@ -210,7 +211,6 @@ async function processWebhook(
 
   // Handle state changes (both sides are lowercase now)
   const oldState = mapping.state;
-  const isClosedState = (s: string) => s === "closed" || s === "closed (locked)" || s === "closed (locked until)";
 
   if (normalizedState !== oldState) {
     updateThreadState(ticketId, normalizedState);
@@ -254,7 +254,6 @@ async function processWebhook(
     }
 
     // "waiting for reply" → archive thread and remove members (hides from ticket list)
-    const isHiddenState = (s: string) => s === "pending close" || s === "waiting for reply";
     if (isHiddenState(normalizedState) && !isHiddenState(oldState)) {
       await removeRoleMembersFromThread(client, mapping.thread_id);
       // Archive "waiting for reply" threads so they disappear from channel lists
@@ -306,9 +305,9 @@ async function processWebhook(
   // Sync ALL unsynced articles in order (by article ID).
   // This guarantees correct chronological ordering even when webhooks
   // arrive out of order due to concurrent Zammad processing.
-  if (webhookArticle) {
-    await syncAllUnsyncedArticles(client, mapping.thread_id, ticketId);
-  }
+  // Always sync — Zammad sometimes sends webhooks without the article
+  // payload (e.g. for internal notes), so we must not gate on webhookArticle.
+  await syncAllUnsyncedArticles(client, mapping.thread_id, ticketId);
 }
 
 // ---------------------------------------------------------------
@@ -321,7 +320,7 @@ async function processWebhook(
  * correct chronological ordering even when webhooks arrive out of
  * order (e.g. two messages sent in quick succession).
  */
-async function syncAllUnsyncedArticles(
+export async function syncAllUnsyncedArticles(
   client: Client,
   threadId: string,
   ticketId: number,
@@ -334,7 +333,9 @@ async function syncAllUnsyncedArticles(
     return;
   }
 
-  // Articles come back sorted by ID (chronological). Process in order.
+  // Sort explicitly by ID to guarantee chronological order regardless of API behavior.
+  articles.sort((a: { id: number }, b: { id: number }) => a.id - b.id);
+
   for (const article of articles) {
     if (isArticleSynced(article.id)) continue;
 
