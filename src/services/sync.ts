@@ -374,6 +374,17 @@ export async function syncAllUnsyncedArticles(
     }
 
     const discordMsgId = await sendToThread(client, threadId, content, attachments);
+    if (!discordMsgId) {
+      // sendToThread returned null — thread could not be fetched or message failed.
+      // Do NOT mark as synced so the article is retried on the next sync cycle.
+      // Break (don't continue) because if the thread is unfetchable, remaining
+      // articles for this ticket will also fail.
+      logger.warn(
+        { ticketId, articleId: article.id },
+        "sendToThread returned null — article NOT marked as synced, will retry"
+      );
+      break;
+    }
     markArticleSynced(article.id, ticketId, threadId, discordMsgId, "zammad_to_discord");
 
     logger.info(
