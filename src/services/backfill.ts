@@ -23,11 +23,18 @@ import {
 import { discordQueue } from "../queue/index.js";
 import { isClosedState, isHiddenState } from "../util/states.js";
 
+// Article catch-up cycle counter.  Every ARTICLE_CATCHUP_INTERVAL cycles
+// (~5 min at 30 s intervals) we re-sync articles for ALL open tickets so
+// that any webhook that was lost or returned stale data is eventually caught.
+let syncCycleCount = 0;
+const ARTICLE_CATCHUP_INTERVAL = 10;
+
 /**
  * Sync all non-closed Zammad tickets to Discord threads.
  * - Creates threads for tickets that don't have one yet
  * - Updates the header embed for tickets that already have a thread
  * - Closes threads for tickets that became closed since last sync
+ * - Periodically catches up missed articles for all open tickets
  *
  * Called on startup and periodically via setInterval.
  */
@@ -68,6 +75,16 @@ export async function syncAllTickets(client: Client): Promise<void> {
           updated++;
         } catch (err) {
           logger.warn({ ticketId: ticket.id, err }, "Failed to update existing thread embed");
+        }
+
+        // Periodic article catch-up: sync any articles missed by webhooks.
+        // Runs every Nth cycle to avoid hammering the Zammad API every 30 s.
+        if (syncCycleCount % ARTICLE_CATCHUP_INTERVAL === 0) {
+          try {
+            await syncAllUnsyncedArticles(client, existing.thread_id, ticket.id);
+          } catch (err) {
+            logger.warn({ ticketId: ticket.id, err }, "Failed to catch up articles during periodic sync");
+          }
         }
 
         // Ensure all role members are in the thread (catches newly added members)
@@ -241,7 +258,8 @@ export async function syncAllTickets(client: Client): Promise<void> {
     }
   }
 
-  logger.info({ created, updated, closed, failed, total: tickets.length }, "Ticket sync complete");
+  syncCycleCount++;
+  logger.info({ created, updated, closed, failed, total: tickets.length, articleCatchup: (syncCycleCount - 1) % ARTICLE_CATCHUP_INTERVAL === 0 }, "Ticket sync complete");
 }
 
 async function buildTicketInfo(ticket: {
