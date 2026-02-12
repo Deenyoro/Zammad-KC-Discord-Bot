@@ -254,6 +254,20 @@ export async function sendToThread(
   const thread = (await client.channels.fetch(threadId)) as ThreadChannel | null;
   if (!thread?.isThread()) return null;
 
+  // If the thread is archived (or locked+archived), temporarily unarchive so
+  // we can send. Re-archive afterwards to preserve the visual "closed" state.
+  const wasArchived = thread.archived;
+  const wasLocked = thread.locked;
+  if (wasArchived) {
+    await discordQueue.add(async () => {
+      await thread.edit({
+        archived: false,
+        ...(wasLocked ? { locked: false } : {}),
+        reason: "Temporarily unarchiving to sync article",
+      });
+    });
+  }
+
   const files = attachments?.map(
     (a) => new AttachmentBuilder(a.data, { name: a.filename })
   );
@@ -275,6 +289,17 @@ export async function sendToThread(
     if (i === 0) {
       firstMsgId = msg?.id ?? null;
     }
+  }
+
+  // Restore archived/locked state so the thread stays visually "closed"
+  if (wasArchived) {
+    await discordQueue.add(async () => {
+      await thread.edit({
+        ...(wasLocked ? { locked: true } : {}),
+        archived: true,
+        reason: "Re-archiving after article sync",
+      });
+    });
   }
 
   return firstMsgId;
