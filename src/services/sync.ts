@@ -1,4 +1,5 @@
 import { Client, ThreadChannel } from "discord.js";
+import { env } from "../util/env.js";
 import { logger } from "../util/logger.js";
 import {
   getThreadByTicketId,
@@ -367,29 +368,39 @@ export async function syncAllUnsyncedArticles(
     const content = `**${senderLabel}:** ${prefix}${body}`;
     hasFirstArticle = true;
 
-    // Download attachments with safety limits to prevent OOM:
-    // - Max 10 files (Discord limit)
-    // - Max 8MB per file
-    // - Max 24MB total per article (keeps memory well under container limits)
-    const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
-    const MAX_TOTAL_ATTACHMENT_BYTES = 24 * 1024 * 1024;
+    // Process attachments:
+    // - Files ≤ 5MB: download and upload to Discord
+    // - Files > 5MB: link to Zammad instead of downloading (prevents OOM)
+    // - Max 10 uploaded files (Discord limit)
+    // - Max 24MB total downloads per article
+    const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024;
+    const MAX_TOTAL_DOWNLOAD_BYTES = 24 * 1024 * 1024;
     const MAX_DISCORD_ATTACHMENTS = 10;
     let totalDownloaded = 0;
     const attachments: { data: Buffer; filename: string }[] = [];
+    const largeFileLinks: string[] = [];
+    const zammadBase = env().ZAMMAD_PUBLIC_URL ?? env().ZAMMAD_BASE_URL;
+
     if (article.attachments?.length) {
       for (const att of article.attachments) {
+        if (att.size < 10) continue; // skip tiny placeholders
+
+        // Large files: add a Zammad link instead of downloading
+        if (att.size > LARGE_FILE_THRESHOLD) {
+          const sizeMB = (att.size / 1024 / 1024).toFixed(1);
+          largeFileLinks.push(`[${att.filename} (${sizeMB} MB)](${zammadBase}/#ticket/zoom/${ticketId}/${article.id})`);
+          continue;
+        }
+
         if (attachments.length >= MAX_DISCORD_ATTACHMENTS) {
           logger.info({ articleId: article.id, total: article.attachments.length, limit: MAX_DISCORD_ATTACHMENTS }, "Capping attachments at Discord limit");
           break;
         }
-        if (att.size < 10) continue;
-        if (att.size > MAX_ATTACHMENT_BYTES) {
-          logger.debug({ articleId: article.id, attachmentId: att.id, sizeMB: (att.size / 1024 / 1024).toFixed(1) }, "Skipping oversized attachment");
+        if (totalDownloaded + att.size > MAX_TOTAL_DOWNLOAD_BYTES) {
+          // Remaining files go to link list
+          const sizeMB = (att.size / 1024 / 1024).toFixed(1);
+          largeFileLinks.push(`[${att.filename} (${sizeMB} MB)](${zammadBase}/#ticket/zoom/${ticketId}/${article.id})`);
           continue;
-        }
-        if (totalDownloaded + att.size > MAX_TOTAL_ATTACHMENT_BYTES) {
-          logger.info({ articleId: article.id, totalMB: (totalDownloaded / 1024 / 1024).toFixed(1), budgetMB: MAX_TOTAL_ATTACHMENT_BYTES / 1024 / 1024 }, "Attachment budget exceeded, skipping remaining");
-          break;
         }
         try {
           const downloaded = await downloadAttachment(ticketId, article.id, att.id);
@@ -402,7 +413,13 @@ export async function syncAllUnsyncedArticles(
       }
     }
 
-    const discordMsgId = await sendToThread(client, threadId, content, attachments);
+    // Append links for large/overflow files to the message content
+    let finalContent = content;
+    if (largeFileLinks.length > 0) {
+      finalContent += `\n📎 **Attachments in Zammad:**\n${largeFileLinks.join("\n")}`;
+    }
+
+    const discordMsgId = await sendToThread(client, threadId, finalContent, attachments);
     if (!discordMsgId) {
       // sendToThread returned null — thread could not be fetched or message failed.
       // Do NOT mark as synced so the article is retried on the next sync cycle.
