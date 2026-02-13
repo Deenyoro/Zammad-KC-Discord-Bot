@@ -351,18 +351,27 @@ export async function handleNote(interaction: ChatInputCommandInteraction) {
   // Get user mapping for attribution
   const userEntry = getUserMap(interaction.user.id);
 
+  const FILE_SIZE_LIMIT = 5 * 1024 * 1024; // 5 MB
   let attachments: ArticleAttachment[] | undefined;
   if (fileOption) {
-    try {
-      const res = await fetch(fileOption.url);
-      const buf = Buffer.from(await res.arrayBuffer());
-      attachments = [{
-        filename: fileOption.name,
-        data: buf.toString("base64"),
-        "mime-type": fileOption.contentType || "application/octet-stream",
-      }];
-    } catch (err) {
-      logger.warn({ err, filename: fileOption.name }, "Failed to download Discord attachment");
+    if (fileOption.size > FILE_SIZE_LIMIT) {
+      logger.warn({ filename: fileOption.name, size: fileOption.size }, "Skipping oversized slash command attachment");
+    } else {
+      try {
+        const res = await fetch(fileOption.url, { signal: AbortSignal.timeout(60_000) });
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.byteLength > FILE_SIZE_LIMIT) {
+          logger.warn({ filename: fileOption.name, actual: buf.byteLength }, "Attachment larger than declared");
+        } else {
+          attachments = [{
+            filename: fileOption.name,
+            data: buf.toString("base64"),
+            "mime-type": fileOption.contentType || "application/octet-stream",
+          }];
+        }
+      } catch (err) {
+        logger.warn({ err, filename: fileOption.name }, "Failed to download Discord attachment");
+      }
     }
   }
 
@@ -504,18 +513,27 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   }
 
   // Download attachment from Discord and base64-encode for Zammad
+  const REPLY_FILE_LIMIT = 5 * 1024 * 1024; // 5 MB
   let attachments: ArticleAttachment[] | undefined;
   if (fileOption) {
-    try {
-      const res = await fetch(fileOption.url);
-      const buf = Buffer.from(await res.arrayBuffer());
-      attachments = [{
-        filename: fileOption.name,
-        data: buf.toString("base64"),
-        "mime-type": fileOption.contentType || "application/octet-stream",
-      }];
-    } catch (err) {
-      logger.warn({ err, filename: fileOption.name }, "Failed to download Discord attachment");
+    if (fileOption.size > REPLY_FILE_LIMIT) {
+      logger.warn({ filename: fileOption.name, size: fileOption.size }, "Skipping oversized reply attachment");
+    } else {
+      try {
+        const res = await fetch(fileOption.url, { signal: AbortSignal.timeout(60_000) });
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.byteLength > REPLY_FILE_LIMIT) {
+          logger.warn({ filename: fileOption.name, actual: buf.byteLength }, "Reply attachment larger than declared");
+        } else {
+          attachments = [{
+            filename: fileOption.name,
+            data: buf.toString("base64"),
+            "mime-type": fileOption.contentType || "application/octet-stream",
+          }];
+        }
+      } catch (err) {
+        logger.warn({ err, filename: fileOption.name }, "Failed to download Discord attachment");
+      }
     }
   }
 
