@@ -448,8 +448,17 @@ export interface KcScheduledArticle {
   id: number;
   ticket_id: number;
   scheduled_at: string;
-  body: string;
-  article_type?: string;
+  status: string;
+  article_data: {
+    body?: string;
+    type?: string;
+    to?: string;
+    cc?: string;
+    subject?: string;
+    internal?: boolean;
+    content_type?: string;
+  };
+  created_by_id: number;
   created_at: string;
 }
 
@@ -459,21 +468,31 @@ export async function createScheduledArticle(data: {
   scheduled_at: string;
   article_type?: string;
   to?: string;
+  content_type?: string;
 }): Promise<KcScheduledArticle> {
-  const res = await zammadFetch("/kc/scheduled_articles", {
+  const { ticket_id, body, scheduled_at, article_type, to, content_type } = data;
+  const res = await zammadFetch(`/kc/tickets/${ticket_id}/scheduled_articles`, {
     method: "POST",
-    body: JSON.stringify({ scheduled_article: data }),
+    body: JSON.stringify({
+      article_data: {
+        body,
+        type: article_type || "note",
+        to,
+        content_type: content_type || "text/html",
+      },
+      scheduled_at,
+    }),
   });
   return res.json() as Promise<KcScheduledArticle>;
 }
 
 export async function getScheduledArticles(ticketId: number): Promise<KcScheduledArticle[]> {
-  const res = await zammadFetch(`/kc/scheduled_articles?ticket_id=${ticketId}`);
+  const res = await zammadFetch(`/kc/tickets/${ticketId}/scheduled_articles`);
   return res.json() as Promise<KcScheduledArticle[]>;
 }
 
-export async function cancelScheduledArticle(articleId: number): Promise<void> {
-  await zammadFetch(`/kc/scheduled_articles/${articleId}`, {
+export async function cancelScheduledArticle(ticketId: number, articleId: number): Promise<void> {
+  await zammadFetch(`/kc/tickets/${ticketId}/scheduled_articles/${articleId}`, {
     method: "DELETE",
   });
 }
@@ -483,7 +502,7 @@ export async function cancelScheduledArticle(articleId: number): Promise<void> {
 // ---------------------------------------------------------------
 
 export async function createSmsConversation(data: {
-  to: string;
+  phone_number: string;
   body: string;
   channel_id?: number;
 }): Promise<ZammadTicket> {
