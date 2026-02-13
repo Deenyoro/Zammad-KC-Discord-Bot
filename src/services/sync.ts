@@ -383,11 +383,14 @@ export async function syncAllUnsyncedArticles(
 
     if (article.attachments?.length) {
       for (const att of article.attachments) {
-        if (att.size < 10) continue; // skip tiny placeholders
+        // Guard: treat missing/invalid size as "unknown large" — link instead of downloading.
+        // Without this, undefined/NaN bypasses all numeric comparisons below.
+        const attSize = Number.isFinite(att.size) ? att.size : 0;
+        if (attSize < 10 && attSize > 0) continue; // skip tiny placeholders
 
-        // Large files: add a Zammad link instead of downloading
-        if (att.size > LARGE_FILE_THRESHOLD) {
-          const sizeMB = (att.size / 1024 / 1024).toFixed(1);
+        // Large or unknown-size files: add a Zammad link instead of downloading
+        if (attSize > LARGE_FILE_THRESHOLD || attSize === 0) {
+          const sizeMB = attSize > 0 ? (attSize / 1024 / 1024).toFixed(1) : "?";
           largeFileLinks.push(`[${att.filename} (${sizeMB} MB)](${zammadBase}/#ticket/zoom/${ticketId}/${article.id})`);
           continue;
         }
@@ -396,9 +399,9 @@ export async function syncAllUnsyncedArticles(
           logger.info({ articleId: article.id, total: article.attachments.length, limit: MAX_DISCORD_ATTACHMENTS }, "Capping attachments at Discord limit");
           break;
         }
-        if (totalDownloaded + att.size > MAX_TOTAL_DOWNLOAD_BYTES) {
+        if (totalDownloaded + attSize > MAX_TOTAL_DOWNLOAD_BYTES) {
           // Remaining files go to link list
-          const sizeMB = (att.size / 1024 / 1024).toFixed(1);
+          const sizeMB = (attSize / 1024 / 1024).toFixed(1);
           largeFileLinks.push(`[${att.filename} (${sizeMB} MB)](${zammadBase}/#ticket/zoom/${ticketId}/${article.id})`);
           continue;
         }
