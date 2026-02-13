@@ -26,7 +26,10 @@ import { isClosedState, isHiddenState } from "../util/states.js";
 // Article catch-up cycle counter.  Every ARTICLE_CATCHUP_INTERVAL cycles
 // (~5 min at 30 s intervals) we re-sync articles for ALL open tickets so
 // that any webhook that was lost or returned stale data is eventually caught.
-let syncCycleCount = 0;
+// Start at 1 so the first catch-up is at cycle ARTICLE_CATCHUP_INTERVAL,
+// giving the bot time to stabilize after startup before bulk-downloading
+// attachments (avoids OOM on boot when there's a large backlog).
+let syncCycleCount = 1;
 const ARTICLE_CATCHUP_INTERVAL = 10;
 
 /**
