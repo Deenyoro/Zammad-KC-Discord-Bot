@@ -718,7 +718,7 @@ export async function handleSchedule(interaction: ChatInputCommandInteraction) {
   const timeInput = interaction.options.getString("time", true);
 
   // Expand ::shortcut text modules before scheduling
-  const { expanded: text } = await expandTextModules(rawText);
+  const { expanded: text, contentType } = await expandTextModules(rawText);
   const scheduledAt = parseTime(timeInput);
 
   if (!scheduledAt) {
@@ -738,6 +738,7 @@ export async function handleSchedule(interaction: ChatInputCommandInteraction) {
     scheduled_at: scheduledAt,
     article_type: articleType,
     to: channel?.to,
+    content_type: contentType,
   });
 
   await interaction.editReply(
@@ -759,7 +760,7 @@ export async function handleSchedules(interaction: ChatInputCommandInteraction) 
 
   const lines = articles.map(
     (a) =>
-      `**ID ${a.id}** — ${new Date(a.scheduled_at).toLocaleString()}: ${truncate(a.body, 80)}`
+      `**ID ${a.id}** — ${new Date(a.scheduled_at).toLocaleString()} [${a.article_data?.type || "note"}]: ${truncate(a.article_data?.body?.replace(/<[^>]+>/g, "") || "(empty)", 80)}`
   );
   await interaction.editReply(truncate(lines.join("\n"), 2000));
 }
@@ -776,7 +777,7 @@ export async function handleUnschedule(interaction: ChatInputCommandInteraction)
     return;
   }
 
-  await cancelScheduledArticle(id);
+  await cancelScheduledArticle(mapping.ticket_id, id);
   await interaction.editReply(`Scheduled reply #${id} cancelled.`);
 }
 
@@ -825,7 +826,7 @@ export async function handleNewTicket(interaction: ChatInputCommandInteraction) 
         break;
 
       case "sms":
-        ticket = await createSmsConversation({ to, body });
+        ticket = await createSmsConversation({ phone_number: to, body });
         break;
 
       case "phone":
