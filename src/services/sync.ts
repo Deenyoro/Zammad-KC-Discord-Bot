@@ -367,9 +367,14 @@ export async function syncAllUnsyncedArticles(
     const content = `**${senderLabel}:** ${prefix}${body}`;
     hasFirstArticle = true;
 
-    // Download attachments (skip tiny placeholders <10B and oversized >25MB)
-    const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+    // Download attachments with safety limits to prevent OOM:
+    // - Max 10 files (Discord limit)
+    // - Max 8MB per file
+    // - Max 24MB total per article (keeps memory well under container limits)
+    const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+    const MAX_TOTAL_ATTACHMENT_BYTES = 24 * 1024 * 1024;
     const MAX_DISCORD_ATTACHMENTS = 10;
+    let totalDownloaded = 0;
     const attachments: { data: Buffer; filename: string }[] = [];
     if (article.attachments?.length) {
       for (const att of article.attachments) {
@@ -379,13 +384,18 @@ export async function syncAllUnsyncedArticles(
         }
         if (att.size < 10) continue;
         if (att.size > MAX_ATTACHMENT_BYTES) {
-          logger.warn({ articleId: article.id, attachmentId: att.id, size: att.size }, "Skipping oversized Zammad attachment");
+          logger.debug({ articleId: article.id, attachmentId: att.id, sizeMB: (att.size / 1024 / 1024).toFixed(1) }, "Skipping oversized attachment");
           continue;
+        }
+        if (totalDownloaded + att.size > MAX_TOTAL_ATTACHMENT_BYTES) {
+          logger.info({ articleId: article.id, totalMB: (totalDownloaded / 1024 / 1024).toFixed(1), budgetMB: MAX_TOTAL_ATTACHMENT_BYTES / 1024 / 1024 }, "Attachment budget exceeded, skipping remaining");
+          break;
         }
         try {
           const downloaded = await downloadAttachment(ticketId, article.id, att.id);
           const filename = ensureFileExtension(att.filename, downloaded.contentType);
           attachments.push({ data: downloaded.data, filename });
+          totalDownloaded += downloaded.data.length;
         } catch (err) {
           logger.warn({ articleId: article.id, attachmentId: att.id, err }, "Failed to download attachment");
         }
