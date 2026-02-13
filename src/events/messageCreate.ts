@@ -42,17 +42,32 @@ async function forwardToZammad(
   const rawBody = message.content || "";
   const { expanded: body, contentType } = await expandTextModules(rawBody);
 
-  // Download Discord attachments and base64-encode for Zammad
-  const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB
+  // Download Discord attachments and base64-encode for Zammad.
+  // Caps: 5 MB per file, 24 MB total, 10 files max — prevents OOM from
+  // bulk uploads (10 × 25 MB base64 ≈ 580 MB peak without limits).
+  const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+  const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
+  const MAX_ATTACHMENT_COUNT = 10;
+  let totalBytes = 0;
   const attachments: ArticleAttachment[] = [];
   for (const [, att] of message.attachments) {
+    if (attachments.length >= MAX_ATTACHMENT_COUNT) break;
     if (att.size > MAX_ATTACHMENT_BYTES) {
       logger.warn({ filename: att.name, size: att.size }, "Skipping oversized Discord attachment");
+      continue;
+    }
+    if (totalBytes + att.size > MAX_TOTAL_BYTES) {
+      logger.warn({ filename: att.name, size: att.size, totalBytes }, "Skipping attachment — total budget exceeded");
       continue;
     }
     try {
       const res = await fetch(att.url, { signal: AbortSignal.timeout(60_000) });
       const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.byteLength > MAX_ATTACHMENT_BYTES) {
+        logger.warn({ filename: att.name, actual: buf.byteLength }, "Attachment larger than declared — skipping");
+        continue;
+      }
+      totalBytes += buf.byteLength;
       attachments.push({
         filename: att.name ?? "attachment",
         data: buf.toString("base64"),
