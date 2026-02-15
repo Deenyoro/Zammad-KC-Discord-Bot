@@ -32,6 +32,7 @@ import {
 } from "./threads.js";
 import { discordQueue } from "../queue/index.js";
 import { isClosedState, isHiddenState } from "../util/states.js";
+import { getAttachmentLimits } from "../util/attachmentLimits.js";
 
 /** Extract a display name from an article "from" field like "John Doe <john@example.com>" */
 function extractDisplayName(from: string | undefined): string | undefined {
@@ -369,13 +370,15 @@ export async function syncAllUnsyncedArticles(
     hasFirstArticle = true;
 
     // Process attachments:
-    // - Files ≤ 5MB: download and upload to Discord
-    // - Files > 5MB: link to Zammad instead of downloading (prevents OOM)
-    // - Max 10 uploaded files (Discord limit)
-    // - Max 24MB total downloads per article
-    const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024;
-    const MAX_TOTAL_DOWNLOAD_BYTES = 24 * 1024 * 1024;
-    const MAX_DISCORD_ATTACHMENTS = 10;
+    // - Files with known size ≤ threshold: download and upload to Discord
+    // - Files with known size > threshold: link to Zammad (prevents OOM)
+    // - Files with unknown size (0): attempt download (downloadAttachment has configurable safety cap)
+    // - Configurable max file count and total download budget
+    // All limits are configurable via /setup attachments
+    const limits = getAttachmentLimits();
+    const LARGE_FILE_THRESHOLD = limits.perFileBytes;
+    const MAX_TOTAL_DOWNLOAD_BYTES = limits.totalBytes;
+    const MAX_DISCORD_ATTACHMENTS = limits.maxCount;
     let totalDownloaded = 0;
     const attachments: { data: Buffer; filename: string }[] = [];
     const largeFileLinks: string[] = [];
@@ -383,14 +386,12 @@ export async function syncAllUnsyncedArticles(
 
     if (article.attachments?.length) {
       for (const att of article.attachments) {
-        // Guard: treat missing/invalid size as "unknown large" — link instead of downloading.
-        // Without this, undefined/NaN bypasses all numeric comparisons below.
         const attSize = Number.isFinite(att.size) ? att.size : 0;
         if (attSize < 10 && attSize > 0) continue; // skip tiny placeholders
 
-        // Large or unknown-size files: add a Zammad link instead of downloading
-        if (attSize > LARGE_FILE_THRESHOLD || attSize === 0) {
-          const sizeMB = attSize > 0 ? (attSize / 1024 / 1024).toFixed(1) : "?";
+        // Known-large files: link instead of downloading
+        if (attSize > LARGE_FILE_THRESHOLD) {
+          const sizeMB = (attSize / 1024 / 1024).toFixed(1);
           largeFileLinks.push(`[${att.filename} (${sizeMB} MB)](${zammadBase}/#ticket/zoom/${ticketId}/${article.id})`);
           continue;
         }
@@ -399,18 +400,24 @@ export async function syncAllUnsyncedArticles(
           logger.info({ articleId: article.id, total: article.attachments.length, limit: MAX_DISCORD_ATTACHMENTS }, "Capping attachments at Discord limit");
           break;
         }
-        if (totalDownloaded + attSize > MAX_TOTAL_DOWNLOAD_BYTES) {
+        if (attSize > 0 && totalDownloaded + attSize > MAX_TOTAL_DOWNLOAD_BYTES) {
           // Remaining files go to link list
           const sizeMB = (attSize / 1024 / 1024).toFixed(1);
           largeFileLinks.push(`[${att.filename} (${sizeMB} MB)](${zammadBase}/#ticket/zoom/${ticketId}/${article.id})`);
           continue;
         }
+        // Download the attachment (size 0 = unknown size, e.g. inline images — try anyway,
+        // downloadAttachment has its own configurable safety cap)
         try {
           const downloaded = await downloadAttachment(ticketId, article.id, att.id);
           const filename = ensureFileExtension(att.filename, downloaded.contentType);
           attachments.push({ data: downloaded.data, filename });
           totalDownloaded += downloaded.data.length;
         } catch (err) {
+          // If download fails for unknown-size file, fall back to link
+          if (attSize === 0) {
+            largeFileLinks.push(`[${att.filename} (? MB)](${zammadBase}/#ticket/zoom/${ticketId}/${article.id})`);
+          }
           logger.warn({ articleId: article.id, attachmentId: att.id, err }, "Failed to download attachment");
         }
       }

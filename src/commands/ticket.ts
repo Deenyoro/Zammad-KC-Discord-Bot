@@ -38,6 +38,7 @@ import { discordQueue } from "../queue/index.js";
 import { parseTime } from "../util/parseTime.js";
 import { truncate, splitMessage } from "../util/truncate.js";
 import { env } from "../util/env.js";
+import { getAttachmentLimits } from "../util/attachmentLimits.js";
 
 // ---------------------------------------------------------------
 // Handler utilities
@@ -351,16 +352,16 @@ export async function handleNote(interaction: ChatInputCommandInteraction) {
   // Get user mapping for attribution
   const userEntry = getUserMap(interaction.user.id);
 
-  const FILE_SIZE_LIMIT = 5 * 1024 * 1024; // 5 MB
+  const fileSizeLimit = getAttachmentLimits().perFileBytes;
   let attachments: ArticleAttachment[] | undefined;
   if (fileOption) {
-    if (fileOption.size > FILE_SIZE_LIMIT) {
-      logger.warn({ filename: fileOption.name, size: fileOption.size }, "Skipping oversized slash command attachment");
+    if (fileOption.size > fileSizeLimit) {
+      logger.warn({ filename: fileOption.name, size: fileOption.size, limit: fileSizeLimit }, "Skipping oversized slash command attachment");
     } else {
       try {
         const res = await fetch(fileOption.url, { signal: AbortSignal.timeout(60_000) });
         const buf = Buffer.from(await res.arrayBuffer());
-        if (buf.byteLength > FILE_SIZE_LIMIT) {
+        if (buf.byteLength > fileSizeLimit) {
           logger.warn({ filename: fileOption.name, actual: buf.byteLength }, "Attachment larger than declared");
         } else {
           attachments = [{
@@ -513,16 +514,16 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   }
 
   // Download attachment from Discord and base64-encode for Zammad
-  const REPLY_FILE_LIMIT = 5 * 1024 * 1024; // 5 MB
+  const replyFileLimit = getAttachmentLimits().perFileBytes;
   let attachments: ArticleAttachment[] | undefined;
   if (fileOption) {
-    if (fileOption.size > REPLY_FILE_LIMIT) {
-      logger.warn({ filename: fileOption.name, size: fileOption.size }, "Skipping oversized reply attachment");
+    if (fileOption.size > replyFileLimit) {
+      logger.warn({ filename: fileOption.name, size: fileOption.size, limit: replyFileLimit }, "Skipping oversized reply attachment");
     } else {
       try {
         const res = await fetch(fileOption.url, { signal: AbortSignal.timeout(60_000) });
         const buf = Buffer.from(await res.arrayBuffer());
-        if (buf.byteLength > REPLY_FILE_LIMIT) {
+        if (buf.byteLength > replyFileLimit) {
           logger.warn({ filename: fileOption.name, actual: buf.byteLength }, "Reply attachment larger than declared");
         } else {
           attachments = [{

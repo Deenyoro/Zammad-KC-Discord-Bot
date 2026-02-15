@@ -3,6 +3,7 @@ import { logger } from "../util/logger.js";
 import { getThreadByThreadId, getUserMap, markArticleSynced, type UserMapEntry } from "../db/index.js";
 import { createArticle, getTicket, expandTextModules, type ArticleAttachment } from "../services/zammad.js";
 import { enqueueForTicket } from "../queue/index.js";
+import { getAttachmentLimits } from "../util/attachmentLimits.js";
 
 export function onMessageCreate(client: Client): void {
   client.on(Events.MessageCreate, async (message: Message) => {
@@ -43,11 +44,12 @@ async function forwardToZammad(
   const { expanded: body, contentType } = await expandTextModules(rawBody);
 
   // Download Discord attachments and base64-encode for Zammad.
-  // Caps: 5 MB per file, 24 MB total, 10 files max — prevents OOM from
+  // Limits configurable via /setup attachments — prevents OOM from
   // bulk uploads (10 × 25 MB base64 ≈ 580 MB peak without limits).
-  const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
-  const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
-  const MAX_ATTACHMENT_COUNT = 10;
+  const limits = getAttachmentLimits();
+  const MAX_ATTACHMENT_BYTES = limits.perFileBytes;
+  const MAX_TOTAL_BYTES = limits.totalBytes;
+  const MAX_ATTACHMENT_COUNT = limits.maxCount;
   let totalBytes = 0;
   const attachments: ArticleAttachment[] = [];
   for (const [, att] of message.attachments) {
