@@ -4,9 +4,10 @@ import {
   PermissionFlagsBits,
 } from "discord.js";
 import { logger } from "../util/logger.js";
-import { setUserMap, setSetting, deleteSetting } from "../db/index.js";
+import { setUserMap, setSetting, deleteSetting, getSetting } from "../db/index.js";
 import { findUserByEmail } from "../services/zammad.js";
 import { env } from "../util/env.js";
+import { getAttachmentLimits } from "../util/attachmentLimits.js";
 
 function isAdmin(userId: string): boolean {
   const ids = env().ADMIN_USER_IDS;
@@ -100,6 +101,23 @@ export const setupCommand = new SlashCommandBuilder()
             { name: "Chinese", value: "zh" }
           )
       )
+  )
+  .addSubcommand((sc) =>
+    sc
+      .setName("attachments")
+      .setDescription("Configure attachment size limits (view current or set new values)")
+      .addNumberOption((o) =>
+        o.setName("per_file_mb").setDescription("Max MB per file before linking (default: 5)").setRequired(false).setMinValue(1).setMaxValue(25)
+      )
+      .addNumberOption((o) =>
+        o.setName("total_mb").setDescription("Max total MB downloaded per article (default: 24)").setRequired(false).setMinValue(1).setMaxValue(100)
+      )
+      .addIntegerOption((o) =>
+        o.setName("max_count").setDescription("Max files per article (default: 10)").setRequired(false).setMinValue(1).setMaxValue(25)
+      )
+      .addNumberOption((o) =>
+        o.setName("download_cap_mb").setDescription("Hard download cap per file in MB (default: 8)").setRequired(false).setMinValue(1).setMaxValue(50)
+      )
   );
 
 export async function handleSetupCommand(
@@ -129,6 +147,8 @@ export async function handleSetupCommand(
         return await handleModelSetup(interaction);
       case "language":
         return await handleLanguageSetup(interaction);
+      case "attachments":
+        return await handleAttachmentsSetup(interaction);
       default:
         await interaction.reply({ content: "Unknown subcommand.", ephemeral: true });
     }
@@ -246,4 +266,51 @@ async function handleLanguageSetup(interaction: ChatInputCommandInteraction) {
 
   await interaction.editReply(`Default AI language set to: ${langNames[lang] ?? lang}`);
   logger.info({ lang }, "Default AI language updated via /setup language");
+}
+
+async function handleAttachmentsSetup(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const perFileMb = interaction.options.getNumber("per_file_mb");
+  const totalMb = interaction.options.getNumber("total_mb");
+  const maxCount = interaction.options.getInteger("max_count");
+  const downloadCapMb = interaction.options.getNumber("download_cap_mb");
+
+  // If no options provided, show current settings
+  if (perFileMb === null && totalMb === null && maxCount === null && downloadCapMb === null) {
+    const limits = getAttachmentLimits();
+    const lines = [
+      "**Current Attachment Limits:**",
+      `Per-file max: **${limits.perFileMb} MB** (files larger than this are linked, not downloaded)`,
+      `Total download max: **${limits.totalMb} MB** per article`,
+      `Max file count: **${limits.maxCount}** per article`,
+      `Download safety cap: **${limits.downloadCapMb} MB** (hard limit per download)`,
+      "",
+      "_Use `/setup attachments per_file_mb:10` etc. to change values._",
+    ];
+    await interaction.editReply(lines.join("\n"));
+    return;
+  }
+
+  const changes: string[] = [];
+
+  if (perFileMb !== null) {
+    setSetting("ATTACHMENT_PER_FILE_MB", String(perFileMb));
+    changes.push(`Per-file max: ${perFileMb} MB`);
+  }
+  if (totalMb !== null) {
+    setSetting("ATTACHMENT_TOTAL_MB", String(totalMb));
+    changes.push(`Total max: ${totalMb} MB`);
+  }
+  if (maxCount !== null) {
+    setSetting("ATTACHMENT_MAX_COUNT", String(maxCount));
+    changes.push(`Max count: ${maxCount}`);
+  }
+  if (downloadCapMb !== null) {
+    setSetting("ATTACHMENT_DOWNLOAD_CAP_MB", String(downloadCapMb));
+    changes.push(`Download cap: ${downloadCapMb} MB`);
+  }
+
+  await interaction.editReply(`Attachment limits updated:\n${changes.join("\n")}`);
+  logger.info({ perFileMb, totalMb, maxCount, downloadCapMb }, "Attachment limits updated via /setup attachments");
 }

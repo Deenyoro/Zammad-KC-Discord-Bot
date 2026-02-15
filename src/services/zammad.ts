@@ -1,5 +1,6 @@
 import { env } from "../util/env.js";
 import { logger } from "../util/logger.js";
+import { getAttachmentLimits } from "../util/attachmentLimits.js";
 
 // ---------------------------------------------------------------
 // Types matching Zammad REST API responses
@@ -188,19 +189,17 @@ export async function createArticle(data: {
   return res.json() as Promise<ZammadArticle>;
 }
 
-/** Max bytes we'll ever download for a single attachment.  Acts as a
- *  hard safety net in case the caller's pre-download size checks are
- *  bypassed (e.g. att.size is undefined/NaN). */
-const MAX_ATTACHMENT_DOWNLOAD_BYTES = 8 * 1024 * 1024; // 8 MB
-
 /** Download an article attachment as a Buffer.
- *  Rejects files whose Content-Length exceeds the safety limit and
- *  verifies the actual body size after download as a second guard. */
+ *  Rejects files whose Content-Length exceeds the configurable safety limit
+ *  and verifies the actual body size after download as a second guard.
+ *  The limit is configurable via /setup attachments download_cap_mb (default 8 MB). */
 export async function downloadAttachment(
   ticketId: number,
   articleId: number,
   attachmentId: number
 ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+  const maxBytes = getAttachmentLimits().downloadCapBytes;
+
   const res = await zammadFetch(
     `/ticket_attachment/${ticketId}/${articleId}/${attachmentId}`,
     { signal: AbortSignal.timeout(60_000) },
@@ -208,11 +207,11 @@ export async function downloadAttachment(
 
   // Pre-download guard: reject if server declares a huge Content-Length
   const declaredSize = Number(res.headers.get("content-length"));
-  if (declaredSize > MAX_ATTACHMENT_DOWNLOAD_BYTES) {
+  if (declaredSize > maxBytes) {
     // Consume the body to avoid a dangling connection, then throw
     await res.body?.cancel().catch(() => {});
     throw new Error(
-      `Attachment ${attachmentId} too large (${declaredSize} bytes, limit ${MAX_ATTACHMENT_DOWNLOAD_BYTES})`
+      `Attachment ${attachmentId} too large (${declaredSize} bytes, limit ${maxBytes})`
     );
   }
 
@@ -220,7 +219,7 @@ export async function downloadAttachment(
   const buf = Buffer.from(await res.arrayBuffer());
 
   // Post-download guard: actual body may differ from Content-Length
-  if (buf.byteLength > MAX_ATTACHMENT_DOWNLOAD_BYTES) {
+  if (buf.byteLength > maxBytes) {
     throw new Error(
       `Attachment ${attachmentId} body exceeded limit (${buf.byteLength} bytes)`
     );
