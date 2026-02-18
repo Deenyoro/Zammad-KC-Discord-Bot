@@ -217,21 +217,13 @@ async function processWebhook(
   if (normalizedState !== oldState) {
     updateThreadState(ticketId, normalizedState);
 
-    // "Waiting for reply" → "open" with a customer article = customer replied
-    if (
+    // Track notification intent — actual send happens after unarchiving to avoid
+    // a race where sendToThread's archive-restore re-archives the thread.
+    const customerReplied =
       oldState === "waiting for reply" &&
       normalizedState === "open" &&
       webhookArticle &&
-      webhookArticle.sender === "Customer"
-    ) {
-      sendToThread(
-        client,
-        mapping.thread_id,
-        "**Customer replied** — ticket moved from _waiting for reply_ to _open_."
-      ).catch((err) =>
-        logger.warn({ ticketId, err }, "Failed to send waiting-for-reply notification")
-      );
-    }
+      webhookArticle.sender === "Customer";
 
     if (isClosedState(normalizedState)) {
       await closeTicketThread(client, mapping.thread_id);
@@ -269,7 +261,7 @@ async function processWebhook(
       }
     }
 
-    // Transition OUT of a hidden state → unarchive and re-add members (but NOT if closing)
+    // Transition OUT of a hidden state → unarchive, re-add members, then notify
     if (isHiddenState(oldState) && !isHiddenState(normalizedState) && !isClosedState(normalizedState)) {
       const thread = (await client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
       if (thread?.isThread()) {
@@ -279,6 +271,19 @@ async function processWebhook(
           });
         }
         await addRoleMembersToThread(thread);
+
+        // Send "customer replied" notification AFTER unarchiving and adding members
+        // so it doesn't race with sendToThread's archive-restore logic.
+        if (customerReplied) {
+          discordQueue.add(async () => {
+            await thread.send({
+              content: "**Customer replied** — ticket moved from _waiting for reply_ to _open_.",
+              allowedMentions: { parse: [] },
+            });
+          }).catch((err) =>
+            logger.warn({ ticketId, err }, "Failed to send waiting-for-reply notification")
+          );
+        }
       }
     }
   }
