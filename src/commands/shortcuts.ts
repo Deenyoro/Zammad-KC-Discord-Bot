@@ -7,10 +7,23 @@ export const replyCommand = new SlashCommandBuilder()
     o.setName("text").setDescription("Reply text").setRequired(true)
   )
   .addStringOption((o) =>
-    o.setName("cc").setDescription("CC emails (comma-separated, email only)").setRequired(false)
+    o.setName("to").setDescription("Override recipient email (autocompletes from ticket)").setRequired(false).setAutocomplete(true)
+  )
+  .addStringOption((o) =>
+    o.setName("cc").setDescription("CC emails (comma-separated, email only)").setRequired(false).setAutocomplete(true)
   )
   .addAttachmentOption((o) =>
     o.setName("file").setDescription("Attach a file (image, document, etc.)").setRequired(false)
+  )
+  .addStringOption((o) =>
+    o
+      .setName("convert")
+      .setDescription("Convert the attached file (e.g. webp→png, docx→pdf)")
+      .setRequired(false)
+      .addChoices(
+        { name: "to PNG (images: webp, jpg, gif, bmp, tiff)", value: "png" },
+        { name: "to PDF (docs: docx, doc, odt, xlsx, pptx)", value: "pdf" }
+      )
   );
 
 export const noteCommand = new SlashCommandBuilder()
@@ -171,9 +184,9 @@ export const tagsCommand = new SlashCommandBuilder()
 
 export const mergeCommand = new SlashCommandBuilder()
   .setName("merge")
-  .setDescription("Merge this ticket into another ticket")
+  .setDescription("Merge this ticket into another open ticket")
   .addStringOption((o) =>
-    o.setName("target").setDescription("Target ticket number to merge into").setRequired(true)
+    o.setName("target").setDescription("Target ticket (search by number or title)").setRequired(true).setAutocomplete(true)
   );
 
 export const historyCommand = new SlashCommandBuilder()
@@ -390,6 +403,10 @@ export const aihelpCommand = new SlashCommandBuilder()
   .addBooleanOption((o) =>
     o.setName("exclude_internal").setDescription("Ignore internal notes").setRequired(false)
   );
+
+export const participantsCommand = new SlashCommandBuilder()
+  .setName("participants")
+  .setDescription("Show all email addresses and contacts on this ticket");
 
 export const aiproofreadCommand = new SlashCommandBuilder()
   .setName("aiproofread")

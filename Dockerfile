@@ -7,6 +7,9 @@ COPY src/ src/
 RUN npm run build
 
 FROM node:24-alpine
+# sharp for image conversion (webp/jpg → png), libreoffice for doc → pdf
+RUN apk add --no-cache libreoffice-writer libreoffice-calc libreoffice-impress \
+    && rm -rf /var/cache/apk/*
 RUN addgroup -S bot && adduser -S bot -G bot
 WORKDIR /app
 ENV NODE_ENV=production

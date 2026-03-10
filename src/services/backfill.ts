@@ -22,6 +22,7 @@ import {
 } from "./threads.js";
 import { discordQueue } from "../queue/index.js";
 import { isClosedState, isHiddenState } from "../util/states.js";
+import { updateWaitingDashboard } from "./waitingDashboard.js";
 
 // Article catch-up cycle counter.  Every ARTICLE_CATCHUP_INTERVAL cycles
 // (~5 min at 30 s intervals) we re-sync articles for ALL open tickets so
@@ -274,6 +275,9 @@ export async function syncAllTickets(client: Client): Promise<void> {
       logger.warn({ ticketId: mapping.ticket_id, err }, "Failed to verify/close stale thread");
     }
   }
+
+  // Update the waiting-for-reply dashboard thread
+  await updateWaitingDashboard(client);
 
   syncCycleCount++;
   logger.info({ created, updated, closed, failed, total: tickets.length, articleCatchup: (syncCycleCount - 1) % ARTICLE_CATCHUP_INTERVAL === 0 }, "Ticket sync complete");
