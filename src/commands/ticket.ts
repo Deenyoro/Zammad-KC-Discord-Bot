@@ -1923,10 +1923,13 @@ function nextSaturday(from: Date): Date {
   return d;
 }
 
-/** End of a 7-day weekly span (start + 6 days, i.e. Saturday → Friday). */
-function weekEnd(start: Date): Date {
-  const d = new Date(start);
-  d.setUTCDate(d.getUTCDate() + 6);
+/** Get the next Friday on or after the given date. */
+function nextFriday(from: Date): Date {
+  const d = new Date(from);
+  const day = d.getUTCDay(); // 0=Sun..6=Sat
+  const daysUntilFri = (5 - day + 7) % 7;
+  // If already Friday, jump to next Friday (+7)
+  d.setUTCDate(d.getUTCDate() + (daysUntilFri === 0 ? 7 : daysUntilFri));
   return d;
 }
 
@@ -1972,7 +1975,7 @@ export async function handleWeekly(interaction: ChatInputCommandInteraction) {
       return;
     }
     startDate = s;
-    endDate = weekEnd(s);
+    endDate = nextFriday(s);
   } else {
     // Auto-detect from most recent Weekly Check ticket
     let autoDetected = false;
@@ -1988,7 +1991,7 @@ export async function handleWeekly(interaction: ChatInputCommandInteraction) {
         if (parsed) {
           // Next week starts the day after the previous end date (7-day span: Sat–Fri)
           startDate = new Date(parsed.end.getTime() + 86400000); // day after end
-          endDate = weekEnd(startDate); // +6 days
+          endDate = nextFriday(startDate); // always ends on Friday
           autoDetected = true;
           logger.info(
             { prevTitle: ticket.title, newStart: fmtDate(startDate), newEnd: fmtDate(endDate) },
@@ -2005,7 +2008,7 @@ export async function handleWeekly(interaction: ChatInputCommandInteraction) {
       // Fallback: next Saturday → Friday (7-day span)
       const now = new Date();
       startDate = nextSaturday(now);
-      endDate = weekEnd(startDate);
+      endDate = nextFriday(startDate);
       logger.info(
         { start: fmtDate(startDate), end: fmtDate(endDate) },
         "No previous Weekly Check found, using next Sat-Fri"
