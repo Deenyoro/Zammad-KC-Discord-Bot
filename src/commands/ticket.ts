@@ -1986,10 +1986,9 @@ export async function handleWeekly(interaction: ChatInputCommandInteraction) {
       for (const ticket of sorted) {
         const parsed = parseWeeklyTitle(ticket.title);
         if (parsed) {
-          // Next week starts the Monday after the previous end date
-          const nextMon = nextMonday(new Date(parsed.end.getTime() + 86400000)); // day after end
-          startDate = nextMon;
-          endDate = fridayOfWeek(nextMon);
+          // Next week starts the day after the previous end date (5-day span)
+          startDate = new Date(parsed.end.getTime() + 86400000); // day after end
+          endDate = new Date(startDate.getTime() + 4 * 86400000); // +4 days
           autoDetected = true;
           logger.info(
             { prevTitle: ticket.title, newStart: fmtDate(startDate), newEnd: fmtDate(endDate) },
