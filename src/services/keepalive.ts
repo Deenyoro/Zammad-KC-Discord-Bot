@@ -375,6 +375,14 @@ export function startKeepalive(client: Client): void {
   // 2. Status refresh — keeps embeds current
   const refreshMs = getRefreshMinutes() * 60_000;
   logger.info({ refreshMinutes: getRefreshMinutes() }, "Status refresh timer started");
+
+  // Run immediately on startup (after a short delay for sync to finish)
+  setTimeout(() => {
+    runRefreshSweep(client).catch((err) =>
+      logger.error({ err }, "Initial status refresh sweep failed")
+    );
+  }, 15_000);
+
   refreshTimer = setInterval(() => {
     runRefreshSweep(client).catch((err) =>
       logger.error({ err }, "Status refresh sweep failed")
