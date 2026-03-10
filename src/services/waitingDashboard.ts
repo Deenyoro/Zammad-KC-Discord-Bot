@@ -20,7 +20,7 @@ import {
 import { env } from "../util/env.js";
 import { logger } from "../util/logger.js";
 import { getAllTicketThreads, getSetting, setSetting } from "../db/index.js";
-import { ticketUrl } from "./threads.js";
+import { ticketUrl, addRoleMembersToThread } from "./threads.js";
 import { discordQueue } from "../queue/index.js";
 
 const DASHBOARD_THREAD_ID_KEY = "dashboard:waiting_for_reply:thread_id";
@@ -167,6 +167,11 @@ async function tryUpdateExisting(
       });
     }
 
+    // Ensure all role members can see the dashboard thread
+    await addRoleMembersToThread(thread).catch((err) =>
+      logger.warn({ threadId, err }, "Failed to add role members to dashboard thread")
+    );
+
     // Update the embed message
     try {
       const msg = await thread.messages.fetch(msgId);
@@ -227,6 +232,11 @@ async function createDashboardThread(
     // Non-critical — pin limit may be reached
   }
   if (!thread) return;
+
+  // Add role members so agents can see the thread
+  await addRoleMembersToThread(thread).catch((err) =>
+    logger.warn({ threadId: thread.id, err }, "Failed to add role members to new dashboard thread")
+  );
 
   // Post the embed inside the thread
   const embedMsg = (await discordQueue.add(async () =>
