@@ -32,7 +32,7 @@ export async function handleHelpCommand(
           "`/link` -Get a link to the Zammad ticket",
           "`/assign [user]` -Assign ticket (defaults to yourself)",
           "`/close [note]` -Close the ticket (optional internal note)",
-          "`/lock [duration]` - Lock ticket (permanent or timed: 30m, 2h, 4h, 8h, 16h, 1d, 2d, 1w, 1mo)",
+          "`/lock [duration]` - Lock ticket (permanent or timed: 15m, 30m, 2h, 4h, 8h, 16h, 1d, 2d, 1w, 1mo)",
           "`/state <name>` -Change state",
           "`/pending <type> <duration>` -Set pending state with expiration",
           "`/priority <level>` -Change priority (1 low, 2 normal, 3 high)",
