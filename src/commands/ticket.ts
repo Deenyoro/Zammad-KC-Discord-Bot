@@ -2033,9 +2033,10 @@ export async function handleWeekly(interaction: ChatInputCommandInteraction) {
       article: {
         subject: title,
         body: `Weekly Check for ${fmtDate(startDate)} to ${fmtDate(endDate)}`,
-        type: "note",
+        type: "email",
         sender: "Agent",
-        internal: true,
+        internal: false,
+        to: customerEmail,
         content_type: "text/plain",
       },
     });
