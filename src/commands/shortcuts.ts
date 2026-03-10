@@ -418,6 +418,10 @@ export const aihelpCommand = new SlashCommandBuilder()
     o.setName("exclude_internal").setDescription("Ignore internal notes").setRequired(false)
   );
 
+export const checknoteCommand = new SlashCommandBuilder()
+  .setName("checknote")
+  .setDescription("Snapshot the current service status board and add it as a note to this ticket");
+
 export const participantsCommand = new SlashCommandBuilder()
   .setName("participants")
   .setDescription("Show all email addresses and contacts on this ticket");
