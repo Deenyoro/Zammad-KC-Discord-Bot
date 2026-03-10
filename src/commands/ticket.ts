@@ -2,6 +2,7 @@ import { ChatInputCommandInteraction, ThreadChannel } from "discord.js";
 import { logger } from "../util/logger.js";
 import {
   getThreadByThreadId,
+  getAllTicketThreads,
   getUserMap,
   updateThreadState,
   getSettingOrEnv,
@@ -39,6 +40,8 @@ import { parseTime } from "../util/parseTime.js";
 import { truncate, splitMessage } from "../util/truncate.js";
 import { env } from "../util/env.js";
 import { getAttachmentLimits } from "../util/attachmentLimits.js";
+import { isValidEmail, parseEmailAddress, parseDisplayName } from "../util/email.js";
+import { canConvert, convertFile, type ConvertTarget } from "../util/fileConvert.js";
 
 // ---------------------------------------------------------------
 // Handler utilities
@@ -338,6 +341,109 @@ export async function handleLink(interaction: ChatInputCommandInteraction) {
   });
 }
 
+// ---------------------------------------------------------------
+// /participants command handler
+// ---------------------------------------------------------------
+
+export async function handleParticipants(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply({ ephemeral: true });
+
+  const [articles, ticket] = await Promise.all([
+    getArticles(mapping.ticket_id),
+    getTicket(mapping.ticket_id),
+  ]);
+
+  // Collect all addresses from all articles (from, to, cc)
+  const participants = new Map<string, { name: string | null; roles: Set<string> }>();
+
+  function addParticipant(raw: string | undefined, role: string): void {
+    if (!raw) return;
+    // Fields can contain multiple comma-separated addresses
+    for (const part of raw.split(",")) {
+      const email = parseEmailAddress(part.trim());
+      if (!email) continue;
+      const lower = email.toLowerCase();
+      const existing = participants.get(lower);
+      if (existing) {
+        existing.roles.add(role);
+        // Keep the first non-null name we found
+        if (!existing.name) existing.name = parseDisplayName(part.trim());
+      } else {
+        participants.set(lower, {
+          name: parseDisplayName(part.trim()),
+          roles: new Set([role]),
+        });
+      }
+    }
+  }
+
+  for (const a of articles) {
+    if (a.sender === "System") continue;
+
+    if (a.sender === "Customer") {
+      addParticipant(a.from, "Customer");
+      addParticipant(a.to, "Recipient");
+    } else {
+      // Agent article
+      addParticipant(a.from, "Agent");
+      addParticipant(a.to, "Recipient");
+    }
+    addParticipant(a.cc, "CC");
+  }
+
+  // Ensure the ticket customer is always listed
+  if (ticket.customer_id) {
+    try {
+      const customer = await getUser(ticket.customer_id);
+      if (customer.email) {
+        const lower = customer.email.toLowerCase();
+        const existing = participants.get(lower);
+        if (existing) {
+          existing.roles.add("Customer");
+          if (!existing.name) existing.name = `${customer.firstname} ${customer.lastname}`.trim();
+        } else {
+          participants.set(lower, {
+            name: `${customer.firstname} ${customer.lastname}`.trim() || null,
+            roles: new Set(["Customer"]),
+          });
+        }
+      }
+    } catch { /* customer lookup failed — non-fatal */ }
+  }
+
+  if (participants.size === 0) {
+    await interaction.editReply("No email participants found on this ticket.");
+    return;
+  }
+
+  // Sort: customers first, then recipients, then CC, then agents
+  const roleOrder = (roles: Set<string>): number => {
+    if (roles.has("Customer")) return 0;
+    if (roles.has("Recipient")) return 1;
+    if (roles.has("CC")) return 2;
+    return 3;
+  };
+
+  const sorted = [...participants.entries()].sort(
+    (a, b) => roleOrder(a[1].roles) - roleOrder(b[1].roles)
+  );
+
+  const lines = sorted.map(([email, data]) => {
+    const nameLabel = data.name ? ` (${data.name})` : "";
+    const roleLabel = [...data.roles].join(", ");
+    return `\`${email}\`${nameLabel} — ${roleLabel}`;
+  });
+
+  await interaction.editReply(
+    truncate(
+      `**Participants on ticket #${mapping.ticket_number}:**\n${lines.join("\n")}\n\n_Use \`/reply to:<email>\` to reply to a specific address._`,
+      2000
+    )
+  );
+}
+
 export async function handleNote(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
@@ -476,14 +582,94 @@ export async function detectReplyChannel(
   }
 }
 
+// ---------------------------------------------------------------
+// /reply autocomplete — suggests ticket participants for to/cc
+// ---------------------------------------------------------------
+
+export async function handleReplyAutocomplete(
+  interaction: import("discord.js").AutocompleteInteraction
+): Promise<void> {
+  const focused = interaction.options.getFocused(true);
+  if (focused.name !== "to" && focused.name !== "cc") return;
+
+  const mapping = getThreadByThreadId(interaction.channelId);
+  if (!mapping) {
+    await interaction.respond([]);
+    return;
+  }
+
+  try {
+    const articles = await getArticles(mapping.ticket_id);
+
+    // Collect unique emails from all articles
+    const seen = new Map<string, string>(); // lowercase email → display label
+    for (const a of articles) {
+      if (a.sender === "System") continue;
+      for (const field of [a.from, a.to, a.cc]) {
+        if (!field) continue;
+        for (const part of field.split(",")) {
+          const email = parseEmailAddress(part.trim());
+          if (!email) continue;
+          const lower = email.toLowerCase();
+          if (!seen.has(lower)) {
+            const name = parseDisplayName(part.trim());
+            seen.set(lower, name ? `${name} <${email}>` : email);
+          }
+        }
+      }
+    }
+
+    // Also ensure ticket customer is listed
+    try {
+      const ticket = await getTicket(mapping.ticket_id);
+      if (ticket.customer_id) {
+        const customer = await getUser(ticket.customer_id);
+        if (customer.email) {
+          const lower = customer.email.toLowerCase();
+          if (!seen.has(lower)) {
+            const name = `${customer.firstname} ${customer.lastname}`.trim();
+            seen.set(lower, name ? `${name} <${customer.email}>` : customer.email);
+          }
+        }
+      }
+    } catch { /* non-fatal */ }
+
+    // Filter by what the user has typed so far
+    const query = focused.value.toLowerCase();
+    const choices = [...seen.entries()]
+      .filter(([email, label]) => email.includes(query) || label.toLowerCase().includes(query))
+      .slice(0, 25) // Discord max autocomplete choices
+      .map(([email, label]) => ({
+        name: label.length > 100 ? label.slice(0, 97) + "..." : label,
+        value: email,
+      }));
+
+    await interaction.respond(choices);
+  } catch (err) {
+    logger.debug({ err }, "Autocomplete failed — returning empty");
+    await interaction.respond([]);
+  }
+}
+
 export async function handleReply(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
   await interaction.deferReply({ ephemeral: true });
 
   const rawText = interaction.options.getString("text", true);
+  const toOverride = interaction.options.getString("to");
   const ccInput = interaction.options.getString("cc");
   const fileOption = interaction.options.getAttachment("file");
+  const convertOption = interaction.options.getString("convert") as ConvertTarget | null;
+
+  // Validate to override if provided
+  if (toOverride) {
+    const trimmed = toOverride.trim();
+    if (!isValidEmail(trimmed)) {
+      await interaction.editReply(`Invalid email address: \`${trimmed}\`\nUse \`/participants\` to see valid addresses.`);
+      return;
+    }
+  }
 
   // Expand ::shortcut text modules before sending
   const { expanded: text, contentType, used: expandedModules } = await expandTextModules(rawText);
@@ -496,15 +682,27 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  // Apply to override — forces email type since we have an explicit email address
+  if (toOverride) {
+    channel.to = toOverride.trim();
+    channel.type = "email";
+    channel.label = `email to ${toOverride.trim()}`;
+  }
+
   // Get user mapping for attribution
   const userEntry = getUserMap(interaction.user.id);
 
-  // Parse CC emails (only applies to email tickets)
+  // Parse and validate CC emails (only applies to email tickets)
   let cc: string | undefined;
   let ccIgnored = false;
   if (ccInput) {
     if (channel.type === "email") {
       const ccEmails = ccInput.split(',').map(e => e.trim()).filter(e => e.length > 0);
+      const invalid = ccEmails.filter(e => !isValidEmail(e));
+      if (invalid.length > 0) {
+        await interaction.editReply(`Invalid CC email(s): ${invalid.map(e => `\`${e}\``).join(", ")}`);
+        return;
+      }
       if (ccEmails.length > 0) {
         cc = ccEmails.join(', ');
       }
@@ -513,23 +711,53 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     }
   }
 
-  // Download attachment from Discord and base64-encode for Zammad
+  // Download attachment from Discord, optionally convert, and base64-encode for Zammad
   const replyFileLimit = getAttachmentLimits().perFileBytes;
   let attachments: ArticleAttachment[] | undefined;
+  let convertedLabel = "";
   if (fileOption) {
     if (fileOption.size > replyFileLimit) {
       logger.warn({ filename: fileOption.name, size: fileOption.size, limit: replyFileLimit }, "Skipping oversized reply attachment");
     } else {
       try {
         const res = await fetch(fileOption.url, { signal: AbortSignal.timeout(60_000) });
-        const buf = Buffer.from(await res.arrayBuffer());
+        let buf = Buffer.from(await res.arrayBuffer());
         if (buf.byteLength > replyFileLimit) {
           logger.warn({ filename: fileOption.name, actual: buf.byteLength }, "Reply attachment larger than declared");
         } else {
+          let finalName = fileOption.name;
+          let finalMime = fileOption.contentType || "application/octet-stream";
+
+          // Convert if requested and the file type is applicable
+          if (convertOption && canConvert(fileOption.name, convertOption)) {
+            const converted = await convertFile(buf, fileOption.name, convertOption);
+            if (converted) {
+              buf = Buffer.from(converted.data) as typeof buf;
+              finalName = converted.filename;
+              finalMime = converted.mimeType;
+              convertedLabel = ` (converted to ${convertOption.toUpperCase()})`;
+              logger.info({ from: fileOption.name, to: finalName }, "Converted attachment");
+            } else {
+              // Conversion failed — use original, don't block the reply
+              logger.warn({ filename: fileOption.name, target: convertOption }, "Conversion unavailable, using original");
+            }
+          }
+
+          // Re-check size after conversion (PNG/PDF may be larger)
+          if (buf.byteLength > replyFileLimit) {
+            logger.warn({ filename: finalName, size: buf.byteLength }, "Converted file exceeds size limit, using original");
+            // Fall back to original download
+            const origRes = await fetch(fileOption.url, { signal: AbortSignal.timeout(60_000) });
+            buf = Buffer.from(await origRes.arrayBuffer());
+            finalName = fileOption.name;
+            finalMime = fileOption.contentType || "application/octet-stream";
+            convertedLabel = "";
+          }
+
           attachments = [{
-            filename: fileOption.name,
+            filename: finalName,
             data: buf.toString("base64"),
-            "mime-type": fileOption.contentType || "application/octet-stream",
+            "mime-type": finalMime,
           }];
         }
       } catch (err) {
@@ -555,7 +783,7 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     attachments,
   });
 
-  const fileSuffix = fileOption ? ` with attachment "${fileOption.name}"` : "";
+  const fileSuffix = fileOption ? ` with attachment "${fileOption.name}"${convertedLabel}` : "";
   const ccSuffix = cc ? ` (CC: ${cc})` : "";
   const ccWarning = ccIgnored ? "\n⚠️ CC was ignored — only supported for email tickets." : "";
   const tmSuffix = expandedModules.length > 0 ? `\n📝 Expanded: ${expandedModules.join(", ")}` : "";
@@ -669,6 +897,62 @@ export async function handleTags(interaction: ChatInputCommandInteraction) {
 // /merge
 // ---------------------------------------------------------------
 
+export async function handleMergeAutocomplete(
+  interaction: import("discord.js").AutocompleteInteraction
+): Promise<void> {
+  const focused = interaction.options.getFocused(true);
+  if (focused.name !== "target") return;
+
+  const currentMapping = getThreadByThreadId(interaction.channelId);
+  const query = focused.value.toLowerCase();
+
+  try {
+    // Local DB is instant — get all tracked threads that aren't closed/merged
+    const closedStates = new Set(["closed", "closed (locked)", "closed (locked until)", "merged", "removed"]);
+    const threads = getAllTicketThreads().filter(
+      (t) => !closedStates.has(t.state.toLowerCase()) && t.ticket_id !== currentMapping?.ticket_id
+    );
+
+    // Filter by query (match on ticket number or title)
+    let matches = threads.filter(
+      (t) =>
+        t.ticket_number.includes(query) ||
+        (t.title ?? "").toLowerCase().includes(query)
+    );
+
+    // If few local matches and user typed something, also search Zammad
+    if (matches.length < 10 && query.length >= 2) {
+      try {
+        const apiResults = await searchTickets(query, 15);
+        for (const t of apiResults) {
+          if (t.id === currentMapping?.ticket_id) continue;
+          if (closedStates.has(t.state.toLowerCase())) continue;
+          if (matches.some((m) => m.ticket_id === t.id)) continue;
+          matches.push({
+            ticket_id: t.id,
+            ticket_number: t.number,
+            title: t.title,
+            state: t.state,
+          } as TicketThread);
+        }
+      } catch { /* API search failed — use local results only */ }
+    }
+
+    const choices = matches.slice(0, 25).map((t) => {
+      const label = `#${t.ticket_number} — ${t.title ?? "Untitled"}`;
+      return {
+        name: label.length > 100 ? label.slice(0, 97) + "..." : label,
+        value: t.ticket_number,
+      };
+    });
+
+    await interaction.respond(choices);
+  } catch (err) {
+    logger.debug({ err }, "Merge autocomplete failed");
+    await interaction.respond([]);
+  }
+}
+
 export async function handleMerge(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
@@ -684,6 +968,12 @@ export async function handleMerge(interaction: ChatInputCommandInteraction) {
 
   if (targetTicket.id === mapping.ticket_id) {
     await interaction.editReply("Cannot merge a ticket into itself.");
+    return;
+  }
+
+  const closedStates = new Set(["closed", "closed (locked)", "closed (locked until)", "merged", "removed"]);
+  if (closedStates.has(targetTicket.state.toLowerCase())) {
+    await interaction.editReply(`Cannot merge into ticket #${targetNumber} — it is ${targetTicket.state}.`);
     return;
   }
 
