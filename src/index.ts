@@ -9,6 +9,7 @@ import { startWebServer } from "./web/server.js";
 import { syncAllTickets } from "./services/backfill.js";
 import { startHealthCheck, stopHealthCheck } from "./services/health.js";
 import { startDailySummary, stopDailySummary } from "./services/dailySummary.js";
+import { startKeepalive, stopKeepalive } from "./services/keepalive.js";
 import { setupCommand } from "./commands/setup.js";
 import { helpCommand } from "./commands/help.js";
 import {
@@ -145,6 +146,9 @@ async function main() {
   // 10. Daily summary posting (checks every 60s if configured hour matches)
   startDailySummary(client);
 
+  // 11. Daily keepalive sweep — silent status updates to prevent Discord from hiding threads
+  startKeepalive(client);
+
   logger.info("Bot fully started");
 }
 
@@ -159,6 +163,7 @@ async function shutdown(signal: string) {
   if (cleanupTimer) clearInterval(cleanupTimer);
   stopHealthCheck();
   stopDailySummary();
+  stopKeepalive();
 
   // Stop accepting new webhooks
   if (server) {

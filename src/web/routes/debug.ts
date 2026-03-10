@@ -5,9 +5,10 @@
 
 import type { FastifyInstance } from "fastify";
 import type { Client } from "discord.js";
-import { ThreadChannel } from "discord.js";
-import { getAllTicketThreads, getSetting } from "../../db/index.js";
+import { EmbedBuilder, ThreadChannel } from "discord.js";
+import { getAllTicketThreads, getSetting, setSetting } from "../../db/index.js";
 import { isClosedState, isHiddenState } from "../../util/states.js";
+import { runKeepaliveSweep } from "../../services/keepalive.js";
 
 export function registerDebugRoutes(app: FastifyInstance, client: Client): void {
   // Full thread state report
@@ -122,5 +123,26 @@ export function registerDebugRoutes(app: FastifyInstance, client: Client): void 
       states[t.state] = (states[t.state] || 0) + 1;
     }
     return { total: allThreads.length, by_state: states };
+  });
+
+  // Trigger keepalive sweep manually
+  app.post("/debug/keepalive", async () => {
+    runKeepaliveSweep(client).catch(() => {});
+    return { ok: true, message: "Keepalive sweep started" };
+  });
+
+  // Get/set keepalive hour
+  app.get("/debug/settings/keepalive", async () => {
+    const hour = getSetting("KEEPALIVE_HOUR");
+    return { KEEPALIVE_HOUR: hour ?? null };
+  });
+
+  app.post<{ Body: { hour: number } }>("/debug/settings/keepalive", async (req) => {
+    const hour = (req.body as any)?.hour;
+    if (typeof hour !== "number" || hour < 0 || hour > 23) {
+      return { ok: false, error: "hour must be 0-23" };
+    }
+    setSetting("KEEPALIVE_HOUR", String(hour));
+    return { ok: true, KEEPALIVE_HOUR: hour };
   });
 }
