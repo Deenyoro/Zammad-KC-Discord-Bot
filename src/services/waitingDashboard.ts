@@ -172,17 +172,44 @@ async function tryUpdateExisting(
       logger.warn({ threadId, err }, "Failed to add role members to dashboard thread")
     );
 
-    // Update the embed message
+    // Check if our embed is the last message in the thread
     try {
-      const msg = await thread.messages.fetch(msgId);
-      await discordQueue.add(async () => {
-        await msg.edit({ embeds: [embed] });
-      });
+      const lastMessages = await thread.messages.fetch({ limit: 1 });
+      const lastMsg = lastMessages.first();
+      const isAtBottom = lastMsg?.id === msgId;
+
+      if (isAtBottom) {
+        // Already at the bottom — just edit in place
+        const msg = await thread.messages.fetch(msgId);
+        await discordQueue.add(async () => {
+          await msg.edit({ embeds: [embed] });
+        });
+      } else {
+        // Not at the bottom — delete old and re-send silently
+        try {
+          const oldMsg = await thread.messages.fetch(msgId);
+          await discordQueue.add(async () => { await oldMsg.delete(); });
+        } catch {
+          // Already deleted
+        }
+        const newMsg = (await discordQueue.add(async () =>
+          thread.send({
+            embeds: [embed],
+            flags: 4096, // SUPPRESS_NOTIFICATIONS
+          } as any)
+        )) as Message | undefined;
+        if (newMsg) {
+          setSetting(DASHBOARD_MSG_ID_KEY, newMsg.id);
+        }
+      }
     } catch {
-      // Message was deleted — post a new one and update the stored ID
+      // Message was deleted — post a new one
       logger.info({ threadId }, "Dashboard embed message missing, posting new one");
       const newMsg = (await discordQueue.add(async () =>
-        thread.send({ embeds: [embed] })
+        thread.send({
+          embeds: [embed],
+          flags: 4096, // SUPPRESS_NOTIFICATIONS
+        } as any)
       )) as Message | undefined;
       if (newMsg) {
         setSetting(DASHBOARD_MSG_ID_KEY, newMsg.id);
