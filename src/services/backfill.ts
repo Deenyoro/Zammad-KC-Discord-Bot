@@ -97,22 +97,15 @@ export async function syncAllTickets(client: Client): Promise<void> {
           try {
             const thread = await client.channels.fetch(existing.thread_id, { force: true }) as ThreadChannel | null;
             if (thread?.isThread()) {
-              // Recovery: if thread is archived but ticket is open, unarchive it.
-              // This catches threads left archived by race conditions, bot restarts,
-              // or Discord auto-archiving after inactivity.
-              // Guard: only recover when BOTH the API AND the DB agree the ticket is
-              // non-hidden/non-closed.  Without this, stale API list data (showing
-              // "open" while a webhook already closed the ticket) could unarchive a
-              // thread that was just correctly closed.
-              if (thread.archived && !isClosedState(existing.state) && !isHiddenState(existing.state)) {
+              // Always force-unarchive non-hidden/non-closed threads.
+              // Discord auto-archives after inactivity and the cached state
+              // may not reflect reality. This is cheap (Discord ignores
+              // no-op edits) and guarantees the thread stays visible.
+              if (!isClosedState(existing.state) && !isHiddenState(existing.state)) {
                 await discordQueue.add(async () => {
-                  await thread.edit({ archived: false, locked: false, reason: "Ticket is open, recovering archived thread" });
+                  await thread.edit({ archived: false, locked: false, reason: "Ticket is open — ensuring thread is visible" });
                 });
-                logger.info({ ticketId: ticket.id, threadId: existing.thread_id }, "Recovered archived thread for open ticket");
               }
-              // Always add members — the thread.archived property may be stale
-              // after edit(), and members need to be present for the thread to
-              // appear in agents' sidebar.
               await addRoleMembersToThread(thread);
             }
           } catch (err) {
