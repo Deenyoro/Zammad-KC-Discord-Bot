@@ -16,7 +16,8 @@ import {
   ThreadChannel,
 } from "discord.js";
 import { logger } from "../util/logger.js";
-import { getAllTicketThreads, getSettingOrEnv } from "../db/index.js";
+import { getAllTicketThreads, getSetting, getSettingOrEnv } from "../db/index.js";
+import { getCurrentHourInTz } from "../util/timezone.js";
 import { getTicket, getArticles, getUser } from "./zammad.js";
 import { ticketUrl } from "./threads.js";
 import { discordQueue } from "../queue/index.js";
@@ -225,7 +226,7 @@ export function startKeepalive(client: Client): void {
     const hour = getKeepaliveHour();
     if (hour === undefined) return;
 
-    const currentHour = new Date().getHours();
+    const currentHour = getCurrentHourInTz();
     if (currentHour === hour && lastPostedHour !== currentHour) {
       lastPostedHour = currentHour;
       runKeepaliveSweep(client).catch((err) =>

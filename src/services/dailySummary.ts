@@ -2,6 +2,7 @@ import { Client, EmbedBuilder, TextChannel } from "discord.js";
 import { env } from "../util/env.js";
 import { logger } from "../util/logger.js";
 import { getSettingOrEnv } from "../db/index.js";
+import { getCurrentHourInTz } from "../util/timezone.js";
 import { getAllOpenTickets } from "./zammad.js";
 
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -61,7 +62,7 @@ export function startDailySummary(client: Client): void {
     const hour = getSummaryHour();
     if (hour === undefined) return;
 
-    const currentHour = new Date().getHours();
+    const currentHour = getCurrentHourInTz();
     if (currentHour === hour && lastPostedHour !== currentHour) {
       lastPostedHour = currentHour;
       postSummary(client).catch((err) =>

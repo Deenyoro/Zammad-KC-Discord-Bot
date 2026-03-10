@@ -104,8 +104,16 @@ export const setupCommand = new SlashCommandBuilder()
   )
   .addSubcommand((sc) =>
     sc
+      .setName("timezone")
+      .setDescription("Set the bot's default timezone (e.g. America/New_York)")
+      .addStringOption((o) =>
+        o.setName("tz").setDescription("IANA timezone (e.g. America/New_York, US/Eastern, UTC)").setRequired(true)
+      )
+  )
+  .addSubcommand((sc) =>
+    sc
       .setName("keepalive")
-      .setDescription("Configure daily keepalive hour (0-23, or 'off' to disable)")
+      .setDescription("Configure daily keepalive hour (0-23 in bot timezone, or 'off' to disable)")
       .addStringOption((o) =>
         o.setName("hour").setDescription("Hour (0-23) or 'off'").setRequired(true)
       )
@@ -155,6 +163,8 @@ export async function handleSetupCommand(
         return await handleModelSetup(interaction);
       case "language":
         return await handleLanguageSetup(interaction);
+      case "timezone":
+        return await handleTimezoneSetup(interaction);
       case "keepalive":
         return await handleKeepaliveSetup(interaction);
       case "attachments":
@@ -276,6 +286,26 @@ async function handleLanguageSetup(interaction: ChatInputCommandInteraction) {
 
   await interaction.editReply(`Default AI language set to: ${langNames[lang] ?? lang}`);
   logger.info({ lang }, "Default AI language updated via /setup language");
+}
+
+async function handleTimezoneSetup(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const tz = interaction.options.getString("tz", true).trim();
+
+  // Validate by trying to use it
+  try {
+    new Date().toLocaleString("en-US", { timeZone: tz });
+  } catch {
+    await interaction.editReply(`Invalid timezone: \`${tz}\`. Use an IANA timezone like \`America/New_York\`, \`US/Eastern\`, or \`UTC\`.`);
+    return;
+  }
+
+  setSetting("TIMEZONE", tz);
+
+  const now = new Date().toLocaleString("en-US", { timeZone: tz, dateStyle: "medium", timeStyle: "short" });
+  await interaction.editReply(`Timezone set to **${tz}**. Current time there: ${now}`);
+  logger.info({ tz }, "Timezone updated via /setup timezone");
 }
 
 async function handleKeepaliveSetup(interaction: ChatInputCommandInteraction) {

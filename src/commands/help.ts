@@ -88,6 +88,7 @@ export async function handleHelpCommand(
           "`/setup ai <api_key> [provider] [model]` -Configure AI provider",
           "`/setup search <api_key> [provider]` -Configure web search",
           "`/setup summary <hour|off>` -Configure daily summary",
+          "`/setup timezone <tz>` -Set bot timezone (e.g. America/New_York)",
           "`/setup keepalive <hour|off>` -Configure daily keepalive (silent thread status updates)",
         ].join("\n"),
         inline: false,
