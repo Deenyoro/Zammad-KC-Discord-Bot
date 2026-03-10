@@ -1631,6 +1631,200 @@ export async function handleAiProofread(interaction: ChatInputCommandInteraction
 }
 
 // ---------------------------------------------------------------
+// /checknote — Snapshot service status board into ticket note
+// ---------------------------------------------------------------
+
+export async function handleChecknote(interaction: ChatInputCommandInteraction) {
+  const mapping = getThreadByThreadId(interaction.channelId);
+  if (!mapping) {
+    await interaction.reply({
+      content: "Use this command inside a ticket thread.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const botId = getSetting("CHECKNOTE_BOT_ID");
+  const channelId = getSetting("CHECKNOTE_CHANNEL_ID");
+
+  if (!botId || !channelId) {
+    await interaction.editReply(
+      "Checknote not configured. Run `/setup checknote bot_id:<id> channel:<channel>` first."
+    );
+    return;
+  }
+
+  try {
+    const channel = await interaction.client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased() || channel.isDMBased()) {
+      await interaction.editReply("Configured channel is not a valid text channel.");
+      return;
+    }
+
+    // Fetch recent messages and find the latest from the configured bot
+    const textChannel = channel as import("discord.js").TextChannel;
+    const messages = await textChannel.messages.fetch({ limit: 20, cache: false });
+    const botMessage = messages.find((m) => m.author.id === botId);
+
+    if (!botMessage) {
+      await interaction.editReply(
+        `No recent message found from bot <@${botId}> in <#${channelId}>.`
+      );
+      return;
+    }
+
+    // Extract embed content as plain text
+    const embed = botMessage.embeds[0];
+    if (!embed) {
+      await interaction.editReply("The bot's latest message has no embed.");
+      return;
+    }
+
+    const embedTitle = embed.title ?? "Service Status";
+    // Strip Discord markdown and timestamp tags for plain text
+    const rawDesc = embed.description ?? "";
+    const plainDesc = rawDesc
+      .replace(/<t:\d+:[TtDdFfR]>/g, (match) => {
+        // Extract unix timestamp and format it
+        const ts = match.match(/<t:(\d+)/);
+        if (ts) return new Date(Number(ts[1]) * 1000).toISOString().replace("T", " ").slice(0, 19) + " UTC";
+        return match;
+      })
+      .replace(/\*\*/g, "")
+      .replace(/\*/g, "")
+      .replace(/_/g, "");
+
+    const footerText = embed.footer?.text ?? "";
+    const snapshotTime = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+
+    // Build note body (HTML for Zammad)
+    const noteHtml =
+      `<h3>${escapeHtml(embedTitle)}</h3>` +
+      `<pre>${escapeHtml(plainDesc)}</pre>` +
+      (footerText ? `<p><em>${escapeHtml(footerText)}</em></p>` : "") +
+      `<p><small>Snapshot taken at ${snapshotTime}</small></p>`;
+
+    // Try to render as a PNG image via sharp SVG
+    let imageAttachment: ArticleAttachment | undefined;
+    try {
+      const pngBuffer = await renderStatusBoardPng(embedTitle, rawDesc, embed.color ?? 0x2ecc71);
+      imageAttachment = {
+        filename: `service-status-${Date.now()}.png`,
+        data: pngBuffer.toString("base64"),
+        "mime-type": "image/png",
+      };
+    } catch (err) {
+      logger.warn({ err }, "Failed to render status board PNG — attaching text only");
+    }
+
+    const userEntry = getUserMap(interaction.user.id);
+
+    await createArticle({
+      ticket_id: mapping.ticket_id,
+      body: noteHtml,
+      type: "note",
+      sender: "Agent",
+      internal: true,
+      content_type: "text/html",
+      origin_by_id: userEntry?.zammad_id ?? undefined,
+      attachments: imageAttachment ? [imageAttachment] : undefined,
+    });
+
+    await interaction.editReply(
+      `Service status snapshot added as internal note to ticket #${mapping.ticket_id}.` +
+      (imageAttachment ? " (with PNG image)" : " (text only)")
+    );
+  } catch (err) {
+    logger.error({ err }, "Checknote command failed");
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    await interaction.editReply(`Failed to create checknote: ${msg}`);
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Render the status board embed as a PNG image using sharp's SVG support.
+ * Replaces Discord emojis with colored circles in SVG.
+ */
+async function renderStatusBoardPng(
+  title: string,
+  description: string,
+  embedColor: number
+): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+
+  // Parse lines from description
+  const lines = description.split("\n").filter((l) => l.trim().length > 0);
+
+  // Strip timestamp tags and markdown for display
+  const cleanLines = lines.map((line) =>
+    line
+      .replace(/<t:\d+:[TtDdFfR]>/g, (match) => {
+        const ts = match.match(/<t:(\d+)/);
+        if (ts) return new Date(Number(ts[1]) * 1000).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+        return match;
+      })
+      .replace(/\*\*/g, "")
+      .replace(/\*/g, "")
+      .replace(/_/g, "")
+  );
+
+  const lineHeight = 22;
+  const padding = 20;
+  const titleHeight = 40;
+  const width = 600;
+  const height = titleHeight + padding * 2 + cleanLines.length * lineHeight + 10;
+
+  const colorHex = `#${embedColor.toString(16).padStart(6, "0")}`;
+
+  // Build SVG text elements
+  const textElements = cleanLines
+    .map((line, i) => {
+      const y = titleHeight + padding + i * lineHeight + 16;
+      // Replace emoji with colored circle
+      let svgLine = escapeXml(line);
+      const emojiMap: Record<string, string> = {
+        "\uD83D\uDFE2": `<tspan fill="#2ecc71">\u25CF</tspan>`, // 🟢
+        "\uD83D\uDD34": `<tspan fill="#e74c3c">\u25CF</tspan>`, // 🔴
+        "\uD83D\uDFE1": `<tspan fill="#f39c12">\u25CF</tspan>`, // 🟡
+        "\uD83D\uDD35": `<tspan fill="#3498db">\u25CF</tspan>`, // 🔵
+        "\u26AA":        `<tspan fill="#95a5a6">\u25CF</tspan>`, // ⚪
+        "\u23F8\uFE0F":  `<tspan fill="#95a5a6">\u23F8</tspan>`, // ⏸️
+      };
+      for (const [emoji, replacement] of Object.entries(emojiMap)) {
+        if (line.includes(emoji)) {
+          svgLine = svgLine.replace(escapeXml(emoji), replacement);
+        }
+      }
+      return `<text x="${padding}" y="${y}" fill="#dcddde" font-family="monospace" font-size="14">${svgLine}</text>`;
+    })
+    .join("\n");
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+    <rect width="${width}" height="${height}" fill="#2f3136" rx="8"/>
+    <rect x="0" y="0" width="4" height="${height}" fill="${colorHex}" rx="2"/>
+    <text x="${padding + 4}" y="30" fill="#ffffff" font-family="sans-serif" font-size="18" font-weight="bold">${escapeXml(title)}</text>
+    ${textElements}
+  </svg>`;
+
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+// ---------------------------------------------------------------
 // /weekly — Create a Weekly Check ticket
 // ---------------------------------------------------------------
 
