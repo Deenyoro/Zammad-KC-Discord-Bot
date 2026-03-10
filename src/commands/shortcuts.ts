@@ -239,6 +239,19 @@ export const newticketCommand = new SlashCommandBuilder()
     o.setName("body").setDescription("Message body").setRequired(true)
   );
 
+export const weeklyCommand = new SlashCommandBuilder()
+  .setName("weekly")
+  .setDescription("Create a Weekly Check ticket (auto-detects next dates if omitted)")
+  .addStringOption((o) =>
+    o.setName("start").setDescription("Start date YYYY-MM-DD (optional — auto-detects next Monday)").setRequired(false)
+  )
+  .addStringOption((o) =>
+    o.setName("end").setDescription("End date YYYY-MM-DD (optional — auto-detects Friday)").setRequired(false)
+  )
+  .addStringOption((o) =>
+    o.setName("email").setDescription("Customer email (defaults to /setup weekly-email value)").setRequired(false)
+  );
+
 // templateCommand removed — replaced by Zammad text modules (see textmoduleCommand)
 
 export const textmoduleCommand = new SlashCommandBuilder()

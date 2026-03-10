@@ -57,6 +57,7 @@ export async function handleHelpCommand(
         value: [
           "`/search <query>` -Search Zammad tickets",
           "`/newticket <type> <to> <subject> <body>` -Create a new ticket (email/sms/phone-log)",
+          "`/weekly [start] [end] [email]` -Create a Weekly Check ticket (auto-detects dates)",
         ].join("\n"),
         inline: false,
       },
@@ -90,6 +91,7 @@ export async function handleHelpCommand(
           "`/setup summary <hour|off>` -Configure daily summary",
           "`/setup timezone <tz>` -Set bot timezone (e.g. America/New_York)",
           "`/setup keepalive <hour|off>` -Configure daily keepalive (silent thread status updates)",
+          "`/setup weekly-email <email>` -Set default customer for Weekly Check tickets",
         ].join("\n"),
         inline: false,
       },
