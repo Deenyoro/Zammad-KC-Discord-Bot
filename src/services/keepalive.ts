@@ -3,14 +3,17 @@
  *
  * Two mechanisms:
  *
- * 1. **Daily keepalive** (KEEPALIVE_HOUR) — Posts a new status embed in every
- *    open ticket thread once per day to prevent Discord from auto-archiving.
+ * 1. **Daily keepalive** (KEEPALIVE_HOUR) — Ensures every open ticket thread
+ *    gets activity to prevent Discord from auto-archiving.
  *
- * 2. **Status refresh** (STATUS_REFRESH_MINUTES, default 60) — Edits the
- *    existing status embed in place to keep "Last Activity" and contact info
- *    current. Runs independently of the daily keepalive.
+ * 2. **Status refresh** (STATUS_REFRESH_MINUTES, default 60) — Keeps the
+ *    status embed current with fresh "Last Activity" and contact info.
  *
- * Both use SUPPRESS_NOTIFICATIONS so agents are not pinged.
+ * Both share the same core logic: find and delete ALL previous status embeds
+ * in the thread, then either edit-in-place (if already at bottom) or
+ * delete+re-send silently (if something was posted below it).
+ *
+ * There is always exactly ONE status embed per thread, always at the bottom.
  */
 
 import {
@@ -42,14 +45,77 @@ function getKeepaliveHour(): number | undefined {
 
 function getRefreshMinutes(): number {
   const val = getSettingOrEnv("STATUS_REFRESH_MINUTES");
-  if (val === undefined) return 60; // default: every hour
+  if (val === undefined) return 60;
   const n = parseInt(val, 10);
   return isNaN(n) || n < 1 ? 60 : n;
 }
 
 /**
- * Run the keepalive sweep — posts new status embeds (replacing old ones).
- * This is the daily mechanism to prevent thread archiving.
+ * Core logic shared by both keepalive and refresh:
+ * Ensure exactly one status embed at the bottom of the thread.
+ */
+async function ensureStatusAtBottom(
+  client: Client,
+  thread: ThreadChannel,
+  embed: EmbedBuilder,
+  threadId: string,
+): Promise<void> {
+  const botId = client.user?.id;
+  if (!botId) return;
+
+  // Fetch recent messages to find our status embed(s)
+  const recent = await thread.messages.fetch({ limit: 15, cache: false });
+  const statusMessages: Message[] = [];
+
+  for (const [, msg] of recent) {
+    if (
+      msg.author.id === botId &&
+      msg.embeds.length > 0 &&
+      msg.embeds[0].footer?.text === STATUS_EMBED_FOOTER
+    ) {
+      statusMessages.push(msg);
+    }
+  }
+
+  const lastMsg = recent.first(); // most recent message in thread
+  const isAtBottom =
+    statusMessages.length === 1 &&
+    lastMsg?.id === statusMessages[0].id;
+
+  if (isAtBottom) {
+    // Already the last message and only one — edit in place
+    await discordQueue.add(async () => {
+      await statusMessages[0].edit({ embeds: [embed] });
+    });
+    setSetting(`keepalive:msg:${threadId}`, statusMessages[0].id);
+    return;
+  }
+
+  // Delete ALL old status embeds
+  for (const msg of statusMessages) {
+    try {
+      await discordQueue.add(async () => { await msg.delete(); });
+    } catch {
+      // already deleted
+    }
+  }
+
+  // Post new one at the bottom, silently
+  const newMsg = (await discordQueue.add(async () =>
+    thread.send({
+      embeds: [embed],
+      flags: 4096, // SUPPRESS_NOTIFICATIONS
+      allowedMentions: { parse: [] },
+    } as any)
+  )) as Message | undefined;
+
+  if (newMsg) {
+    setSetting(`keepalive:msg:${threadId}`, newMsg.id);
+  }
+}
+
+/**
+ * Run the keepalive sweep for all non-closed, non-hidden ticket threads.
  */
 export async function runKeepaliveSweep(client: Client): Promise<void> {
   const allThreads = getAllTicketThreads();
@@ -59,8 +125,7 @@ export async function runKeepaliveSweep(client: Client): Promise<void> {
 
   logger.info({ count: targets.length }, "Starting keepalive sweep");
 
-  let posted = 0;
-  let replaced = 0;
+  let updated = 0;
   let failed = 0;
 
   for (const mapping of targets) {
@@ -74,40 +139,20 @@ export async function runKeepaliveSweep(client: Client): Promise<void> {
         continue;
       }
 
-      // Build the status embed from live Zammad data
       const embed = await buildStatusEmbed(mapping.ticket_id, mapping.ticket_number, mapping.title);
-
-      // Check if the last message in the thread is a previous status update from us
-      const deletedPrevious = await maybeDeletePreviousStatus(thread, client);
-      if (deletedPrevious) replaced++;
-
-      // Send the new status update with SUPPRESS_NOTIFICATIONS flag
-      const newMsg = (await discordQueue.add(async () =>
-        thread.send({
-          embeds: [embed],
-          flags: 4096, // SUPPRESS_NOTIFICATIONS
-          allowedMentions: { parse: [] },
-        } as any)
-      )) as Message | undefined;
-
-      // Track the message ID so the refresh timer can edit it in place
-      if (newMsg) {
-        setSetting(`keepalive:msg:${mapping.thread_id}`, newMsg.id);
-      }
-
-      posted++;
+      await ensureStatusAtBottom(client, thread, embed, mapping.thread_id);
+      updated++;
     } catch (err) {
       failed++;
       logger.warn({ ticketId: mapping.ticket_id, err }, "Keepalive: failed to post status");
     }
   }
 
-  logger.info({ posted, replaced, failed }, "Keepalive sweep complete");
+  logger.info({ updated, failed }, "Keepalive sweep complete");
 }
 
 /**
- * Refresh sweep — edits existing status embeds in place with fresh data.
- * Does NOT post new messages or prevent archiving — that's the daily keepalive's job.
+ * Refresh sweep — same logic as keepalive, keeps status embed current.
  */
 async function runRefreshSweep(client: Client): Promise<void> {
   const allThreads = getAllTicketThreads();
@@ -119,9 +164,6 @@ async function runRefreshSweep(client: Client): Promise<void> {
   let failed = 0;
 
   for (const mapping of targets) {
-    const storedMsgId = getSetting(`keepalive:msg:${mapping.thread_id}`);
-    if (!storedMsgId) continue; // no status embed to refresh
-
     try {
       const thread = (await client.channels.fetch(mapping.thread_id, {
         force: true,
@@ -129,21 +171,8 @@ async function runRefreshSweep(client: Client): Promise<void> {
 
       if (!thread?.isThread()) continue;
 
-      // Only refresh if the status embed is still the last message
-      const lastMessages = await thread.messages.fetch({ limit: 1, cache: false });
-      const lastMsg = lastMessages.first();
-      if (!lastMsg || lastMsg.id !== storedMsgId) continue;
-
-      // Verify it's actually our status embed
-      if (lastMsg.author.id !== client.user?.id) continue;
-      if (!lastMsg.embeds[0] || lastMsg.embeds[0].footer?.text !== STATUS_EMBED_FOOTER) continue;
-
       const embed = await buildStatusEmbed(mapping.ticket_id, mapping.ticket_number, mapping.title);
-
-      await discordQueue.add(async () => {
-        await lastMsg.edit({ embeds: [embed] });
-      });
-
+      await ensureStatusAtBottom(client, thread, embed, mapping.thread_id);
       refreshed++;
     } catch (err) {
       failed++;
@@ -174,7 +203,6 @@ async function buildStatusEmbed(
     state = ticket.state;
     createdAt = formatDate(ticket.created_at);
 
-    // Collect contact info from customer and owner
     const seenContacts = new Set<string>();
 
     if (ticket.owner_id && ticket.owner_id > 1) {
@@ -190,7 +218,6 @@ async function buildStatusEmbed(
       try {
         const customerUser = await getUser(ticket.customer_id);
         customer = `${customerUser.firstname} ${customerUser.lastname}`.trim() || ticket.customer || "Unknown";
-        // Collect customer contact info
         if (customerUser.email) {
           const key = customerUser.email.toLowerCase();
           if (!seenContacts.has(key)) {
@@ -217,7 +244,6 @@ async function buildStatusEmbed(
       }
     }
 
-    // Get articles for activity info and additional contacts
     try {
       const articles = await getArticles(ticketId);
       if (articles.length > 0) {
@@ -227,14 +253,12 @@ async function buildStatusEmbed(
         const typeLabel = last.type === "note" ? "internal note" : last.type;
         lastActivityDesc = `${typeLabel} by ${sender} — ${timeAgo}`;
 
-        // Collect email/phone contacts from article to/from/cc fields
         for (const a of articles) {
           if (a.sender === "System") continue;
           for (const field of [a.from, a.to, a.cc]) {
             if (!field) continue;
             for (const part of field.split(",")) {
               const trimmed = part.trim();
-              // Extract email addresses
               const emailMatch = trimmed.match(/<([^>]+@[^>]+)>/) || trimmed.match(/^([^\s<]+@[^\s>]+)$/);
               if (emailMatch) {
                 const key = emailMatch[1].toLowerCase();
@@ -246,7 +270,6 @@ async function buildStatusEmbed(
             }
           }
 
-          // Detect Teams channel from article preferences
           const prefs = a.preferences as Record<string, any> | undefined;
           if (prefs?.teams_chat?.conversation_id) {
             const teamsKey = `teams:${prefs.teams_chat.conversation_id}`;
@@ -257,7 +280,6 @@ async function buildStatusEmbed(
             }
           }
 
-          // Detect SMS/phone from article type
           if ((a.type === "sms" || a.type === "ringcentral sms") && a.to) {
             for (const part of a.to.split(",")) {
               const phone = part.trim().replace(/[^\d+]/g, "");
@@ -280,7 +302,6 @@ async function buildStatusEmbed(
     ? title.length > 60 ? title.slice(0, 57) + "..." : title
     : "Untitled";
 
-  // Build contact section (cap at 8 to avoid embed bloat)
   let contactSection = "";
   if (contacts.length > 0) {
     const displayContacts = contacts.slice(0, 8);
@@ -301,42 +322,9 @@ async function buildStatusEmbed(
       `**Last Activity:** ${lastActivityDesc}` +
       contactSection
     )
-    .setColor(0x3498db) // blue
+    .setColor(0x3498db)
     .setFooter({ text: STATUS_EMBED_FOOTER })
     .setTimestamp(new Date());
-}
-
-/**
- * If the most recent message in the thread is a status update from the bot,
- * delete it (to avoid stacking daily updates with no real conversation between them).
- * Returns true if a message was deleted.
- */
-async function maybeDeletePreviousStatus(
-  thread: ThreadChannel,
-  client: Client,
-): Promise<boolean> {
-  try {
-    const messages = await thread.messages.fetch({ limit: 1 });
-    const lastMsg = messages.first();
-    if (!lastMsg) return false;
-
-    // Check if it's from our bot and has our status embed footer
-    if (lastMsg.author.id !== client.user?.id) return false;
-    if (lastMsg.embeds.length === 0) return false;
-
-    const embed = lastMsg.embeds[0];
-    if (embed.footer?.text !== STATUS_EMBED_FOOTER) return false;
-
-    // It's our previous status update with no conversation in between — delete it
-    await discordQueue.add(async () => {
-      await lastMsg.delete();
-    });
-
-    return true;
-  } catch (err) {
-    logger.debug({ threadId: thread.id, err }, "Keepalive: failed to check/delete previous status");
-    return false;
-  }
 }
 
 function formatDate(iso: string): string {
@@ -370,7 +358,7 @@ function formatTimeAgo(iso: string): string {
 }
 
 export function startKeepalive(client: Client): void {
-  // 1. Daily keepalive — posts new status embeds once per day
+  // 1. Daily keepalive — ensures threads stay alive
   keepaliveTimer = setInterval(() => {
     const hour = getKeepaliveHour();
     if (hour === undefined) return;
@@ -384,7 +372,7 @@ export function startKeepalive(client: Client): void {
     }
   }, 60_000);
 
-  // 2. Status refresh — edits existing embeds in place on a configurable interval
+  // 2. Status refresh — keeps embeds current
   const refreshMs = getRefreshMinutes() * 60_000;
   logger.info({ refreshMinutes: getRefreshMinutes() }, "Status refresh timer started");
   refreshTimer = setInterval(() => {
