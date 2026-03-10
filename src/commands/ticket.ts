@@ -664,11 +664,11 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   const fileOption = interaction.options.getAttachment("file");
   const convertOption = interaction.options.getString("convert") as ConvertTarget | null;
 
-  // Validate to override if provided
+  // Validate to override if provided — accept both bare email and "Name <email>" format
   if (toOverride) {
-    const trimmed = toOverride.trim();
-    if (!isValidEmail(trimmed)) {
-      await interaction.editReply(`Invalid email address: \`${trimmed}\`\nUse \`/participants\` to see valid addresses.`);
+    const parsed = parseEmailAddress(toOverride);
+    if (!parsed) {
+      await interaction.editReply(`Invalid email address: \`${toOverride.trim()}\`\nUse \`/participants\` to see valid addresses.`);
       return;
     }
   }
@@ -688,8 +688,9 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   let toIgnored = false;
   if (toOverride) {
     if (channel.type === "email") {
-      channel.to = toOverride.trim();
-      channel.label = `email to ${toOverride.trim()}`;
+      const parsedTo = parseEmailAddress(toOverride) ?? toOverride.trim();
+      channel.to = parsedTo;
+      channel.label = `email to ${parsedTo}`;
     } else {
       toIgnored = true;
     }
@@ -703,8 +704,14 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   let ccIgnored = false;
   if (ccInput) {
     if (channel.type === "email") {
-      const ccEmails = ccInput.split(',').map(e => e.trim()).filter(e => e.length > 0);
-      const invalid = ccEmails.filter(e => !isValidEmail(e));
+      const ccRaw = ccInput.split(',').map(e => e.trim()).filter(e => e.length > 0);
+      const ccEmails: string[] = [];
+      const invalid: string[] = [];
+      for (const raw of ccRaw) {
+        const parsed = parseEmailAddress(raw);
+        if (parsed) ccEmails.push(parsed);
+        else invalid.push(raw);
+      }
       if (invalid.length > 0) {
         await interaction.editReply(`Invalid CC email(s): ${invalid.map(e => `\`${e}\``).join(", ")}`);
         return;
