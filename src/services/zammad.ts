@@ -36,6 +36,7 @@ export interface ZammadArticle {
   subject: string | null;
   from?: string;
   to?: string;
+  cc?: string;
   body: string;
   internal: boolean;
   created_at: string;

@@ -33,6 +33,8 @@ import {
 import { discordQueue } from "../queue/index.js";
 import { isClosedState, isHiddenState } from "../util/states.js";
 import { getAttachmentLimits } from "../util/attachmentLimits.js";
+import { updateWaitingDashboard } from "./waitingDashboard.js";
+import { splitEmailHtml } from "../util/emailSplit.js";
 
 /** Extract a display name from an article "from" field like "John Doe <john@example.com>" */
 function extractDisplayName(from: string | undefined): string | undefined {
@@ -315,6 +317,9 @@ async function processWebhook(
   // Always sync — Zammad sometimes sends webhooks without the article
   // payload (e.g. for internal notes), so we must not gate on webhookArticle.
   await syncAllUnsyncedArticles(client, mapping.thread_id, ticketId);
+
+  // Update the waiting-for-reply dashboard (state may have changed)
+  await updateWaitingDashboard(client);
 }
 
 // ---------------------------------------------------------------
@@ -366,12 +371,16 @@ export async function syncAllUnsyncedArticles(
       ? `${fromName} (${article.sender})`
       : article.sender;
 
-    // First article keeps the full body; replies strip the quoted email chain
-    const rawBody = hasFirstArticle
-      ? stripQuotedEmail(article.body)
-      : article.body;
-    const body = stripHtml(rawBody);
-    const content = `**${senderLabel}:** ${prefix}${body}`;
+    // For email articles: split into reply + context (signatures/quoted chain).
+    // The reply is shown prominently; the context goes behind a spoiler tag.
+    // For non-email articles: show the full body as-is.
+    let content: string;
+    if (article.type === "email") {
+      content = formatEmailArticle(article.body, senderLabel, prefix, hasFirstArticle);
+    } else {
+      const body = stripHtml(article.body);
+      content = `**${senderLabel}:** ${prefix}${body}`;
+    }
     hasFirstArticle = true;
 
     // Process attachments:
@@ -539,4 +548,57 @@ function stripHtml(html: string): string {
     .replace(/&nbsp;/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/**
+ * Format an email article for Discord with reply/context separation.
+ *
+ * The actual reply is shown prominently.  Quoted content (previous emails,
+ * signatures, forwarded content) is collapsed behind a Discord spoiler tag
+ * so it's still accessible but doesn't clutter the thread.
+ */
+function formatEmailArticle(
+  bodyHtml: string,
+  senderLabel: string,
+  prefix: string,
+  stripQuotes: boolean,
+): string {
+  const { reply: replyHtml, context: contextHtml } = splitEmailHtml(bodyHtml);
+
+  // For non-first articles, also strip any remaining quoted content from
+  // the reply portion (catches nested quotes the split didn't find)
+  const cleanedReplyHtml = stripQuotes ? stripQuotedEmail(replyHtml) : replyHtml;
+  const replyText = stripHtml(cleanedReplyHtml);
+
+  // If split found no context, just return the reply (same as before)
+  if (!contextHtml) {
+    return `**${senderLabel}:** ${prefix}${replyText}`;
+  }
+
+  // Convert context HTML to plain text
+  const contextText = stripHtml(contextHtml);
+
+  // Skip context if it's trivially short (just whitespace or a delimiter)
+  if (contextText.length < 10) {
+    return `**${senderLabel}:** ${prefix}${replyText}`;
+  }
+
+  // Truncate context to a reasonable length for Discord
+  const MAX_CONTEXT_LEN = 800;
+  let truncatedContext = contextText;
+  if (truncatedContext.length > MAX_CONTEXT_LEN) {
+    truncatedContext = truncatedContext.slice(0, MAX_CONTEXT_LEN).trimEnd() + "…";
+  }
+
+  // Sanitize: escape spoiler delimiters and collapse blank lines
+  // (blank lines inside || can break the spoiler in some clients)
+  truncatedContext = truncatedContext
+    .replace(/\|\|/g, "| |")
+    .replace(/\n{3,}/g, "\n\n");
+
+  // Build the message: reply shown normally, context behind a spoiler
+  return (
+    `**${senderLabel}:** ${prefix}${replyText}\n` +
+    `📧 ||${truncatedContext}||`
+  );
 }

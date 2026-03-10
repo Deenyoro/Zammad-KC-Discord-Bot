@@ -21,6 +21,9 @@ import {
   handleUnschedule,
   handleNewTicket,
   handleTextModule,
+  handleParticipants,
+  handleReplyAutocomplete,
+  handleMergeAutocomplete,
   handleAiReply,
   handleAiSummary,
   handleAiHelp,
@@ -31,6 +34,20 @@ import { handleHelpCommand } from "../commands/help.js";
 
 export function onInteractionCreate(client: Client): void {
   client.on(Events.InteractionCreate, async (interaction) => {
+    // Handle autocomplete interactions (fired while user is typing)
+    if (interaction.isAutocomplete()) {
+      try {
+        if (interaction.commandName === "reply") {
+          await handleReplyAutocomplete(interaction);
+        } else if (interaction.commandName === "merge") {
+          await handleMergeAutocomplete(interaction);
+        }
+      } catch (err) {
+        logger.error({ command: interaction.commandName, err }, "Autocomplete error");
+      }
+      return;
+    }
+
     if (!interaction.isChatInputCommand()) return;
 
     const { commandName } = interaction;
@@ -102,6 +119,9 @@ export function onInteractionCreate(client: Client): void {
           break;
         case "textmodule":
           await handleTextModule(interaction);
+          break;
+        case "participants":
+          await handleParticipants(interaction);
           break;
         case "aireply":
           await handleAiReply(interaction);
