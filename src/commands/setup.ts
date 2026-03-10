@@ -104,6 +104,14 @@ export const setupCommand = new SlashCommandBuilder()
   )
   .addSubcommand((sc) =>
     sc
+      .setName("keepalive")
+      .setDescription("Configure daily keepalive hour (0-23, or 'off' to disable)")
+      .addStringOption((o) =>
+        o.setName("hour").setDescription("Hour (0-23) or 'off'").setRequired(true)
+      )
+  )
+  .addSubcommand((sc) =>
+    sc
       .setName("attachments")
       .setDescription("Configure attachment size limits (view current or set new values)")
       .addNumberOption((o) =>
@@ -147,6 +155,8 @@ export async function handleSetupCommand(
         return await handleModelSetup(interaction);
       case "language":
         return await handleLanguageSetup(interaction);
+      case "keepalive":
+        return await handleKeepaliveSetup(interaction);
       case "attachments":
         return await handleAttachmentsSetup(interaction);
       default:
@@ -266,6 +276,29 @@ async function handleLanguageSetup(interaction: ChatInputCommandInteraction) {
 
   await interaction.editReply(`Default AI language set to: ${langNames[lang] ?? lang}`);
   logger.info({ lang }, "Default AI language updated via /setup language");
+}
+
+async function handleKeepaliveSetup(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const hourInput = interaction.options.getString("hour", true);
+
+  if (hourInput.toLowerCase() === "off") {
+    deleteSetting("KEEPALIVE_HOUR");
+    await interaction.editReply("Daily keepalive disabled.");
+    logger.info("Daily keepalive disabled via /setup keepalive");
+    return;
+  }
+
+  const hour = parseInt(hourInput, 10);
+  if (isNaN(hour) || hour < 0 || hour > 23) {
+    await interaction.editReply("Invalid hour. Provide a number 0-23 or 'off'.");
+    return;
+  }
+
+  setSetting("KEEPALIVE_HOUR", String(hour));
+  await interaction.editReply(`Daily keepalive set to ${hour}:00. Open ticket threads will get a silent status update at this time.`);
+  logger.info({ hour }, "Daily keepalive hour updated via /setup keepalive");
 }
 
 async function handleAttachmentsSetup(interaction: ChatInputCommandInteraction) {
