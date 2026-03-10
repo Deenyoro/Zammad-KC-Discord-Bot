@@ -34,6 +34,9 @@ const envSchema = z.object({
 
   // Daily summary (disabled if unset)
   DAILY_SUMMARY_HOUR: z.coerce.number().min(0).max(23).optional(),
+
+  // Daily keepalive sweep hour (disabled if unset) — posts silent status embeds in open threads
+  KEEPALIVE_HOUR: z.coerce.number().min(0).max(23).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
