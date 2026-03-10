@@ -196,6 +196,7 @@ async function buildStatusEmbed(
   let customer = "Unknown";
   let createdAt = "Unknown";
   let lastActivityDesc = "No articles";
+  let channelType = "Unknown";
   const contacts: string[] = [];
 
   try {
@@ -253,6 +254,19 @@ async function buildStatusEmbed(
         const typeLabel = last.type === "note" ? "internal note" : last.type;
         lastActivityDesc = `${typeLabel} by ${sender} — ${timeAgo}`;
 
+        // Detect primary channel type from non-note, non-system articles
+        const channelArticle =
+          [...articles].reverse().find((a) => a.type !== "note" && a.sender === "Customer") ??
+          [...articles].reverse().find((a) => a.type !== "note" && a.sender !== "System");
+        if (channelArticle) {
+          switch (channelArticle.type) {
+            case "email": channelType = "\u2709\uFE0F Email"; break;
+            case "ringcentral_sms_message": channelType = "\uD83D\uDCF1 SMS (RingCentral)"; break;
+            case "teams_chat_message": channelType = "\uD83D\uDCAC Teams"; break;
+            default: channelType = channelArticle.type; break;
+          }
+        }
+
         for (const a of articles) {
           if (a.sender === "System") continue;
           for (const field of [a.from, a.to, a.cc]) {
@@ -280,7 +294,7 @@ async function buildStatusEmbed(
             }
           }
 
-          if ((a.type === "sms" || a.type === "ringcentral sms") && a.to) {
+          if ((a.type === "sms" || a.type === "ringcentral_sms_message") && a.to) {
             for (const part of a.to.split(",")) {
               const phone = part.trim().replace(/[^\d+]/g, "");
               if (phone.length >= 7 && !seenContacts.has(phone)) {
@@ -315,6 +329,7 @@ async function buildStatusEmbed(
     .setTitle("Ticket Status Update")
     .setDescription(
       `**#${ticketNumber}** — [${displayTitle}](${url})\n\n` +
+      `**Channel:** ${channelType}\n` +
       `**State:** ${state}\n` +
       `**Assignee:** ${owner}\n` +
       `**Customer:** ${customer}\n` +

@@ -532,6 +532,7 @@ export async function createSmsConversation(data: {
   phone_number: string;
   body: string;
   channel_id?: number;
+  skip_send?: boolean;
 }): Promise<ZammadTicket> {
   const res = await zammadFetch("/kc/conversations/sms", {
     method: "POST",

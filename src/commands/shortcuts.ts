@@ -237,6 +237,9 @@ export const newticketCommand = new SlashCommandBuilder()
   )
   .addStringOption((o) =>
     o.setName("body").setDescription("Message body").setRequired(true)
+  )
+  .addBooleanOption((o) =>
+    o.setName("send").setDescription("Send the initial message? (default: true, set false for SMS log-only)").setRequired(false)
   );
 
 export const weeklyCommand = new SlashCommandBuilder()
