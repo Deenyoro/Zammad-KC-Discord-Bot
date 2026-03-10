@@ -120,6 +120,14 @@ export const setupCommand = new SlashCommandBuilder()
   )
   .addSubcommand((sc) =>
     sc
+      .setName("weekly-email")
+      .setDescription("Set the customer email for Weekly Check tickets")
+      .addStringOption((o) =>
+        o.setName("email").setDescription("Customer email (e.g. dean@kawaconnect.com)").setRequired(true)
+      )
+  )
+  .addSubcommand((sc) =>
+    sc
       .setName("attachments")
       .setDescription("Configure attachment size limits (view current or set new values)")
       .addNumberOption((o) =>
@@ -167,6 +175,8 @@ export async function handleSetupCommand(
         return await handleTimezoneSetup(interaction);
       case "keepalive":
         return await handleKeepaliveSetup(interaction);
+      case "weekly-email":
+        return await handleWeeklyEmailSetup(interaction);
       case "attachments":
         return await handleAttachmentsSetup(interaction);
       default:
@@ -376,4 +386,15 @@ async function handleAttachmentsSetup(interaction: ChatInputCommandInteraction) 
 
   await interaction.editReply(`Attachment limits updated:\n${changes.join("\n")}`);
   logger.info({ perFileMb, totalMb, maxCount, downloadCapMb }, "Attachment limits updated via /setup attachments");
+}
+
+async function handleWeeklyEmailSetup(interaction: ChatInputCommandInteraction) {
+  const email = interaction.options.getString("email", true).trim().toLowerCase();
+  if (!email.includes("@")) {
+    await interaction.reply({ content: "That doesn't look like a valid email address.", ephemeral: true });
+    return;
+  }
+  setSetting("WEEKLY_CHECK_EMAIL", email);
+  await interaction.reply({ content: `Weekly Check ticket customer set to **${email}**.`, ephemeral: true });
+  logger.info({ email }, "Weekly check email configured");
 }

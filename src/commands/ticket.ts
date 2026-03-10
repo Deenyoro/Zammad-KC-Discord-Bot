@@ -6,6 +6,7 @@ import {
   getUserMap,
   updateThreadState,
   getSettingOrEnv,
+  getSetting,
   type TicketThread,
 } from "../db/index.js";
 import {
@@ -1626,5 +1627,197 @@ export async function handleAiProofread(interaction: ChatInputCommandInteraction
     logger.error({ err }, "AI proofread command failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
     await interaction.editReply(`AI proofread failed: ${msg}`);
+  }
+}
+
+// ---------------------------------------------------------------
+// /weekly — Create a Weekly Check ticket
+// ---------------------------------------------------------------
+
+/**
+ * Parse a date string like "2026-03-7" or "2026-03-07" into a Date (UTC midnight).
+ * Returns null if the string is not a valid date.
+ */
+function parseYMD(s: string): Date | null {
+  const m = s.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return null;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (isNaN(d.getTime())) return null;
+  return d;
+}
+
+/** Format a Date as YYYY-MM-DD (zero-padded). */
+function fmtDate(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Parse the start/end dates from a Weekly Check ticket title.
+ * Handles formats like:
+ *   "Weekly Check 2026-03-7 to 2026-03-13"
+ *   "Weekly Check 2026-03-07 to 2026-03-13"
+ */
+function parseWeeklyTitle(title: string): { start: Date; end: Date } | null {
+  const m = title.match(/(\d{4}-\d{1,2}-\d{1,2})\s*to\s*(\d{4}-\d{1,2}-\d{1,2})/i);
+  if (!m) return null;
+  const start = parseYMD(m[1]);
+  const end = parseYMD(m[2]);
+  if (!start || !end) return null;
+  return { start, end };
+}
+
+/** Get next Monday (or today if it's Monday). */
+function nextMonday(from: Date): Date {
+  const d = new Date(from);
+  const day = d.getUTCDay(); // 0=Sun..6=Sat
+  const daysUntilMon = day === 0 ? 1 : day === 1 ? 0 : 8 - day;
+  d.setUTCDate(d.getUTCDate() + daysUntilMon);
+  return d;
+}
+
+/** Get Friday of the same week (Mon+4). */
+function fridayOfWeek(monday: Date): Date {
+  const d = new Date(monday);
+  d.setUTCDate(d.getUTCDate() + 4);
+  return d;
+}
+
+export async function handleWeekly(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  // Resolve customer email: command option > /setup weekly-email setting
+  const emailOption = interaction.options.getString("email");
+  const customerEmail = emailOption?.trim().toLowerCase() || getSetting("WEEKLY_CHECK_EMAIL");
+
+  if (!customerEmail) {
+    await interaction.editReply(
+      "No customer email configured. Use `/setup weekly-email` to set a default, or pass `email:` to this command."
+    );
+    return;
+  }
+
+  const startInput = interaction.options.getString("start");
+  const endInput = interaction.options.getString("end");
+
+  let startDate!: Date;
+  let endDate!: Date;
+
+  if (startInput && endInput) {
+    // Both dates provided explicitly
+    const s = parseYMD(startInput);
+    const e = parseYMD(endInput);
+    if (!s) {
+      await interaction.editReply(`Invalid start date: \`${startInput}\`. Use YYYY-MM-DD format.`);
+      return;
+    }
+    if (!e) {
+      await interaction.editReply(`Invalid end date: \`${endInput}\`. Use YYYY-MM-DD format.`);
+      return;
+    }
+    startDate = s;
+    endDate = e;
+  } else if (startInput && !endInput) {
+    // Only start provided — end defaults to Friday of that week
+    const s = parseYMD(startInput);
+    if (!s) {
+      await interaction.editReply(`Invalid start date: \`${startInput}\`. Use YYYY-MM-DD format.`);
+      return;
+    }
+    startDate = s;
+    endDate = fridayOfWeek(s);
+  } else {
+    // Auto-detect from most recent Weekly Check ticket
+    let autoDetected = false;
+    try {
+      const results = await searchTickets("title:Weekly Check", 50);
+      // Sort by created_at descending to find the most recent
+      const sorted = results
+        .filter((t) => /weekly\s*check/i.test(t.title))
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      for (const ticket of sorted) {
+        const parsed = parseWeeklyTitle(ticket.title);
+        if (parsed) {
+          // Next week starts the Monday after the previous end date
+          const nextMon = nextMonday(new Date(parsed.end.getTime() + 86400000)); // day after end
+          startDate = nextMon;
+          endDate = fridayOfWeek(nextMon);
+          autoDetected = true;
+          logger.info(
+            { prevTitle: ticket.title, newStart: fmtDate(startDate), newEnd: fmtDate(endDate) },
+            "Auto-detected weekly dates from previous ticket"
+          );
+          break;
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, "Failed to search for previous Weekly Check tickets");
+    }
+
+    if (!autoDetected) {
+      // Fallback: next Monday → Friday
+      const now = new Date();
+      startDate = nextMonday(now);
+      endDate = fridayOfWeek(startDate);
+      logger.info(
+        { start: fmtDate(startDate), end: fmtDate(endDate) },
+        "No previous Weekly Check found, using next Mon-Fri"
+      );
+    }
+  }
+
+  // Ensure end is after start
+  if (endDate <= startDate) {
+    await interaction.editReply(
+      `End date (${fmtDate(endDate)}) must be after start date (${fmtDate(startDate)}).`
+    );
+    return;
+  }
+
+  const title = `Weekly Check ${fmtDate(startDate)} to ${fmtDate(endDate)}`;
+
+  try {
+    // Create the ticket
+    const ticket = await createTicket({
+      title,
+      group: "Users",
+      customer: customerEmail,
+      article: {
+        subject: title,
+        body: `Weekly Check for ${fmtDate(startDate)} to ${fmtDate(endDate)}`,
+        type: "note",
+        sender: "Agent",
+        internal: true,
+        content_type: "text/plain",
+      },
+    });
+
+    // Set to "pending reminder" with pending_time = end date at 23:59 UTC
+    const pendingState = await getStateByName("pending reminder");
+    if (pendingState) {
+      const pendingTime = new Date(endDate);
+      pendingTime.setUTCHours(23, 59, 0, 0);
+      await updateTicket(ticket.id, {
+        state_id: pendingState.id,
+        pending_time: pendingTime.toISOString(),
+      });
+    } else {
+      logger.warn("Could not find 'pending reminder' state — ticket left in default state");
+    }
+
+    await interaction.editReply(
+      `Weekly Check ticket created: **#${ticket.number}** — ${title}\n` +
+      `Customer: ${customerEmail}\n` +
+      `State: pending reminder (until ${fmtDate(endDate)})\n` +
+      ticketUrl(ticket.id)
+    );
+    logger.info({ ticketId: ticket.id, title, customerEmail }, "Weekly Check ticket created");
+  } catch (err) {
+    logger.error({ err, title, customerEmail }, "Failed to create Weekly Check ticket");
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    await interaction.editReply(`Failed to create Weekly Check ticket: ${msg}`);
   }
 }

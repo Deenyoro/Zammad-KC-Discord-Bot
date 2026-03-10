@@ -28,6 +28,7 @@ import {
   handleAiSummary,
   handleAiHelp,
   handleAiProofread,
+  handleWeekly,
 } from "../commands/ticket.js";
 import { handleSetupCommand } from "../commands/setup.js";
 import { handleHelpCommand } from "../commands/help.js";
@@ -134,6 +135,9 @@ export function onInteractionCreate(client: Client): void {
           break;
         case "aiproofread":
           await handleAiProofread(interaction);
+          break;
+        case "weekly":
+          await handleWeekly(interaction);
           break;
         default:
           logger.warn({ commandName }, "Unknown command");
