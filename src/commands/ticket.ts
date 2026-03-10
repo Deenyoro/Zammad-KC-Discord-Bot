@@ -664,10 +664,11 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   const fileOption = interaction.options.getAttachment("file");
   const convertOption = interaction.options.getString("convert") as ConvertTarget | null;
 
-  // Validate to override if provided — accept both bare email and "Name <email>" format
+  // Validate and normalize "to" override — accepts bare email, "Name <email>", mailto:, etc.
+  let parsedTo: string | null = null;
   if (toOverride) {
-    const parsed = parseEmailAddress(toOverride);
-    if (!parsed) {
+    parsedTo = parseEmailAddress(toOverride);
+    if (!parsedTo) {
       await interaction.editReply(`Invalid email address: \`${toOverride.trim()}\`\nUse \`/participants\` to see valid addresses.`);
       return;
     }
@@ -686,9 +687,8 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
 
   // Apply to override — only for email tickets; silently ignored for SMS/Teams
   let toIgnored = false;
-  if (toOverride) {
+  if (parsedTo) {
     if (channel.type === "email") {
-      const parsedTo = parseEmailAddress(toOverride) ?? toOverride.trim();
       channel.to = parsedTo;
       channel.label = `email to ${parsedTo}`;
     } else {
