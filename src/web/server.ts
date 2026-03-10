@@ -4,6 +4,7 @@ import type { Client } from "discord.js";
 import { env } from "../util/env.js";
 import { logger } from "../util/logger.js";
 import { registerZammadRoutes } from "./routes/zammad.js";
+import { registerDebugRoutes } from "./routes/debug.js";
 
 export async function startWebServer(client: Client): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
@@ -35,6 +36,9 @@ export async function startWebServer(client: Client): Promise<FastifyInstance> {
 
   // Zammad webhook routes
   registerZammadRoutes(app, client);
+
+  // Debug/diagnostic routes (cluster-internal only)
+  registerDebugRoutes(app, client);
 
   const port = env().PORT;
   await app.listen({ port, host: "0.0.0.0" });
