@@ -1749,7 +1749,8 @@ function escapeHtml(s: string): string {
 
 /**
  * Render the status board embed as a PNG image using sharp's SVG support.
- * Replaces Discord emojis with colored circles in SVG.
+ * Uses SVG <circle> elements for status dots and DejaVu Sans font (installed in container).
+ * All emoji/unicode is stripped — only ASCII text + SVG primitives.
  */
 async function renderStatusBoardPng(
   title: string,
@@ -1758,59 +1759,99 @@ async function renderStatusBoardPng(
 ): Promise<Buffer> {
   const sharp = (await import("sharp")).default;
 
-  // Parse lines from description
   const lines = description.split("\n").filter((l) => l.trim().length > 0);
 
-  // Strip timestamp tags and markdown for display
-  const cleanLines = lines.map((line) =>
-    line
-      .replace(/<t:\d+:[TtDdFfR]>/g, (match) => {
-        const ts = match.match(/<t:(\d+)/);
+  // Emoji → { color, label } mapping for SVG circle rendering
+  const emojiColors: [string, string][] = [
+    ["\uD83D\uDFE2", "#2ecc71"], // 🟢
+    ["\uD83D\uDD34", "#e74c3c"], // 🔴
+    ["\uD83D\uDFE1", "#f39c12"], // 🟡
+    ["\uD83D\uDD35", "#3498db"], // 🔵
+    ["\u26AA", "#95a5a6"],       // ⚪
+    ["\u23F8\uFE0F", "#95a5a6"], // ⏸️
+    ["\u23F8", "#95a5a6"],       // ⏸ (without variation selector)
+  ];
+
+  interface ParsedLine {
+    dotColor: string | null;
+    text: string;
+    bold: boolean;
+  }
+
+  const parsed: ParsedLine[] = lines.map((line) => {
+    // Clean markdown and Discord timestamps
+    let clean = line
+      .replace(/<t:\d+:[TtDdFfR]>/g, (m) => {
+        const ts = m.match(/<t:(\d+)/);
         if (ts) return new Date(Number(ts[1]) * 1000).toISOString().replace("T", " ").slice(0, 16) + " UTC";
-        return match;
-      })
-      .replace(/\*\*/g, "")
-      .replace(/\*/g, "")
-      .replace(/_/g, "")
-  );
+        return m;
+      });
+
+    // Detect bold (section headers like **GroupName**)
+    const isBold = /^\*\*[^*]+\*\*$/.test(clean.trim());
+
+    // Strip markdown
+    clean = clean.replace(/\*\*/g, "").replace(/\*/g, "").replace(/_/g, "");
+
+    // Detect and remove emoji, record its color
+    let dotColor: string | null = null;
+    for (const [emoji, color] of emojiColors) {
+      if (clean.includes(emoji)) {
+        dotColor = color;
+        clean = clean.replace(emoji, "").trim();
+        break;
+      }
+    }
+
+    // Strip any remaining non-ASCII (stray emoji)
+    clean = clean.replace(/[^\x20-\x7E]/g, "").trim();
+
+    return { dotColor, text: clean, bold: isBold };
+  });
 
   const lineHeight = 22;
-  const padding = 20;
-  const titleHeight = 40;
-  const width = 600;
-  const height = titleHeight + padding * 2 + cleanLines.length * lineHeight + 10;
-
+  const padding = 16;
+  const titleHeight = 36;
+  const dotRadius = 5;
+  const dotXCenter = padding + dotRadius;
+  const textXWithDot = padding + dotRadius * 2 + 8;
+  const textXNoDot = padding;
+  const width = 620;
+  const height = titleHeight + padding * 2 + parsed.length * lineHeight + 10;
   const colorHex = `#${embedColor.toString(16).padStart(6, "0")}`;
 
-  // Build SVG text elements
-  const textElements = cleanLines
-    .map((line, i) => {
-      const y = titleHeight + padding + i * lineHeight + 16;
-      // Replace emoji with colored circle
-      let svgLine = escapeXml(line);
-      const emojiMap: Record<string, string> = {
-        "\uD83D\uDFE2": `<tspan fill="#2ecc71">\u25CF</tspan>`, // 🟢
-        "\uD83D\uDD34": `<tspan fill="#e74c3c">\u25CF</tspan>`, // 🔴
-        "\uD83D\uDFE1": `<tspan fill="#f39c12">\u25CF</tspan>`, // 🟡
-        "\uD83D\uDD35": `<tspan fill="#3498db">\u25CF</tspan>`, // 🔵
-        "\u26AA":        `<tspan fill="#95a5a6">\u25CF</tspan>`, // ⚪
-        "\u23F8\uFE0F":  `<tspan fill="#95a5a6">\u23F8</tspan>`, // ⏸️
-      };
-      for (const [emoji, replacement] of Object.entries(emojiMap)) {
-        if (line.includes(emoji)) {
-          svgLine = svgLine.replace(escapeXml(emoji), replacement);
-        }
-      }
-      return `<text x="${padding}" y="${y}" fill="#dcddde" font-family="monospace" font-size="14">${svgLine}</text>`;
-    })
-    .join("\n");
+  const elements: string[] = [];
+
+  for (let i = 0; i < parsed.length; i++) {
+    const { dotColor, text, bold } = parsed[i];
+    const y = titleHeight + padding + i * lineHeight;
+    const textY = y + 15; // baseline offset
+
+    if (dotColor) {
+      // Draw a colored circle
+      elements.push(`<circle cx="${dotXCenter}" cy="${y + 11}" r="${dotRadius}" fill="${dotColor}"/>`);
+      elements.push(
+        `<text x="${textXWithDot}" y="${textY}" fill="#dcddde" font-family="DejaVu Sans, sans-serif" font-size="13">${escapeXml(text)}</text>`
+      );
+    } else {
+      const fill = bold ? "#ffffff" : "#dcddde";
+      const weight = bold ? ' font-weight="bold"' : "";
+      const size = bold ? "14" : "13";
+      elements.push(
+        `<text x="${textXNoDot}" y="${textY}" fill="${fill}" font-family="DejaVu Sans, sans-serif" font-size="${size}"${weight}>${escapeXml(text)}</text>`
+      );
+    }
+  }
+
+  // Strip emoji from title too
+  const cleanTitle = title.replace(/[^\x20-\x7E]/g, "").trim();
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-    <rect width="${width}" height="${height}" fill="#2f3136" rx="8"/>
-    <rect x="0" y="0" width="4" height="${height}" fill="${colorHex}" rx="2"/>
-    <text x="${padding + 4}" y="30" fill="#ffffff" font-family="sans-serif" font-size="18" font-weight="bold">${escapeXml(title)}</text>
-    ${textElements}
-  </svg>`;
+  <rect width="${width}" height="${height}" fill="#2f3136" rx="8"/>
+  <rect x="0" y="0" width="4" height="${height}" fill="${colorHex}" rx="2"/>
+  <text x="${padding + 6}" y="26" fill="#ffffff" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="bold">${escapeXml(cleanTitle)}</text>
+  ${elements.join("\n  ")}
+</svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
