@@ -95,23 +95,25 @@ export async function syncAllTickets(client: Client): Promise<void> {
         // Skip for "pending close" and "waiting for reply" — members were intentionally removed
         if (!isHiddenState(ticketInfo.state)) {
           try {
-            const thread = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
+            const thread = await client.channels.fetch(existing.thread_id, { force: true }) as ThreadChannel | null;
             if (thread?.isThread()) {
               // Recovery: if thread is archived but ticket is open, unarchive it.
-              // This catches threads left archived by race conditions or bot restarts.
+              // This catches threads left archived by race conditions, bot restarts,
+              // or Discord auto-archiving after inactivity.
               // Guard: only recover when BOTH the API AND the DB agree the ticket is
               // non-hidden/non-closed.  Without this, stale API list data (showing
               // "open" while a webhook already closed the ticket) could unarchive a
               // thread that was just correctly closed.
               if (thread.archived && !isClosedState(existing.state) && !isHiddenState(existing.state)) {
                 await discordQueue.add(async () => {
-                  await thread.edit({ archived: false, reason: "Ticket is open, recovering archived thread" });
+                  await thread.edit({ archived: false, locked: false, reason: "Ticket is open, recovering archived thread" });
                 });
-                logger.info({ ticketId: ticket.id }, "Recovered archived thread for open ticket");
+                logger.info({ ticketId: ticket.id, threadId: existing.thread_id }, "Recovered archived thread for open ticket");
               }
-              if (!thread.archived) {
-                await addRoleMembersToThread(thread);
-              }
+              // Always add members — the thread.archived property may be stale
+              // after edit(), and members need to be present for the thread to
+              // appear in agents' sidebar.
+              await addRoleMembersToThread(thread);
             }
           } catch (err) {
             logger.debug({ ticketId: ticket.id, err }, "Failed to sync role members to thread");
