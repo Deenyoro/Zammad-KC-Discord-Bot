@@ -1795,10 +1795,12 @@ export async function handleWeekly(interaction: ChatInputCommandInteraction) {
       },
     });
 
-    // Set to "pending reminder" with pending_time = end date at 23:59 UTC
+    // Set to "pending reminder" with pending_time = day after end date at 23:59 UTC
+    // (gives 1 extra day after the week ends to send out emails)
     const pendingState = await getStateByName("pending reminder");
     if (pendingState) {
       const pendingTime = new Date(endDate);
+      pendingTime.setUTCDate(pendingTime.getUTCDate() + 1);
       pendingTime.setUTCHours(23, 59, 0, 0);
       await updateTicket(ticket.id, {
         state_id: pendingState.id,
@@ -1811,7 +1813,7 @@ export async function handleWeekly(interaction: ChatInputCommandInteraction) {
     await interaction.editReply(
       `Weekly Check ticket created: **#${ticket.number}** — ${title}\n` +
       `Customer: ${customerEmail}\n` +
-      `State: pending reminder (until ${fmtDate(endDate)})\n` +
+      `State: pending reminder (until day after end: ${fmtDate(new Date(endDate.getTime() + 86400000))})\n` +
       ticketUrl(ticket.id)
     );
     logger.info({ ticketId: ticket.id, title, customerEmail }, "Weekly Check ticket created");
