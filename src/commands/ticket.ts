@@ -220,6 +220,7 @@ export async function handleState(interaction: ChatInputCommandInteraction) {
 function computeLockExpiry(code: string): string {
   const now = new Date();
   switch (code) {
+    case "15m": now.setMinutes(now.getMinutes() + 15); break;
     case "30m": now.setMinutes(now.getMinutes() + 30); break;
     case "2h": now.setHours(now.getHours() + 2); break;
     case "4h": now.setHours(now.getHours() + 4); break;

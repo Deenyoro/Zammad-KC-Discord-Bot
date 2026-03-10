@@ -136,6 +136,7 @@ export const lockCommand = new SlashCommandBuilder()
       .setDescription("Auto-unlock after this duration (omit for permanent lock)")
       .setRequired(false)
       .addChoices(
+        { name: "15 minutes", value: "15m" },
         { name: "30 minutes", value: "30m" },
         { name: "2 hours", value: "2h" },
         { name: "4 hours", value: "4h" },
