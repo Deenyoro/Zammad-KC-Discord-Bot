@@ -1,12 +1,16 @@
 /**
- * Daily keepalive sweep — posts a silent status embed in every open ticket thread.
+ * Keepalive & status refresh for ticket threads.
  *
- * Prevents Discord from hiding threads due to inactivity. Uses the
- * SUPPRESS_NOTIFICATIONS flag (4096) so agents are not pinged.
+ * Two mechanisms:
  *
- * If the previous message in the thread was also a status update from this bot,
- * it is deleted before posting the new one (avoids clutter). If there was any
- * other correspondence in between, the old status update is left in place.
+ * 1. **Daily keepalive** (KEEPALIVE_HOUR) — Posts a new status embed in every
+ *    open ticket thread once per day to prevent Discord from auto-archiving.
+ *
+ * 2. **Status refresh** (STATUS_REFRESH_MINUTES, default 60) — Edits the
+ *    existing status embed in place to keep "Last Activity" and contact info
+ *    current. Runs independently of the daily keepalive.
+ *
+ * Both use SUPPRESS_NOTIFICATIONS so agents are not pinged.
  */
 
 import {
@@ -16,7 +20,7 @@ import {
   ThreadChannel,
 } from "discord.js";
 import { logger } from "../util/logger.js";
-import { getAllTicketThreads, getSetting, getSettingOrEnv } from "../db/index.js";
+import { getAllTicketThreads, getSetting, getSettingOrEnv, setSetting } from "../db/index.js";
 import { getCurrentHourInTz } from "../util/timezone.js";
 import { getTicket, getArticles, getUser } from "./zammad.js";
 import { ticketUrl } from "./threads.js";
@@ -25,7 +29,8 @@ import { isClosedState, isHiddenState } from "../util/states.js";
 
 const STATUS_EMBED_FOOTER = "Daily status update — no action needed";
 
-let timer: ReturnType<typeof setInterval> | null = null;
+let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
 let lastPostedHour = -1;
 
 function getKeepaliveHour(): number | undefined {
@@ -35,8 +40,16 @@ function getKeepaliveHour(): number | undefined {
   return isNaN(n) || n < 0 || n > 23 ? undefined : n;
 }
 
+function getRefreshMinutes(): number {
+  const val = getSettingOrEnv("STATUS_REFRESH_MINUTES");
+  if (val === undefined) return 60; // default: every hour
+  const n = parseInt(val, 10);
+  return isNaN(n) || n < 1 ? 60 : n;
+}
+
 /**
- * Run the keepalive sweep for all non-closed, non-hidden ticket threads.
+ * Run the keepalive sweep — posts new status embeds (replacing old ones).
+ * This is the daily mechanism to prevent thread archiving.
  */
 export async function runKeepaliveSweep(client: Client): Promise<void> {
   const allThreads = getAllTicketThreads();
@@ -69,13 +82,18 @@ export async function runKeepaliveSweep(client: Client): Promise<void> {
       if (deletedPrevious) replaced++;
 
       // Send the new status update with SUPPRESS_NOTIFICATIONS flag
-      await discordQueue.add(async () => {
-        await thread.send({
+      const newMsg = (await discordQueue.add(async () =>
+        thread.send({
           embeds: [embed],
           flags: 4096, // SUPPRESS_NOTIFICATIONS
           allowedMentions: { parse: [] },
-        } as any);
-      });
+        } as any)
+      )) as Message | undefined;
+
+      // Track the message ID so the refresh timer can edit it in place
+      if (newMsg) {
+        setSetting(`keepalive:msg:${mapping.thread_id}`, newMsg.id);
+      }
 
       posted++;
     } catch (err) {
@@ -85,6 +103,57 @@ export async function runKeepaliveSweep(client: Client): Promise<void> {
   }
 
   logger.info({ posted, replaced, failed }, "Keepalive sweep complete");
+}
+
+/**
+ * Refresh sweep — edits existing status embeds in place with fresh data.
+ * Does NOT post new messages or prevent archiving — that's the daily keepalive's job.
+ */
+async function runRefreshSweep(client: Client): Promise<void> {
+  const allThreads = getAllTicketThreads();
+  const targets = allThreads.filter(
+    (t) => !isClosedState(t.state) && !isHiddenState(t.state)
+  );
+
+  let refreshed = 0;
+  let failed = 0;
+
+  for (const mapping of targets) {
+    const storedMsgId = getSetting(`keepalive:msg:${mapping.thread_id}`);
+    if (!storedMsgId) continue; // no status embed to refresh
+
+    try {
+      const thread = (await client.channels.fetch(mapping.thread_id, {
+        force: true,
+      })) as ThreadChannel | null;
+
+      if (!thread?.isThread()) continue;
+
+      // Only refresh if the status embed is still the last message
+      const lastMessages = await thread.messages.fetch({ limit: 1, cache: false });
+      const lastMsg = lastMessages.first();
+      if (!lastMsg || lastMsg.id !== storedMsgId) continue;
+
+      // Verify it's actually our status embed
+      if (lastMsg.author.id !== client.user?.id) continue;
+      if (!lastMsg.embeds[0] || lastMsg.embeds[0].footer?.text !== STATUS_EMBED_FOOTER) continue;
+
+      const embed = await buildStatusEmbed(mapping.ticket_id, mapping.ticket_number, mapping.title);
+
+      await discordQueue.add(async () => {
+        await lastMsg.edit({ embeds: [embed] });
+      });
+
+      refreshed++;
+    } catch (err) {
+      failed++;
+      logger.debug({ ticketId: mapping.ticket_id, err }, "Refresh: failed to update status embed");
+    }
+  }
+
+  if (refreshed > 0 || failed > 0) {
+    logger.info({ refreshed, failed }, "Status refresh sweep complete");
+  }
 }
 
 async function buildStatusEmbed(
@@ -98,11 +167,15 @@ async function buildStatusEmbed(
   let customer = "Unknown";
   let createdAt = "Unknown";
   let lastActivityDesc = "No articles";
+  const contacts: string[] = [];
 
   try {
     const ticket = await getTicket(ticketId);
     state = ticket.state;
     createdAt = formatDate(ticket.created_at);
+
+    // Collect contact info from customer and owner
+    const seenContacts = new Set<string>();
 
     if (ticket.owner_id && ticket.owner_id > 1) {
       try {
@@ -117,12 +190,34 @@ async function buildStatusEmbed(
       try {
         const customerUser = await getUser(ticket.customer_id);
         customer = `${customerUser.firstname} ${customerUser.lastname}`.trim() || ticket.customer || "Unknown";
+        // Collect customer contact info
+        if (customerUser.email) {
+          const key = customerUser.email.toLowerCase();
+          if (!seenContacts.has(key)) {
+            seenContacts.add(key);
+            contacts.push(`\u2709 ${customerUser.email}`);
+          }
+        }
+        if (customerUser.phone) {
+          const key = customerUser.phone.replace(/\s/g, "");
+          if (!seenContacts.has(key)) {
+            seenContacts.add(key);
+            contacts.push(`\u260E ${customerUser.phone}`);
+          }
+        }
+        if (customerUser.mobile && customerUser.mobile !== customerUser.phone) {
+          const key = customerUser.mobile.replace(/\s/g, "");
+          if (!seenContacts.has(key)) {
+            seenContacts.add(key);
+            contacts.push(`\uD83D\uDCF1 ${customerUser.mobile}`);
+          }
+        }
       } catch {
         customer = ticket.customer || "Unknown";
       }
     }
 
-    // Get last article for activity info
+    // Get articles for activity info and additional contacts
     try {
       const articles = await getArticles(ticketId);
       if (articles.length > 0) {
@@ -131,6 +226,48 @@ async function buildStatusEmbed(
         const timeAgo = formatTimeAgo(last.created_at);
         const typeLabel = last.type === "note" ? "internal note" : last.type;
         lastActivityDesc = `${typeLabel} by ${sender} — ${timeAgo}`;
+
+        // Collect email/phone contacts from article to/from/cc fields
+        for (const a of articles) {
+          if (a.sender === "System") continue;
+          for (const field of [a.from, a.to, a.cc]) {
+            if (!field) continue;
+            for (const part of field.split(",")) {
+              const trimmed = part.trim();
+              // Extract email addresses
+              const emailMatch = trimmed.match(/<([^>]+@[^>]+)>/) || trimmed.match(/^([^\s<]+@[^\s>]+)$/);
+              if (emailMatch) {
+                const key = emailMatch[1].toLowerCase();
+                if (!seenContacts.has(key)) {
+                  seenContacts.add(key);
+                  contacts.push(`\u2709 ${emailMatch[1]}`);
+                }
+              }
+            }
+          }
+
+          // Detect Teams channel from article preferences
+          const prefs = a.preferences as Record<string, any> | undefined;
+          if (prefs?.teams_chat?.conversation_id) {
+            const teamsKey = `teams:${prefs.teams_chat.conversation_id}`;
+            if (!seenContacts.has(teamsKey)) {
+              seenContacts.add(teamsKey);
+              const teamsName = prefs.teams_chat.display_name || "Teams Chat";
+              contacts.push(`\uD83D\uDCAC ${teamsName}`);
+            }
+          }
+
+          // Detect SMS/phone from article type
+          if ((a.type === "sms" || a.type === "ringcentral sms") && a.to) {
+            for (const part of a.to.split(",")) {
+              const phone = part.trim().replace(/[^\d+]/g, "");
+              if (phone.length >= 7 && !seenContacts.has(phone)) {
+                seenContacts.add(phone);
+                contacts.push(`\uD83D\uDCF1 ${part.trim()}`);
+              }
+            }
+          }
+        }
       }
     } catch {
       // non-critical
@@ -143,6 +280,16 @@ async function buildStatusEmbed(
     ? title.length > 60 ? title.slice(0, 57) + "..." : title
     : "Untitled";
 
+  // Build contact section (cap at 8 to avoid embed bloat)
+  let contactSection = "";
+  if (contacts.length > 0) {
+    const displayContacts = contacts.slice(0, 8);
+    contactSection = `\n**Contacts:** ${displayContacts.join(" | ")}`;
+    if (contacts.length > 8) {
+      contactSection += ` *(+${contacts.length - 8} more)*`;
+    }
+  }
+
   return new EmbedBuilder()
     .setTitle("Ticket Status Update")
     .setDescription(
@@ -151,7 +298,8 @@ async function buildStatusEmbed(
       `**Assignee:** ${owner}\n` +
       `**Customer:** ${customer}\n` +
       `**Created:** ${createdAt}\n` +
-      `**Last Activity:** ${lastActivityDesc}`
+      `**Last Activity:** ${lastActivityDesc}` +
+      contactSection
     )
     .setColor(0x3498db) // blue
     .setFooter({ text: STATUS_EMBED_FOOTER })
@@ -222,7 +370,8 @@ function formatTimeAgo(iso: string): string {
 }
 
 export function startKeepalive(client: Client): void {
-  timer = setInterval(() => {
+  // 1. Daily keepalive — posts new status embeds once per day
+  keepaliveTimer = setInterval(() => {
     const hour = getKeepaliveHour();
     if (hour === undefined) return;
 
@@ -234,11 +383,24 @@ export function startKeepalive(client: Client): void {
       );
     }
   }, 60_000);
+
+  // 2. Status refresh — edits existing embeds in place on a configurable interval
+  const refreshMs = getRefreshMinutes() * 60_000;
+  logger.info({ refreshMinutes: getRefreshMinutes() }, "Status refresh timer started");
+  refreshTimer = setInterval(() => {
+    runRefreshSweep(client).catch((err) =>
+      logger.error({ err }, "Status refresh sweep failed")
+    );
+  }, refreshMs);
 }
 
 export function stopKeepalive(): void {
-  if (timer) {
-    clearInterval(timer);
-    timer = null;
+  if (keepaliveTimer) {
+    clearInterval(keepaliveTimer);
+    keepaliveTimer = null;
+  }
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
   }
 }

@@ -128,6 +128,25 @@ export const setupCommand = new SlashCommandBuilder()
   )
   .addSubcommand((sc) =>
     sc
+      .setName("status-refresh")
+      .setDescription("Set how often ticket status embeds refresh (minutes, default 60)")
+      .addIntegerOption((o) =>
+        o.setName("minutes").setDescription("Refresh interval in minutes (default: 60)").setRequired(true).setMinValue(5).setMaxValue(1440)
+      )
+  )
+  .addSubcommand((sc) =>
+    sc
+      .setName("checknote")
+      .setDescription("Configure the bot and channel for /checknote status snapshots")
+      .addStringOption((o) =>
+        o.setName("bot_id").setDescription("Discord user ID of the status bot").setRequired(false)
+      )
+      .addChannelOption((o) =>
+        o.setName("channel").setDescription("Channel where the status board lives").setRequired(false)
+      )
+  )
+  .addSubcommand((sc) =>
+    sc
       .setName("attachments")
       .setDescription("Configure attachment size limits (view current or set new values)")
       .addNumberOption((o) =>
@@ -179,6 +198,10 @@ export async function handleSetupCommand(
         return await handleWeeklyEmailSetup(interaction);
       case "attachments":
         return await handleAttachmentsSetup(interaction);
+      case "checknote":
+        return await handleChecknoteSetup(interaction);
+      case "status-refresh":
+        return await handleStatusRefreshSetup(interaction);
       default:
         await interaction.reply({ content: "Unknown subcommand.", ephemeral: true });
     }
@@ -397,4 +420,47 @@ async function handleWeeklyEmailSetup(interaction: ChatInputCommandInteraction) 
   setSetting("WEEKLY_CHECK_EMAIL", email);
   await interaction.reply({ content: `Weekly Check ticket customer set to **${email}**.`, ephemeral: true });
   logger.info({ email }, "Weekly check email configured");
+}
+
+async function handleChecknoteSetup(interaction: ChatInputCommandInteraction) {
+  const botId = interaction.options.getString("bot_id");
+  const channel = interaction.options.getChannel("channel");
+
+  if (!botId && !channel) {
+    // Show current settings
+    const currentBot = getSetting("CHECKNOTE_BOT_ID") ?? "not set";
+    const currentChannel = getSetting("CHECKNOTE_CHANNEL_ID") ?? "not set";
+    await interaction.reply({
+      content: `**Current /checknote config:**\nBot ID: \`${currentBot}\`\nChannel: ${currentChannel !== "not set" ? `<#${currentChannel}>` : "not set"}`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const changes: string[] = [];
+
+  if (botId) {
+    setSetting("CHECKNOTE_BOT_ID", botId.trim());
+    changes.push(`Bot ID: \`${botId.trim()}\``);
+  }
+  if (channel) {
+    setSetting("CHECKNOTE_CHANNEL_ID", channel.id);
+    changes.push(`Channel: <#${channel.id}>`);
+  }
+
+  await interaction.reply({
+    content: `Checknote config updated:\n${changes.join("\n")}`,
+    ephemeral: true,
+  });
+  logger.info({ botId, channelId: channel?.id }, "Checknote settings updated");
+}
+
+async function handleStatusRefreshSetup(interaction: ChatInputCommandInteraction) {
+  const minutes = interaction.options.getInteger("minutes", true);
+  setSetting("STATUS_REFRESH_MINUTES", String(minutes));
+  await interaction.reply({
+    content: `Status embed refresh interval set to **${minutes} minutes**. Restart the bot for the new interval to take effect.`,
+    ephemeral: true,
+  });
+  logger.info({ minutes }, "Status refresh interval updated");
 }
