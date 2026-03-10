@@ -684,11 +684,15 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // Apply to override — forces email type since we have an explicit email address
+  // Apply to override — only for email tickets; silently ignored for SMS/Teams
+  let toIgnored = false;
   if (toOverride) {
-    channel.to = toOverride.trim();
-    channel.type = "email";
-    channel.label = `email to ${toOverride.trim()}`;
+    if (channel.type === "email") {
+      channel.to = toOverride.trim();
+      channel.label = `email to ${toOverride.trim()}`;
+    } else {
+      toIgnored = true;
+    }
   }
 
   // Get user mapping for attribution
@@ -787,10 +791,11 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
 
   const fileSuffix = fileOption ? ` with attachment "${fileOption.name}"${convertedLabel}` : "";
   const ccSuffix = cc ? ` (CC: ${cc})` : "";
-  const ccWarning = ccIgnored ? "\n⚠️ CC was ignored — only supported for email tickets." : "";
+  const toWarning = toIgnored ? "\n⚠️ `to:` was ignored — only supported for email tickets." : "";
+  const ccWarning = ccIgnored ? "\n⚠️ `cc:` was ignored — only supported for email tickets." : "";
   const tmSuffix = expandedModules.length > 0 ? `\n📝 Expanded: ${expandedModules.join(", ")}` : "";
   await interaction.editReply(
-    `Reply sent (${channel.label})${fileSuffix}${ccSuffix} on ticket #${mapping.ticket_number}.${ccWarning}${tmSuffix}`
+    `Reply sent (${channel.label})${fileSuffix}${ccSuffix} on ticket #${mapping.ticket_number}.${toWarning}${ccWarning}${tmSuffix}`
   );
 }
 
@@ -1103,6 +1108,7 @@ export async function handleNewTicket(interaction: ChatInputCommandInteraction) 
   const to = interaction.options.getString("to", true);
   const subject = interaction.options.getString("subject", true);
   const rawBody = interaction.options.getString("body", true);
+  const sendOption = interaction.options.getBoolean("send");
 
   // Expand ::shortcut text modules before sending
   const { expanded: body, contentType: newTicketContentType } = await expandTextModules(rawBody);
@@ -1137,7 +1143,11 @@ export async function handleNewTicket(interaction: ChatInputCommandInteraction) 
         break;
 
       case "sms":
-        ticket = await createSmsConversation({ phone_number: to, body });
+        ticket = await createSmsConversation({
+          phone_number: to,
+          body,
+          skip_send: sendOption === false ? true : undefined,
+        });
         break;
 
       case "phone":
