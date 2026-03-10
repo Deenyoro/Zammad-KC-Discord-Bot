@@ -148,11 +148,16 @@ async function tryUpdateExisting(
   embed: EmbedBuilder
 ): Promise<boolean> {
   try {
-    const thread = (await client.channels.fetch(threadId)) as ThreadChannel | null;
-    if (!thread?.isThread()) return false;
+    // Force-fetch (bypass cache) to get current archived state
+    const thread = (await client.channels.fetch(threadId, { force: true })) as ThreadChannel | null;
+    if (!thread?.isThread()) {
+      logger.warn({ threadId }, "Dashboard thread not found or not a thread");
+      return false;
+    }
 
-    // Ensure thread is unarchived so agents can see it
-    if (thread.archived) {
+    // Always unarchive — Discord may auto-archive after inactivity
+    if (thread.archived || thread.locked) {
+      logger.info({ threadId, archived: thread.archived, locked: thread.locked }, "Unarchiving dashboard thread");
       await discordQueue.add(async () => {
         await thread.edit({
           archived: false,
@@ -170,6 +175,7 @@ async function tryUpdateExisting(
       });
     } catch {
       // Message was deleted — post a new one and update the stored ID
+      logger.info({ threadId }, "Dashboard embed message missing, posting new one");
       const newMsg = (await discordQueue.add(async () =>
         thread.send({ embeds: [embed] })
       )) as Message | undefined;
@@ -180,7 +186,7 @@ async function tryUpdateExisting(
 
     return true;
   } catch (err) {
-    logger.debug({ err, threadId }, "Dashboard thread no longer accessible");
+    logger.warn({ err, threadId }, "Dashboard thread no longer accessible");
     return false;
   }
 }
@@ -213,6 +219,13 @@ async function createDashboardThread(
       reason: "Persistent dashboard for waiting-for-reply tickets",
     })
   )) as ThreadChannel | undefined;
+
+  // Pin the header message so the dashboard is easy to find
+  try {
+    await discordQueue.add(async () => { await headerMsg.pin(); });
+  } catch {
+    // Non-critical — pin limit may be reached
+  }
   if (!thread) return;
 
   // Post the embed inside the thread
