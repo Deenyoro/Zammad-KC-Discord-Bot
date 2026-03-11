@@ -38,6 +38,7 @@ import {
 import { ticketUrl, closeTicketThread, removeRoleMembersFromThread, renameTicketThread, formatOwnerLabel } from "../services/threads.js";
 import { discordQueue } from "../queue/index.js";
 import { parseTime } from "../util/parseTime.js";
+import { formatInBotTz, getBotTimezone } from "../util/timezone.js";
 import { truncate, splitMessage } from "../util/truncate.js";
 import { env } from "../util/env.js";
 import { getAttachmentLimits } from "../util/attachmentLimits.js";
@@ -256,8 +257,7 @@ export async function handleLock(interaction: ChatInputCommandInteraction) {
       await closeTicketThread(interaction.client, mapping.thread_id);
     }
 
-    const expiryDate = new Date(pendingTime);
-    const expiryStr = expiryDate.toLocaleString();
+    const expiryStr = formatInBotTz(pendingTime);
     await interaction.editReply(
       `${interaction.user} locked ticket #${mapping.ticket_number} until ${expiryStr}. It will auto-unlock after that.`
     );
@@ -1018,7 +1018,7 @@ export async function handleHistory(interaction: ChatInputCommandInteraction) {
   // Show last 15 entries
   const recent = history.slice(-15);
   const lines = recent.map((h) => {
-    const ts = new Date(h.created_at).toLocaleString();
+    const ts = formatInBotTz(h.created_at);
     if (h.attribute && h.value_from !== undefined) {
       return `\`${ts}\` **${h.attribute}**: ${h.value_from || "(empty)"} → ${h.value_to || "(empty)"}`;
     }
@@ -1064,8 +1064,10 @@ export async function handleSchedule(interaction: ChatInputCommandInteraction) {
     content_type: contentType,
   });
 
+  const tz = getBotTimezone();
+  const tzLabel = tz ? ` (${tz})` : "";
   await interaction.editReply(
-    `Reply scheduled for ${new Date(scheduledAt).toLocaleString()} on ticket #${mapping.ticket_number}.`
+    `Reply scheduled for **${formatInBotTz(scheduledAt)}**${tzLabel} on ticket #${mapping.ticket_number}.`
   );
 }
 
@@ -1083,7 +1085,7 @@ export async function handleSchedules(interaction: ChatInputCommandInteraction) 
 
   const lines = articles.map(
     (a) =>
-      `**ID ${a.id}** — ${new Date(a.scheduled_at).toLocaleString()} [${a.article_data?.type || "note"}]: ${truncate(a.article_data?.body?.replace(/<[^>]+>/g, "") || "(empty)", 80)}`
+      `**ID ${a.id}** — ${formatInBotTz(a.scheduled_at)} [${a.article_data?.type || "note"}]: ${truncate(a.article_data?.body?.replace(/<[^>]+>/g, "") || "(empty)", 80)}`
   );
   await interaction.editReply(truncate(lines.join("\n"), 2000));
 }
