@@ -264,6 +264,9 @@ export async function sendToThread(
   const wasArchived = thread.archived;
   const wasLocked = thread.locked;
   if (wasArchived) {
+    logger.debug({ threadId, wasArchived, wasLocked }, "sendToThread: thread is archived, temporarily unarchiving");
+  }
+  if (wasArchived) {
     await discordQueue.add(async () => {
       await thread.edit({
         archived: false,

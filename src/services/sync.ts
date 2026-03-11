@@ -318,6 +318,18 @@ async function processWebhook(
   // payload (e.g. for internal notes), so we must not gate on webhookArticle.
   await syncAllUnsyncedArticles(client, mapping.thread_id, ticketId);
 
+  // FALLBACK: Zammad fires webhooks before the DB transaction commits, so the
+  // article may not be in the API response yet when syncAllUnsyncedArticles
+  // fetches articles. If the webhook included an article and it's STILL not
+  // synced after the API fetch, post it directly from the webhook payload.
+  if (webhookArticle && !isArticleSynced(webhookArticle.id)) {
+    logger.warn(
+      { ticketId, articleId: webhookArticle.id },
+      "Webhook article missing from API response — using webhook payload as fallback"
+    );
+    await syncWebhookArticleFallback(client, mapping.thread_id, ticketId, webhookArticle);
+  }
+
   // Update the Other Tickets dashboard (state may have changed)
   await updateDashboards(client);
 }
@@ -347,6 +359,14 @@ export async function syncAllUnsyncedArticles(
 
   // Sort explicitly by ID to guarantee chronological order regardless of API behavior.
   articles.sort((a: { id: number }, b: { id: number }) => a.id - b.id);
+
+  const articleIds = articles.map((a: { id: number }) => a.id);
+  const alreadySynced = articleIds.filter((id: number) => isArticleSynced(id));
+  const unsynced = articleIds.filter((id: number) => !isArticleSynced(id));
+  logger.info(
+    { ticketId, total: articles.length, alreadySynced: alreadySynced.length, unsynced: unsynced.length, unsyncedIds: unsynced },
+    "Article sync check"
+  );
 
   // Track whether we've already synced a non-system article for this ticket.
   // The first article gets the full email body; subsequent ones strip the
@@ -462,6 +482,96 @@ export async function syncAllUnsyncedArticles(
       "Synced article to Discord"
     );
   }
+}
+
+/**
+ * Fallback: sync a webhook article directly from the webhook payload when it
+ * wasn't returned by the Zammad articles API (race condition — Zammad fires
+ * webhooks before the DB transaction commits).
+ */
+async function syncWebhookArticleFallback(
+  client: Client,
+  threadId: string,
+  ticketId: number,
+  webhookArticle: NonNullable<WebhookPayload["article"]>,
+): Promise<void> {
+  // Skip system articles
+  if (webhookArticle.sender === "System") {
+    markArticleSynced(webhookArticle.id, ticketId, threadId, null, "zammad_to_discord");
+    return;
+  }
+
+  const prefix = webhookArticle.internal ? "**[Internal]** " : "";
+  const fromName = extractDisplayName(webhookArticle.from);
+  const senderLabel = fromName
+    ? `${fromName} (${webhookArticle.sender})`
+    : webhookArticle.sender;
+
+  let content: string;
+  if (webhookArticle.type === "email") {
+    content = formatEmailArticle(webhookArticle.body, senderLabel, prefix, true);
+  } else {
+    const body = stripHtml(webhookArticle.body);
+    content = `**${senderLabel}:** ${prefix}${body}`;
+  }
+
+  // Process attachments from webhook payload
+  const limits = getAttachmentLimits();
+  const LARGE_FILE_THRESHOLD = limits.perFileBytes;
+  const MAX_TOTAL_DOWNLOAD_BYTES = limits.totalBytes;
+  const MAX_DISCORD_ATTACHMENTS = limits.maxCount;
+  let totalDownloaded = 0;
+  const attachments: { data: Buffer; filename: string }[] = [];
+  const largeFileLinks: string[] = [];
+  const zammadBase = env().ZAMMAD_PUBLIC_URL ?? env().ZAMMAD_BASE_URL;
+
+  if (webhookArticle.attachments?.length) {
+    for (const att of webhookArticle.attachments) {
+      const attSize = Number.isFinite(att.size) ? att.size : 0;
+      if (attSize < 10 && attSize > 0) continue;
+      if (attSize > LARGE_FILE_THRESHOLD) {
+        const sizeMB = (attSize / 1024 / 1024).toFixed(1);
+        largeFileLinks.push(`[${att.filename} (${sizeMB} MB)](${zammadBase}/#ticket/zoom/${ticketId}/${webhookArticle.id})`);
+        continue;
+      }
+      if (attachments.length >= MAX_DISCORD_ATTACHMENTS) break;
+      if (attSize > 0 && totalDownloaded + attSize > MAX_TOTAL_DOWNLOAD_BYTES) {
+        const sizeMB = (attSize / 1024 / 1024).toFixed(1);
+        largeFileLinks.push(`[${att.filename} (${sizeMB} MB)](${zammadBase}/#ticket/zoom/${ticketId}/${webhookArticle.id})`);
+        continue;
+      }
+      try {
+        const downloaded = await downloadAttachment(ticketId, webhookArticle.id, att.id);
+        const filename = ensureFileExtension(att.filename, downloaded.contentType);
+        attachments.push({ data: downloaded.data, filename });
+        totalDownloaded += downloaded.data.length;
+      } catch (err) {
+        if (attSize === 0) {
+          largeFileLinks.push(`[${att.filename} (? MB)](${zammadBase}/#ticket/zoom/${ticketId}/${webhookArticle.id})`);
+        }
+        logger.warn({ articleId: webhookArticle.id, attachmentId: att.id, err }, "Failed to download attachment (fallback)");
+      }
+    }
+  }
+
+  let finalContent = content;
+  if (largeFileLinks.length > 0) {
+    finalContent += `\n📎 **Attachments in Zammad:**\n${largeFileLinks.join("\n")}`;
+  }
+
+  const discordMsgId = await sendToThread(client, threadId, finalContent, attachments);
+  if (!discordMsgId) {
+    logger.error(
+      { ticketId, articleId: webhookArticle.id },
+      "Webhook article fallback: sendToThread returned null — will retry on next backfill"
+    );
+    return;
+  }
+  markArticleSynced(webhookArticle.id, ticketId, threadId, discordMsgId, "zammad_to_discord");
+  logger.info(
+    { ticketId, articleId: webhookArticle.id, discordMsgId },
+    "Synced article to Discord (webhook fallback)"
+  );
 }
 
 /** Ensure a filename has a proper extension based on content type. */
