@@ -807,6 +807,156 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
 }
 
 // ---------------------------------------------------------------
+// /replyall command handler — replies to all To + CC from last email
+// ---------------------------------------------------------------
+
+export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply({ ephemeral: true });
+
+  const rawText = interaction.options.getString("text", true);
+  const fileOption = interaction.options.getAttachment("file");
+  const convertOption = interaction.options.getString("convert") as ConvertTarget | null;
+
+  // Expand ::shortcut text modules before sending
+  const { expanded: text, contentType, used: expandedModules } = await expandTextModules(rawText);
+
+  // Find the last email article to extract recipients
+  const articles = await getArticles(mapping.ticket_id);
+  const lastEmail = [...articles].reverse().find(
+    (a) => a.type === "email" && (a.sender === "Customer" || a.sender === "Agent")
+  );
+
+  if (!lastEmail) {
+    await interaction.editReply("No email articles found on this ticket. Use `/reply` instead.");
+    return;
+  }
+
+  // Get the ticket's customer email (this is who we always reply TO)
+  const ticket = await getTicket(mapping.ticket_id);
+  let customerEmail: string | undefined;
+  if (ticket.customer_id) {
+    try {
+      const customer = await getUser(ticket.customer_id);
+      customerEmail = customer.email?.toLowerCase();
+    } catch { /* ignore */ }
+  }
+
+  if (!customerEmail) {
+    await interaction.editReply("Could not determine customer email address.");
+    return;
+  }
+
+  // Collect all unique email addresses from the last email's to/cc/from fields
+  // We'll put the customer in TO and everyone else in CC
+  const allAddresses = new Set<string>();
+
+  for (const field of [lastEmail.from, lastEmail.to, lastEmail.cc]) {
+    if (!field) continue;
+    for (const part of field.split(",")) {
+      const email = parseEmailAddress(part.trim());
+      if (email) allAddresses.add(email.toLowerCase());
+    }
+  }
+
+  // Remove the customer (goes in TO) and our own support addresses
+  // Get agent emails from user_map to exclude them too
+  const agentEmail = getUserMap(interaction.user.id)?.zammad_email?.toLowerCase();
+  const excludeSet = new Set<string>();
+  excludeSet.add(customerEmail);
+  if (agentEmail) excludeSet.add(agentEmail);
+
+  // Exclude any Zammad system/channel email addresses (common support@ addresses)
+  // by checking if the address matches the "from" of any agent article
+  for (const a of articles) {
+    if (a.sender === "Agent" && a.from) {
+      const agentFrom = parseEmailAddress(a.from);
+      if (agentFrom) excludeSet.add(agentFrom.toLowerCase());
+    }
+  }
+
+  const ccAddresses = [...allAddresses].filter((e) => !excludeSet.has(e));
+
+  const to = customerEmail;
+  const cc = ccAddresses.length > 0 ? ccAddresses.join(", ") : undefined;
+
+  // Get user mapping for attribution
+  const userEntry = getUserMap(interaction.user.id);
+
+  // Download attachment (same logic as /reply)
+  const replyFileLimit = getAttachmentLimits().perFileBytes;
+  let attachments: ArticleAttachment[] | undefined;
+  let convertedLabel = "";
+  if (fileOption) {
+    if (fileOption.size > replyFileLimit) {
+      logger.warn({ filename: fileOption.name, size: fileOption.size, limit: replyFileLimit }, "Skipping oversized reply attachment");
+    } else {
+      try {
+        const res = await fetch(fileOption.url, { signal: AbortSignal.timeout(60_000) });
+        let buf = Buffer.from(await res.arrayBuffer());
+        if (buf.byteLength > replyFileLimit) {
+          logger.warn({ filename: fileOption.name, actual: buf.byteLength }, "Reply attachment larger than declared");
+        } else {
+          let finalName = fileOption.name;
+          let finalMime = fileOption.contentType || "application/octet-stream";
+
+          if (convertOption && canConvert(fileOption.name, convertOption)) {
+            const converted = await convertFile(buf, fileOption.name, convertOption);
+            if (converted) {
+              buf = Buffer.from(converted.data) as typeof buf;
+              finalName = converted.filename;
+              finalMime = converted.mimeType;
+              convertedLabel = ` (converted to ${convertOption.toUpperCase()})`;
+            } else {
+              logger.warn({ filename: fileOption.name, target: convertOption }, "Conversion unavailable, using original");
+            }
+          }
+
+          if (buf.byteLength > replyFileLimit) {
+            logger.warn({ filename: finalName, size: buf.byteLength }, "Converted file exceeds size limit, using original");
+            const origRes = await fetch(fileOption.url, { signal: AbortSignal.timeout(60_000) });
+            buf = Buffer.from(await origRes.arrayBuffer());
+            finalName = fileOption.name;
+            finalMime = fileOption.contentType || "application/octet-stream";
+            convertedLabel = "";
+          }
+
+          attachments = [{
+            filename: finalName,
+            data: buf.toString("base64"),
+            "mime-type": finalMime,
+          }];
+        }
+      } catch (err) {
+        logger.warn({ err, filename: fileOption.name }, "Failed to download Discord attachment");
+      }
+    }
+  }
+
+  await createArticle({
+    ticket_id: mapping.ticket_id,
+    body: text,
+    subject: mapping.title || undefined,
+    type: "email",
+    sender: "Agent",
+    internal: false,
+    content_type: contentType,
+    to,
+    cc,
+    origin_by_id: userEntry?.zammad_id ?? undefined,
+    attachments,
+  });
+
+  const fileSuffix = fileOption ? ` with attachment "${fileOption.name}"${convertedLabel}` : "";
+  const ccSuffix = cc ? `\nCC: ${cc}` : "";
+  const tmSuffix = expandedModules.length > 0 ? `\n📝 Expanded: ${expandedModules.join(", ")}` : "";
+  await interaction.editReply(
+    `Reply-all sent to ${to}${ccSuffix}${fileSuffix} on ticket #${mapping.ticket_number}.${tmSuffix}`
+  );
+}
+
+// ---------------------------------------------------------------
 // /pending command handler
 // ---------------------------------------------------------------
 
