@@ -2,6 +2,7 @@ import { Client, Events } from "discord.js";
 import { logger } from "../util/logger.js";
 import {
   handleReply,
+  handleReplyAll,
   handleNote,
   handlePending,
   handleClose,
@@ -64,6 +65,9 @@ export function onInteractionCreate(client: Client): void {
           break;
         case "reply":
           await handleReply(interaction);
+          break;
+        case "replyall":
+          await handleReplyAll(interaction);
           break;
         case "note":
           await handleNote(interaction);

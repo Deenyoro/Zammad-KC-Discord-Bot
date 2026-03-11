@@ -26,6 +26,26 @@ export const replyCommand = new SlashCommandBuilder()
       )
   );
 
+export const replyallCommand = new SlashCommandBuilder()
+  .setName("replyall")
+  .setDescription("Reply to all recipients (To + CC) from the last email")
+  .addStringOption((o) =>
+    o.setName("text").setDescription("Reply text").setRequired(true)
+  )
+  .addAttachmentOption((o) =>
+    o.setName("file").setDescription("Attach a file (image, document, etc.)").setRequired(false)
+  )
+  .addStringOption((o) =>
+    o
+      .setName("convert")
+      .setDescription("Convert the attached file (e.g. webp→png, docx→pdf)")
+      .setRequired(false)
+      .addChoices(
+        { name: "to PNG (images: webp, jpg, gif, bmp, tiff)", value: "png" },
+        { name: "to PDF (docs: docx, doc, odt, xlsx, pptx)", value: "pdf" }
+      )
+  );
+
 export const noteCommand = new SlashCommandBuilder()
   .setName("note")
   .setDescription("Add an internal note to the ticket")

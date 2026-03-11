@@ -14,6 +14,7 @@ import { setupCommand } from "./commands/setup.js";
 import { helpCommand } from "./commands/help.js";
 import {
   replyCommand,
+  replyallCommand,
   noteCommand,
   closeCommand,
   assignCommand,
@@ -54,6 +55,7 @@ async function deployCommands() {
     setupCommand.toJSON(),
     helpCommand.toJSON(),
     replyCommand.toJSON(),
+    replyallCommand.toJSON(),
     noteCommand.toJSON(),
     closeCommand.toJSON(),
     assignCommand.toJSON(),
