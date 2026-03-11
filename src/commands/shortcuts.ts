@@ -83,6 +83,8 @@ export const stateCommand = new SlashCommandBuilder()
       .addChoices(
         { name: "open", value: "open" },
         { name: "waiting for reply", value: "waiting for reply" },
+        { name: "on-site", value: "on-site" },
+        { name: "project", value: "project" },
         { name: "pending reminder", value: "pending reminder" },
         { name: "pending close", value: "pending close" },
         { name: "closed", value: "closed" },
