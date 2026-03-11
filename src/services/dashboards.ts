@@ -180,14 +180,8 @@ async function tryUpdateExisting(
       return false;
     }
 
-    // Rename thread if it still has the old name
-    if (thread.name !== "Other Tickets") {
-      await discordQueue.add(async () => {
-        await thread.setName("Other Tickets", "Renamed from Waiting for Reply to Other Tickets");
-      });
-      logger.info({ threadId }, "Renamed dashboard thread to Other Tickets");
-    }
-
+    // Unarchive FIRST so subsequent operations (rename, message edit) succeed.
+    // Discord rejects edits on archived threads.
     if (thread.archived || thread.locked) {
       await discordQueue.add(async () => {
         await thread.edit({
@@ -196,6 +190,14 @@ async function tryUpdateExisting(
           reason: "Other Tickets dashboard has tickets",
         });
       });
+    }
+
+    // Rename thread if it still has the old name (must happen after unarchive)
+    if (thread.name !== "Other Tickets") {
+      await discordQueue.add(async () => {
+        await thread.setName("Other Tickets", "Renamed from Waiting for Reply to Other Tickets");
+      });
+      logger.info({ threadId }, "Renamed dashboard thread to Other Tickets");
     }
 
     await addRoleMembersToThread(thread).catch((err) =>
