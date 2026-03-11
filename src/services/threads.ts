@@ -74,6 +74,10 @@ function stateColor(state: string): number {
       return 0x2ecc71; // green
     case "waiting for reply":
       return 0xe67e22; // orange - awaiting customer response
+    case "on-site":
+      return 0x9b59b6; // purple - on-site work required
+    case "project":
+      return 0x3498db; // blue - project ticket
     case "pending reminder":
     case "pending close":
       return 0xf39c12; // amber

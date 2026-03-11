@@ -7,7 +7,7 @@ import type { FastifyInstance } from "fastify";
 import type { Client } from "discord.js";
 import { EmbedBuilder, ThreadChannel } from "discord.js";
 import { getAllTicketThreads, getSetting, setSetting } from "../../db/index.js";
-import { isClosedState, isHiddenState } from "../../util/states.js";
+import { isClosedState, isHiddenState, DASHBOARD_STATES } from "../../util/states.js";
 import { runKeepaliveSweep } from "../../services/keepalive.js";
 
 export function registerDebugRoutes(app: FastifyInstance, client: Client): void {
@@ -63,50 +63,57 @@ export function registerDebugRoutes(app: FastifyInstance, client: Client): void 
       results.push(entry);
     }
 
-    // Also check dashboard thread
-    const dashboardThreadId = getSetting(
-      "dashboard:waiting_for_reply:thread_id"
-    );
-    const dashboardMsgId = getSetting(
-      "dashboard:waiting_for_reply:message_id"
-    );
-    let dashboard: Record<string, unknown> = {
-      thread_id: dashboardThreadId ?? null,
-      message_id: dashboardMsgId ?? null,
+    // Check all dashboard threads
+    const settingKeys: Record<string, { threadKey: string; msgKey: string }> = {
+      waiting_for_reply: { threadKey: "dashboard:waiting_for_reply:thread_id", msgKey: "dashboard:waiting_for_reply:message_id" },
+      on_site: { threadKey: "dashboard:on_site:thread_id", msgKey: "dashboard:on_site:message_id" },
+      project: { threadKey: "dashboard:project:thread_id", msgKey: "dashboard:project:message_id" },
     };
 
-    if (dashboardThreadId) {
-      try {
-        const thread = (await client.channels.fetch(dashboardThreadId, {
-          force: true,
-        })) as ThreadChannel | null;
-        if (thread?.isThread()) {
-          dashboard.discord_archived = thread.archived;
-          dashboard.discord_locked = thread.locked;
-          dashboard.discord_name = thread.name;
-          dashboard.discord_member_count = thread.memberCount;
-          try {
-            const members = await thread.members.fetch();
-            dashboard.discord_members = members.map((m) => ({
-              id: m.id,
-              user_id: m.user?.id ?? m.id,
-              username: m.user?.username ?? "unknown",
-            }));
-            dashboard.discord_member_count_actual = members.size;
-          } catch (err: any) {
-            dashboard.discord_members_error = err?.message ?? String(err);
+    const dashboards: Record<string, Record<string, unknown>> = {};
+    for (const [name, keys] of Object.entries(settingKeys)) {
+      const threadId = getSetting(keys.threadKey);
+      const msgId = getSetting(keys.msgKey);
+      const entry: Record<string, unknown> = {
+        thread_id: threadId ?? null,
+        message_id: msgId ?? null,
+      };
+
+      if (threadId) {
+        try {
+          const thread = (await client.channels.fetch(threadId, {
+            force: true,
+          })) as ThreadChannel | null;
+          if (thread?.isThread()) {
+            entry.discord_archived = thread.archived;
+            entry.discord_locked = thread.locked;
+            entry.discord_name = thread.name;
+            entry.discord_member_count = thread.memberCount;
+            try {
+              const members = await thread.members.fetch();
+              entry.discord_members = members.map((m) => ({
+                id: m.id,
+                user_id: m.user?.id ?? m.id,
+                username: m.user?.username ?? "unknown",
+              }));
+              entry.discord_member_count_actual = members.size;
+            } catch (err: any) {
+              entry.discord_members_error = err?.message ?? String(err);
+            }
+          } else {
+            entry.discord_error = "Thread not found";
           }
-        } else {
-          dashboard.discord_error = "Thread not found";
+        } catch (err: any) {
+          entry.discord_error = err?.message ?? String(err);
         }
-      } catch (err: any) {
-        dashboard.discord_error = err?.message ?? String(err);
       }
+
+      dashboards[name] = entry;
     }
 
     return {
       ticket_threads: results,
-      dashboard,
+      dashboards,
       summary: {
         total_non_closed: nonClosed.length,
         visible: nonClosed.filter((t) => !isHiddenState(t.state)).length,
