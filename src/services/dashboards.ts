@@ -1,10 +1,10 @@
 /**
- * Persistent state dashboard threads.
+ * Persistent "Other Tickets" dashboard thread.
  *
- * Maintains one thread per dashboard state (waiting for reply, on-site, project)
- * in the tickets channel. Each thread lists every ticket currently in that state.
- * Threads stay open/visible as long as there is at least one ticket in that state,
- * giving agents a quick overview without cluttering the main channel.
+ * Maintains a single thread in the tickets channel that lists every ticket
+ * currently in a dashboard state (waiting for reply, on-site, project).
+ * Tickets are grouped by state with distinct colors per section.
+ * The thread stays open/visible as long as there is at least one such ticket.
  *
  * Updated after every sync cycle and webhook processing.
  */
@@ -24,57 +24,22 @@ import { ticketUrl, addRoleMembersToThread } from "./threads.js";
 import { discordQueue } from "../queue/index.js";
 import { DASHBOARD_STATES } from "../util/states.js";
 
-// ---------------------------------------------------------------
-// Dashboard configuration per state
-// ---------------------------------------------------------------
+const DASHBOARD_THREAD_ID_KEY = "dashboard:other_tickets:thread_id";
+const DASHBOARD_MSG_ID_KEY = "dashboard:other_tickets:message_id";
 
-interface DashboardConfig {
-  state: string;
-  label: string;
-  headerText: string;
-  color: number;
-  emptyText: string;
-  durationVerb: string;
-  threadIdKey: string;
-  msgIdKey: string;
+// Migrate from old WFR-only keys if they exist
+function migrateOldKeys(): void {
+  const oldThreadId = getSetting("dashboard:waiting_for_reply:thread_id");
+  const oldMsgId = getSetting("dashboard:waiting_for_reply:message_id");
+  if (oldThreadId && !getSetting(DASHBOARD_THREAD_ID_KEY)) {
+    setSetting(DASHBOARD_THREAD_ID_KEY, oldThreadId);
+    if (oldMsgId) setSetting(DASHBOARD_MSG_ID_KEY, oldMsgId);
+    // Clear old keys
+    setSetting("dashboard:waiting_for_reply:thread_id", "");
+    setSetting("dashboard:waiting_for_reply:message_id", "");
+    logger.info("Migrated WFR dashboard settings to other_tickets");
+  }
 }
-
-const CONFIGS: DashboardConfig[] = [
-  {
-    state: "waiting for reply",
-    label: "Waiting for Reply",
-    headerText: "this thread tracks all tickets awaiting customer response.",
-    color: 0xe67e22, // orange
-    emptyText: "No tickets are currently waiting for a reply.",
-    durationVerb: "waiting",
-    threadIdKey: "dashboard:waiting_for_reply:thread_id",
-    msgIdKey: "dashboard:waiting_for_reply:message_id",
-  },
-  {
-    state: "on-site",
-    label: "On-Site",
-    headerText: "this thread tracks all tickets requiring on-site work.",
-    color: 0x9b59b6, // purple
-    emptyText: "No tickets currently require on-site work.",
-    durationVerb: "on-site",
-    threadIdKey: "dashboard:on_site:thread_id",
-    msgIdKey: "dashboard:on_site:message_id",
-  },
-  {
-    state: "project",
-    label: "Project",
-    headerText: "this thread tracks all project tickets.",
-    color: 0x3498db, // blue
-    emptyText: "No project tickets currently active.",
-    durationVerb: "in project",
-    threadIdKey: "dashboard:project:thread_id",
-    msgIdKey: "dashboard:project:message_id",
-  },
-];
-
-// ---------------------------------------------------------------
-// Shared ticket type
-// ---------------------------------------------------------------
 
 interface DashboardTicket {
   ticket_id: number;
@@ -82,123 +47,111 @@ interface DashboardTicket {
   title: string | null;
   thread_id: string;
   updated_at: string;
+  state: string;
 }
 
-// ---------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------
+const STATE_CONFIG: Record<string, { emoji: string; label: string; verb: string; color: number }> = {
+  "waiting for reply": { emoji: "🟠", label: "Waiting for Reply", verb: "waiting", color: 0xe67e22 },
+  "on-site":          { emoji: "🟣", label: "On-Site",           verb: "on-site", color: 0x9b59b6 },
+  "project":          { emoji: "🔵", label: "Project",           verb: "in project", color: 0x3498db },
+};
 
 /**
- * Update all dashboard threads. Call after every sync cycle or webhook.
- * Backwards-compatible — replaces the old updateWaitingDashboard().
+ * Update (or create) the combined dashboard thread.
+ * Call this after every sync cycle or webhook processing.
  */
 export async function updateDashboards(client: Client): Promise<void> {
-  const allThreads = getAllTicketThreads();
+  try {
+    migrateOldKeys();
 
-  for (const config of CONFIGS) {
-    try {
-      await updateSingleDashboard(client, config, allThreads);
-    } catch (err) {
-      logger.warn({ err, state: config.state }, `Failed to update ${config.label} dashboard`);
+    const allThreads = getAllTicketThreads();
+    const dashboardStates = new Set<string>(DASHBOARD_STATES);
+    const tickets: DashboardTicket[] = allThreads
+      .filter((t) => dashboardStates.has(t.state))
+      .map((t) => ({
+        ticket_id: t.ticket_id,
+        ticket_number: t.ticket_number,
+        title: t.title,
+        thread_id: t.thread_id,
+        updated_at: t.updated_at,
+        state: t.state,
+      }));
+
+    const existingThreadId = getSetting(DASHBOARD_THREAD_ID_KEY);
+    const existingMsgId = getSetting(DASHBOARD_MSG_ID_KEY);
+
+    // No tickets in any dashboard state → archive
+    if (tickets.length === 0) {
+      if (existingThreadId) {
+        await archiveDashboard(client, existingThreadId);
+      }
+      return;
     }
+
+    const embed = buildDashboardEmbed(tickets);
+
+    // Try to update existing
+    if (existingThreadId && existingMsgId) {
+      const updated = await tryUpdateExisting(client, existingThreadId, existingMsgId, embed);
+      if (updated) return;
+    }
+
+    // Create new
+    await createDashboardThread(client, embed);
+  } catch (err) {
+    logger.warn({ err }, "Failed to update other-tickets dashboard");
   }
 }
 
 /** Backwards-compatible alias. */
 export const updateWaitingDashboard = updateDashboards;
 
-// ---------------------------------------------------------------
-// Single dashboard update
-// ---------------------------------------------------------------
-
-async function updateSingleDashboard(
-  client: Client,
-  config: DashboardConfig,
-  allThreads: ReturnType<typeof getAllTicketThreads>
-): Promise<void> {
-  const tickets: DashboardTicket[] = allThreads
-    .filter((t) => t.state === config.state)
-    .map((t) => ({
-      ticket_id: t.ticket_id,
-      ticket_number: t.ticket_number,
-      title: t.title,
-      thread_id: t.thread_id,
-      updated_at: t.updated_at,
-    }));
-
-  // Sort oldest first
-  tickets.sort(
-    (a, b) =>
-      new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
-  );
-
-  const existingThreadId = getSetting(config.threadIdKey);
-  const existingMsgId = getSetting(config.msgIdKey);
-
-  // No tickets → archive the dashboard thread if it exists
-  if (tickets.length === 0) {
-    if (existingThreadId) {
-      await archiveDashboard(client, config, existingThreadId);
-    }
-    return;
-  }
-
-  const embed = buildDashboardEmbed(config, tickets);
-
-  // Try to update the existing dashboard
-  if (existingThreadId && existingMsgId) {
-    const updated = await tryUpdateExisting(
-      client,
-      config,
-      existingThreadId,
-      existingMsgId,
-      embed
-    );
-    if (updated) return;
-  }
-
-  // Create a new dashboard thread
-  await createDashboardThread(client, config, embed);
-}
-
-// ---------------------------------------------------------------
-// Embed builder
-// ---------------------------------------------------------------
-
-function buildDashboardEmbed(
-  config: DashboardConfig,
-  tickets: DashboardTicket[]
-): EmbedBuilder {
+function buildDashboardEmbed(tickets: DashboardTicket[]): EmbedBuilder {
   const now = Date.now();
-  const lines: string[] = [];
+  const sections: string[] = [];
 
-  for (const t of tickets) {
-    const url = ticketUrl(t.ticket_id);
-    const since = new Date(t.updated_at).getTime();
-    const diffMins = Math.floor((now - since) / 60_000);
-    const waitLabel = formatDuration(diffMins);
-    const title = t.title
-      ? t.title.length > 60
-        ? t.title.slice(0, 57) + "..."
-        : t.title
-      : "Untitled";
+  // Group by state in defined order
+  for (const state of DASHBOARD_STATES) {
+    const stateTickets = tickets
+      .filter((t) => t.state === state)
+      .sort((a, b) => new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime());
 
-    lines.push(
-      `**#${t.ticket_number}** — [${title}](${url}) · <t:${Math.floor(since / 1000)}:R>\n` +
-        `  └ <#${t.thread_id}> · ${config.durationVerb} ${waitLabel}`
-    );
+    if (stateTickets.length === 0) continue;
+
+    const cfg = STATE_CONFIG[state];
+    const lines: string[] = [];
+    lines.push(`${cfg.emoji} **${cfg.label}** (${stateTickets.length})`);
+
+    for (const t of stateTickets) {
+      const url = ticketUrl(t.ticket_id);
+      const since = new Date(t.updated_at).getTime();
+      const diffMins = Math.floor((now - since) / 60_000);
+      const waitLabel = formatDuration(diffMins);
+      const title = t.title
+        ? t.title.length > 60
+          ? t.title.slice(0, 57) + "..."
+          : t.title
+        : "Untitled";
+
+      lines.push(
+        `**#${t.ticket_number}** — [${title}](${url}) · <t:${Math.floor(since / 1000)}:R>\n` +
+          `  └ <#${t.thread_id}> · ${cfg.verb} ${waitLabel}`
+      );
+    }
+
+    sections.push(lines.join("\n"));
   }
 
-  let description = lines.join("\n\n");
+  let description = sections.join("\n\n");
   if (description.length > 4000) {
     description =
       description.slice(0, 3950) + `\n\n*… and more (${tickets.length} total)*`;
   }
 
   return new EmbedBuilder()
-    .setTitle(`${config.label} (${tickets.length})`)
+    .setTitle(`Other Tickets (${tickets.length})`)
     .setDescription(description)
-    .setColor(config.color)
+    .setColor(0xe67e22)
     .setFooter({ text: "Updates every sync cycle (~30s)" })
     .setTimestamp(new Date());
 }
@@ -217,13 +170,8 @@ function formatDuration(totalMinutes: number): string {
   return remDays > 0 ? `${weeks}w ${remDays}d` : `${weeks}w`;
 }
 
-// ---------------------------------------------------------------
-// Thread update / create / archive
-// ---------------------------------------------------------------
-
 async function tryUpdateExisting(
   client: Client,
-  config: DashboardConfig,
   threadId: string,
   msgId: string,
   embed: EmbedBuilder
@@ -231,17 +179,24 @@ async function tryUpdateExisting(
   try {
     const thread = (await client.channels.fetch(threadId, { force: true })) as ThreadChannel | null;
     if (!thread?.isThread()) {
-      logger.warn({ threadId, state: config.state }, "Dashboard thread not found or not a thread");
+      logger.warn({ threadId }, "Dashboard thread not found or not a thread");
       return false;
     }
 
+    // Rename thread if it still has the old name
+    if (thread.name !== "Other Tickets") {
+      await discordQueue.add(async () => {
+        await thread.setName("Other Tickets", "Renamed from Waiting for Reply to Other Tickets");
+      });
+      logger.info({ threadId }, "Renamed dashboard thread to Other Tickets");
+    }
+
     if (thread.archived || thread.locked) {
-      logger.info({ threadId, state: config.state, archived: thread.archived, locked: thread.locked }, "Unarchiving dashboard thread");
       await discordQueue.add(async () => {
         await thread.edit({
           archived: false,
           locked: false,
-          reason: `${config.label} dashboard has tickets`,
+          reason: "Other Tickets dashboard has tickets",
         });
       });
     }
@@ -274,11 +229,11 @@ async function tryUpdateExisting(
           } as any)
         )) as Message | undefined;
         if (newMsg) {
-          setSetting(config.msgIdKey, newMsg.id);
+          setSetting(DASHBOARD_MSG_ID_KEY, newMsg.id);
         }
       }
     } catch {
-      logger.info({ threadId, state: config.state }, "Dashboard embed message missing, posting new one");
+      logger.info({ threadId }, "Dashboard embed message missing, posting new one");
       const newMsg = (await discordQueue.add(async () =>
         thread.send({
           embeds: [embed],
@@ -286,42 +241,42 @@ async function tryUpdateExisting(
         } as any)
       )) as Message | undefined;
       if (newMsg) {
-        setSetting(config.msgIdKey, newMsg.id);
+        setSetting(DASHBOARD_MSG_ID_KEY, newMsg.id);
       }
     }
 
     return true;
   } catch (err) {
-    logger.warn({ err, threadId, state: config.state }, "Dashboard thread no longer accessible");
+    logger.warn({ err, threadId }, "Dashboard thread no longer accessible");
     return false;
   }
 }
 
 async function createDashboardThread(
   client: Client,
-  config: DashboardConfig,
   embed: EmbedBuilder
 ): Promise<void> {
   const channel = (await client.channels.fetch(
     env().DISCORD_TICKETS_CHANNEL_ID
   )) as TextChannel | null;
   if (!channel?.isTextBased()) {
-    logger.warn({ state: config.state }, "Cannot create dashboard: tickets channel not found");
+    logger.warn("Cannot create dashboard: tickets channel not found");
     return;
   }
 
   const headerMsg = (await discordQueue.add(async () =>
     channel.send({
-      content: `**${config.label} Dashboard** — ${config.headerText}`,
+      content:
+        "**Other Tickets Dashboard** — this thread tracks tickets that are waiting for reply, on-site, or in a project.",
     })
   )) as Message | undefined;
   if (!headerMsg) return;
 
   const thread = (await discordQueue.add(async () =>
     headerMsg.startThread({
-      name: config.label,
+      name: "Other Tickets",
       autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
-      reason: `Persistent dashboard for ${config.state} tickets`,
+      reason: "Persistent dashboard for other ticket states",
     })
   )) as ThreadChannel | undefined;
 
@@ -340,20 +295,16 @@ async function createDashboardThread(
     thread.send({ embeds: [embed] })
   )) as Message | undefined;
 
-  setSetting(config.threadIdKey, thread.id);
+  setSetting(DASHBOARD_THREAD_ID_KEY, thread.id);
   if (embedMsg) {
-    setSetting(config.msgIdKey, embedMsg.id);
+    setSetting(DASHBOARD_MSG_ID_KEY, embedMsg.id);
   }
 
-  logger.info(
-    { threadId: thread.id, state: config.state },
-    `Created ${config.label} dashboard thread`
-  );
+  logger.info({ threadId: thread.id }, "Created Other Tickets dashboard thread");
 }
 
 async function archiveDashboard(
   client: Client,
-  config: DashboardConfig,
   threadId: string
 ): Promise<void> {
   try {
@@ -361,13 +312,13 @@ async function archiveDashboard(
     if (!thread?.isThread()) return;
 
     if (!thread.archived) {
-      const existingMsgId = getSetting(config.msgIdKey);
+      const existingMsgId = getSetting(DASHBOARD_MSG_ID_KEY);
       if (existingMsgId) {
         try {
           const msg = await thread.messages.fetch(existingMsgId);
           const emptyEmbed = new EmbedBuilder()
-            .setTitle(`${config.label} (0)`)
-            .setDescription(config.emptyText)
+            .setTitle("Other Tickets (0)")
+            .setDescription("No tickets are currently waiting for reply, on-site, or in a project.")
             .setColor(0x2ecc71) // green
             .setTimestamp(new Date());
           await discordQueue.add(async () => {
@@ -381,12 +332,12 @@ async function archiveDashboard(
       await discordQueue.add(async () => {
         await thread.edit({
           archived: true,
-          reason: `No ${config.state} tickets`,
+          reason: "No other tickets",
         });
       });
-      logger.info({ threadId, state: config.state }, `Archived empty ${config.label} dashboard`);
+      logger.info({ threadId }, "Archived empty Other Tickets dashboard");
     }
   } catch (err) {
-    logger.debug({ err, threadId, state: config.state }, "Failed to archive dashboard thread");
+    logger.debug({ err, threadId }, "Failed to archive dashboard thread");
   }
 }
