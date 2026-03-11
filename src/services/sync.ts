@@ -318,7 +318,7 @@ async function processWebhook(
   // payload (e.g. for internal notes), so we must not gate on webhookArticle.
   await syncAllUnsyncedArticles(client, mapping.thread_id, ticketId);
 
-  // Update the waiting-for-reply dashboard (state may have changed)
+  // Update the Other Tickets dashboard (state may have changed)
   await updateDashboards(client);
 }
 
