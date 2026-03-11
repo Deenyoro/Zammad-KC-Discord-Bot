@@ -21,8 +21,8 @@ import {
   type TicketInfo,
 } from "./threads.js";
 import { discordQueue } from "../queue/index.js";
-import { isClosedState, isHiddenState } from "../util/states.js";
-import { updateWaitingDashboard } from "./waitingDashboard.js";
+import { isClosedState, isHiddenState, isDashboardState } from "../util/states.js";
+import { updateDashboards } from "./dashboards.js";
 
 // Article catch-up cycle counter.  Every ARTICLE_CATCHUP_INTERVAL cycles
 // (~5 min at 30 s intervals) we re-sync articles for ALL open tickets so
@@ -115,11 +115,11 @@ export async function syncAllTickets(client: Client): Promise<void> {
           // Ensure hidden-state threads stay archived (catches manual unarchives or bot restarts)
           try {
             const thread = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
-            if (thread?.isThread() && !thread.archived && ticketInfo.state === "waiting for reply") {
+            if (thread?.isThread() && !thread.archived && isDashboardState(ticketInfo.state)) {
               await discordQueue.add(async () => {
-                await thread.edit({ archived: true, reason: "Re-archiving waiting for reply thread" });
+                await thread.edit({ archived: true, reason: `Re-archiving ${ticketInfo.state} thread` });
               });
-              logger.info({ ticketId: ticket.id }, "Re-archived waiting for reply thread");
+              logger.info({ ticketId: ticket.id, state: ticketInfo.state }, "Re-archived dashboard-state thread");
             }
           } catch (err) {
             logger.debug({ ticketId: ticket.id, err }, "Failed to ensure hidden thread stays archived");
@@ -176,11 +176,11 @@ export async function syncAllTickets(client: Client): Promise<void> {
           if (isHiddenState(ticketInfo.state) && !isHiddenState(existing.state)) {
             try {
               await removeRoleMembersFromThread(client, existing.thread_id);
-              if (ticketInfo.state === "waiting for reply") {
+              if (isDashboardState(ticketInfo.state)) {
                 const thread = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
                 if (thread?.isThread() && !thread.archived) {
                   await discordQueue.add(async () => {
-                    await thread.edit({ archived: true, reason: "Ticket is waiting for reply" });
+                    await thread.edit({ archived: true, reason: `Ticket is ${ticketInfo.state}` });
                   });
                 }
               }
@@ -272,7 +272,7 @@ export async function syncAllTickets(client: Client): Promise<void> {
   }
 
   // Update the waiting-for-reply dashboard thread
-  await updateWaitingDashboard(client);
+  await updateDashboards(client);
 
   syncCycleCount++;
   logger.info({ created, updated, closed, failed, total: tickets.length, articleCatchup: (syncCycleCount - 1) % ARTICLE_CATCHUP_INTERVAL === 0 }, "Ticket sync complete");

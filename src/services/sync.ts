@@ -31,9 +31,9 @@ import {
   type TicketInfo,
 } from "./threads.js";
 import { discordQueue } from "../queue/index.js";
-import { isClosedState, isHiddenState } from "../util/states.js";
+import { isClosedState, isHiddenState, isDashboardState } from "../util/states.js";
 import { getAttachmentLimits } from "../util/attachmentLimits.js";
-import { updateWaitingDashboard } from "./waitingDashboard.js";
+import { updateDashboards } from "./dashboards.js";
 import { splitEmailHtml } from "../util/emailSplit.js";
 
 /** Extract a display name from an article "from" field like "John Doe <john@example.com>" */
@@ -192,13 +192,13 @@ async function processWebhook(
       await closeTicketThread(client, mapping.thread_id);
       logger.info({ ticketId }, "Closed newly created thread for closed ticket");
     } else if (isHiddenState(normalizedState)) {
-      // Don't add members to newly created hidden-state threads; archive "waiting for reply"
+      // Don't add members to newly created hidden-state threads; archive dashboard-state tickets
       await removeRoleMembersFromThread(client, mapping.thread_id);
-      if (normalizedState === "waiting for reply") {
+      if (isDashboardState(normalizedState)) {
         const thread = (await client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
         if (thread?.isThread() && !thread.archived) {
           await discordQueue.add(async () => {
-            await thread.edit({ archived: true, reason: "Ticket is waiting for reply" });
+            await thread.edit({ archived: true, reason: `Ticket is ${normalizedState}` });
           });
         }
       }
@@ -222,7 +222,7 @@ async function processWebhook(
     // Track notification intent — actual send happens after unarchiving to avoid
     // a race where sendToThread's archive-restore re-archives the thread.
     const customerReplied =
-      oldState === "waiting for reply" &&
+      isDashboardState(oldState) &&
       normalizedState === "open" &&
       webhookArticle &&
       webhookArticle.sender === "Customer";
@@ -249,15 +249,15 @@ async function processWebhook(
       }
     }
 
-    // "waiting for reply" → archive thread and remove members (hides from ticket list)
+    // Dashboard/hidden state → archive thread and remove members (hides from ticket list)
     if (isHiddenState(normalizedState) && !isHiddenState(oldState)) {
       await removeRoleMembersFromThread(client, mapping.thread_id);
-      // Archive "waiting for reply" threads so they disappear from channel lists
-      if (normalizedState === "waiting for reply") {
+      // Archive dashboard-state threads so they disappear from channel lists
+      if (isDashboardState(normalizedState)) {
         const thread = (await client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
         if (thread?.isThread() && !thread.archived) {
           await discordQueue.add(async () => {
-            await thread.edit({ archived: true, reason: "Ticket set to waiting for reply" });
+            await thread.edit({ archived: true, reason: `Ticket set to ${normalizedState}` });
           });
         }
       }
@@ -269,7 +269,7 @@ async function processWebhook(
       if (thread?.isThread()) {
         if (thread.archived) {
           await discordQueue.add(async () => {
-            await thread.edit({ archived: false, reason: "Ticket no longer waiting for reply" });
+            await thread.edit({ archived: false, reason: `Ticket no longer ${oldState}` });
           });
         }
         await addRoleMembersToThread(thread);
@@ -279,11 +279,11 @@ async function processWebhook(
         if (customerReplied) {
           discordQueue.add(async () => {
             await thread.send({
-              content: "**Customer replied** — ticket moved from _waiting for reply_ to _open_.",
+              content: `**Customer replied** — ticket moved from _${oldState}_ to _${normalizedState}_.`,
               allowedMentions: { parse: [] },
             });
           }).catch((err) =>
-            logger.warn({ ticketId, err }, "Failed to send waiting-for-reply notification")
+            logger.warn({ ticketId, err }, "Failed to send state transition notification")
           );
         }
       }
@@ -319,7 +319,7 @@ async function processWebhook(
   await syncAllUnsyncedArticles(client, mapping.thread_id, ticketId);
 
   // Update the waiting-for-reply dashboard (state may have changed)
-  await updateWaitingDashboard(client);
+  await updateDashboards(client);
 }
 
 // ---------------------------------------------------------------
