@@ -92,7 +92,7 @@ export async function syncAllTickets(client: Client): Promise<void> {
         }
 
         // Ensure all role members are in the thread (catches newly added members)
-        // Skip for "pending close" and "waiting for reply" — members were intentionally removed
+        // Skip for hidden states (pending close, waiting for reply, on-site, project) — members were intentionally removed
         if (!isHiddenState(ticketInfo.state)) {
           try {
             const thread = await client.channels.fetch(existing.thread_id, { force: true }) as ThreadChannel | null;
@@ -271,7 +271,7 @@ export async function syncAllTickets(client: Client): Promise<void> {
     }
   }
 
-  // Update the waiting-for-reply dashboard thread
+  // Update the Other Tickets dashboard thread
   await updateDashboards(client);
 
   syncCycleCount++;

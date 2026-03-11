@@ -103,9 +103,6 @@ export async function updateDashboards(client: Client): Promise<void> {
   }
 }
 
-/** Backwards-compatible alias. */
-export const updateWaitingDashboard = updateDashboards;
-
 function buildDashboardEmbed(tickets: DashboardTicket[]): EmbedBuilder {
   const now = Date.now();
   const sections: string[] = [];
