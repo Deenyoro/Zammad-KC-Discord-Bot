@@ -1,5 +1,6 @@
 import { logger } from "../util/logger.js";
 import { getSettingOrEnv } from "../db/index.js";
+import { getBotTimezone } from "../util/timezone.js";
 import { getTicket, getArticles, getUser, getAgents, getTicketTags } from "./zammad.js";
 
 // ---------------------------------------------------------------
@@ -311,6 +312,7 @@ export async function buildTicketContext(
     // Format timestamp
     const msgDate = new Date(article.created_at);
     const timestamp = msgDate.toLocaleString("en-US", {
+      timeZone: getBotTimezone(),
       month: "short",
       day: "numeric",
       hour: "2-digit",

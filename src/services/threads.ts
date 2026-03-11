@@ -8,6 +8,7 @@ import {
   Message,
 } from "discord.js";
 import { env } from "../util/env.js";
+import { formatInBotTz } from "../util/timezone.js";
 import { truncate, splitMessage } from "../util/truncate.js";
 import { logger } from "../util/logger.js";
 import {
@@ -111,7 +112,7 @@ export function buildTicketEmbed(ticket: TicketInfo): EmbedBuilder {
     const escalationDate = new Date(ticket.escalation_at);
     const now = new Date();
     if (escalationDate <= now) {
-      fields.push({ name: "SLA", value: `BREACHED (was ${escalationDate.toLocaleString()})`, inline: true });
+      fields.push({ name: "SLA", value: `BREACHED (was ${formatInBotTz(escalationDate)})`, inline: true });
     } else {
       const diffMs = escalationDate.getTime() - now.getTime();
       const diffMins = Math.round(diffMs / 60_000);
