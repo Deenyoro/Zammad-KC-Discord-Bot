@@ -1083,11 +1083,21 @@ export async function handleSchedules(interaction: ChatInputCommandInteraction) 
     return;
   }
 
-  const lines = articles.map(
-    (a) =>
-      `**ID ${a.id}** — ${formatInBotTz(a.scheduled_at)} [${a.article_data?.type || "note"}]: ${truncate(a.article_data?.body?.replace(/<[^>]+>/g, "") || "(empty)", 80)}`
-  );
-  await interaction.editReply(truncate(lines.join("\n"), 2000));
+  const lines = articles.map((a) => {
+    const body = a.article_data?.body?.replace(/<[^>]+>/g, "").trim() || "(empty)";
+    return `**ID ${a.id}** — ${formatInBotTz(a.scheduled_at)} [${a.article_data?.type || "note"}]\n${body}`;
+  });
+  const joined = lines.join("\n\n");
+  if (joined.length <= 2000) {
+    await interaction.editReply(joined);
+  } else {
+    // Split into multiple messages if needed
+    const parts = splitMessage(joined, 2000);
+    await interaction.editReply(parts[0]);
+    for (let i = 1; i < parts.length; i++) {
+      await interaction.followUp({ content: parts[i], ephemeral: true });
+    }
+  }
 }
 
 export async function handleUnschedule(interaction: ChatInputCommandInteraction) {
