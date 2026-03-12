@@ -245,9 +245,17 @@ async function tryUpdateExisting(
     }
 
     return true;
-  } catch (err) {
-    logger.warn({ err, threadId }, "Dashboard thread no longer accessible");
-    return false;
+  } catch (err: any) {
+    // Only treat 404 (deleted) and 403 (no access) as "thread gone" — create a new one.
+    // For transient errors (503, 500, rate limits, network), return true to prevent
+    // creating duplicate dashboard threads. We'll retry on the next sync cycle.
+    const status = err?.status ?? err?.httpStatus ?? 0;
+    if (status === 404 || status === 403) {
+      logger.warn({ err, threadId, status }, "Dashboard thread no longer accessible — will recreate");
+      return false;
+    }
+    logger.warn({ err, threadId, status }, "Dashboard update failed (transient) — skipping to avoid duplicates");
+    return true;
   }
 }
 
