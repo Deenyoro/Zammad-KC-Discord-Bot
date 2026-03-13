@@ -41,6 +41,7 @@ import {
   participantsCommand,
   weeklyCommand,
   checknoteCommand,
+  renameCommand,
 } from "./commands/shortcuts.js";
 
 let discordClient: Client | null = null;
@@ -82,6 +83,7 @@ async function deployCommands() {
     participantsCommand.toJSON(),
     weeklyCommand.toJSON(),
     checknoteCommand.toJSON(),
+    renameCommand.toJSON(),
   ];
 
   const rest = new REST().setToken(config.DISCORD_TOKEN);
