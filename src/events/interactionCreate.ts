@@ -31,6 +31,7 @@ import {
   handleAiProofread,
   handleWeekly,
   handleChecknote,
+  handleRename,
 } from "../commands/ticket.js";
 import { handleSetupCommand } from "../commands/setup.js";
 import { handleHelpCommand } from "../commands/help.js";
@@ -146,6 +147,9 @@ export function onInteractionCreate(client: Client): void {
           break;
         case "checknote":
           await handleChecknote(interaction);
+          break;
+        case "rename":
+          await handleRename(interaction);
           break;
         default:
           logger.warn({ commandName }, "Unknown command");
