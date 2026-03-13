@@ -130,15 +130,25 @@ export const pendingCommand = new SlashCommandBuilder()
     o
       .setName("duration")
       .setDescription("How long until the pending time expires")
-      .setRequired(true)
+      .setRequired(false)
       .addChoices(
         { name: "1 day", value: "1d" },
+        { name: "2 days", value: "2d" },
         { name: "3 days", value: "3d" },
+        { name: "4 days", value: "4d" },
+        { name: "5 days", value: "5d" },
+        { name: "6 days", value: "6d" },
         { name: "1 week", value: "1w" },
         { name: "2 weeks", value: "2w" },
         { name: "1 month", value: "1m" },
         { name: "3 months", value: "3m" }
       )
+  )
+  .addStringOption((o) =>
+    o
+      .setName("date")
+      .setDescription("Exact date (YYYY-MM-DD) — use instead of duration")
+      .setRequired(false)
   );
 
 export const renameCommand = new SlashCommandBuilder()
