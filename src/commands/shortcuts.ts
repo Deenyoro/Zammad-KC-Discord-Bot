@@ -141,6 +141,13 @@ export const pendingCommand = new SlashCommandBuilder()
       )
   );
 
+export const renameCommand = new SlashCommandBuilder()
+  .setName("rename")
+  .setDescription("Rename the ticket")
+  .addStringOption((o) =>
+    o.setName("title").setDescription("New ticket title").setRequired(true)
+  );
+
 export const infoCommand = new SlashCommandBuilder()
   .setName("info")
   .setDescription("Show ticket details");

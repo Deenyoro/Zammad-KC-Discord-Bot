@@ -5,6 +5,7 @@ import {
   getAllTicketThreads,
   getUserMap,
   updateThreadState,
+  upsertTicketThread,
   getSettingOrEnv,
   getSetting,
   type TicketThread,
@@ -216,6 +217,40 @@ export async function handleState(interaction: ChatInputCommandInteraction) {
 
   await interaction.editReply(
     `${interaction.user} changed ticket #${mapping.ticket_number} state to **${stateName}**.`
+  );
+}
+
+export async function handleRename(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply();
+
+  const newTitle = interaction.options.getString("title", true).trim();
+  if (!newTitle) {
+    await interaction.editReply("Title cannot be empty.");
+    return;
+  }
+
+  await updateTicket(mapping.ticket_id, { title: newTitle });
+
+  // Update the Discord thread name and local DB
+  if (mapping.thread_id) {
+    let ownerLabel: string | undefined;
+    try {
+      const ticket = await getTicket(mapping.ticket_id);
+      if (ticket.owner_id && ticket.owner_id !== 1) {
+        const owner = await getUser(ticket.owner_id);
+        ownerLabel = formatOwnerLabel(owner.firstname, owner.lastname);
+      }
+    } catch {
+      // Non-critical — thread rename will just omit owner label
+    }
+    await renameTicketThread(interaction.client, mapping.thread_id, mapping.ticket_number, newTitle, ownerLabel);
+  }
+  upsertTicketThread({ ...mapping, title: newTitle });
+
+  await interaction.editReply(
+    `${interaction.user} renamed ticket #${mapping.ticket_number} to **${newTitle}**.`
   );
 }
 
