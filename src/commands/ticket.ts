@@ -999,7 +999,11 @@ function computePendingTime(code: string): string {
   const now = new Date();
   switch (code) {
     case "1d": now.setDate(now.getDate() + 1); break;
+    case "2d": now.setDate(now.getDate() + 2); break;
     case "3d": now.setDate(now.getDate() + 3); break;
+    case "4d": now.setDate(now.getDate() + 4); break;
+    case "5d": now.setDate(now.getDate() + 5); break;
+    case "6d": now.setDate(now.getDate() + 6); break;
     case "1w": now.setDate(now.getDate() + 7); break;
     case "2w": now.setDate(now.getDate() + 14); break;
     case "1m": now.setMonth(now.getMonth() + 1); break;
@@ -1015,12 +1019,33 @@ export async function handlePending(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
 
   const type = interaction.options.getString("type", true);
-  const duration = interaction.options.getString("duration", true);
+  const duration = interaction.options.getString("duration", false);
+  const dateStr = interaction.options.getString("date", false);
+
+  if (!duration && !dateStr) {
+    await interaction.editReply("You must provide either a **duration** or a **date**.");
+    return;
+  }
 
   const state = await getStateByName(type);
   if (!state) throw new Error(`Unknown state: ${type}`);
 
-  const pendingTime = computePendingTime(duration);
+  let pendingTime: string;
+  if (dateStr) {
+    const parsed = new Date(dateStr + "T12:00:00");
+    if (isNaN(parsed.getTime())) {
+      await interaction.editReply("Invalid date format. Use **YYYY-MM-DD** (e.g. 2026-03-20).");
+      return;
+    }
+    if (parsed.getTime() <= Date.now()) {
+      await interaction.editReply("Date must be in the future.");
+      return;
+    }
+    pendingTime = parsed.toISOString();
+  } else {
+    pendingTime = computePendingTime(duration!);
+  }
+
   await updateTicket(mapping.ticket_id, { state_id: state.id, pending_time: pendingTime });
   await interaction.editReply(
     `${interaction.user} set ticket #${mapping.ticket_number} to **${type}** until ${new Date(pendingTime).toLocaleDateString()}.`
