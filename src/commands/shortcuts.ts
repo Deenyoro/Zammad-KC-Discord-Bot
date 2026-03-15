@@ -24,6 +24,9 @@ export const replyCommand = new SlashCommandBuilder()
         { name: "to PNG (images: webp, jpg, gif, bmp, tiff)", value: "png" },
         { name: "to PDF (docs: docx, doc, odt, xlsx, pptx)", value: "pdf" }
       )
+  )
+  .addBooleanOption((o) =>
+    o.setName("close").setDescription("Close the ticket after sending the reply").setRequired(false)
   );
 
 export const replyallCommand = new SlashCommandBuilder()
@@ -44,6 +47,9 @@ export const replyallCommand = new SlashCommandBuilder()
         { name: "to PNG (images: webp, jpg, gif, bmp, tiff)", value: "png" },
         { name: "to PDF (docs: docx, doc, odt, xlsx, pptx)", value: "pdf" }
       )
+  )
+  .addBooleanOption((o) =>
+    o.setName("close").setDescription("Close the ticket after sending the reply").setRequired(false)
   );
 
 export const noteCommand = new SlashCommandBuilder()
@@ -54,6 +60,9 @@ export const noteCommand = new SlashCommandBuilder()
   )
   .addAttachmentOption((o) =>
     o.setName("file").setDescription("Attach a file (image, document, etc.)").setRequired(false)
+  )
+  .addBooleanOption((o) =>
+    o.setName("close").setDescription("Close the ticket after adding the note").setRequired(false)
   );
 
 export const closeCommand = new SlashCommandBuilder()
