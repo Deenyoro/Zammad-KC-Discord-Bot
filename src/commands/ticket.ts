@@ -529,8 +529,22 @@ export async function handleNote(interaction: ChatInputCommandInteraction) {
     origin_by_id: userEntry?.zammad_id ?? undefined,
     attachments,
   });
+
+  const shouldClose = interaction.options.getBoolean("close");
+  let closeSuffix = "";
+  if (shouldClose) {
+    const closedState = await getStateByName("closed");
+    if (!closedState) throw new Error("Could not find 'closed' state in Zammad");
+    await updateTicket(mapping.ticket_id, { state_id: closedState.id });
+    updateThreadState(mapping.ticket_id, "closed");
+    if (interaction.client && mapping.thread_id) {
+      await closeTicketThread(interaction.client, mapping.thread_id);
+    }
+    closeSuffix = " — ticket closed.";
+  }
+
   await interaction.editReply(
-    `Internal note added to ticket #${mapping.ticket_number}.`
+    `Internal note added to ticket #${mapping.ticket_number}.${closeSuffix}`
   );
 }
 
@@ -831,13 +845,26 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     attachments,
   });
 
+  const shouldClose = interaction.options.getBoolean("close");
+  let closeSuffix = "";
+  if (shouldClose) {
+    const closedState = await getStateByName("closed");
+    if (!closedState) throw new Error("Could not find 'closed' state in Zammad");
+    await updateTicket(mapping.ticket_id, { state_id: closedState.id });
+    updateThreadState(mapping.ticket_id, "closed");
+    if (interaction.client && mapping.thread_id) {
+      await closeTicketThread(interaction.client, mapping.thread_id);
+    }
+    closeSuffix = " — ticket closed.";
+  }
+
   const fileSuffix = fileOption ? ` with attachment "${fileOption.name}"${convertedLabel}` : "";
   const ccSuffix = cc ? ` (CC: ${cc})` : "";
   const toWarning = toIgnored ? "\n⚠️ `to:` was ignored — only supported for email tickets." : "";
   const ccWarning = ccIgnored ? "\n⚠️ `cc:` was ignored — only supported for email tickets." : "";
   const tmSuffix = expandedModules.length > 0 ? `\n📝 Expanded: ${expandedModules.join(", ")}` : "";
   await interaction.editReply(
-    `Reply sent (${channel.label})${fileSuffix}${ccSuffix} on ticket #${mapping.ticket_number}.${toWarning}${ccWarning}${tmSuffix}`
+    `Reply sent (${channel.label})${fileSuffix}${ccSuffix} on ticket #${mapping.ticket_number}.${closeSuffix}${toWarning}${ccWarning}${tmSuffix}`
   );
 }
 
@@ -983,11 +1010,24 @@ export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
     attachments,
   });
 
+  const shouldClose = interaction.options.getBoolean("close");
+  let closeSuffix = "";
+  if (shouldClose) {
+    const closedState = await getStateByName("closed");
+    if (!closedState) throw new Error("Could not find 'closed' state in Zammad");
+    await updateTicket(mapping.ticket_id, { state_id: closedState.id });
+    updateThreadState(mapping.ticket_id, "closed");
+    if (interaction.client && mapping.thread_id) {
+      await closeTicketThread(interaction.client, mapping.thread_id);
+    }
+    closeSuffix = " — ticket closed.";
+  }
+
   const fileSuffix = fileOption ? ` with attachment "${fileOption.name}"${convertedLabel}` : "";
   const ccSuffix = cc ? `\nCC: ${cc}` : "";
   const tmSuffix = expandedModules.length > 0 ? `\n📝 Expanded: ${expandedModules.join(", ")}` : "";
   await interaction.editReply(
-    `Reply-all sent to ${to}${ccSuffix}${fileSuffix} on ticket #${mapping.ticket_number}.${tmSuffix}`
+    `Reply-all sent to ${to}${ccSuffix}${fileSuffix} on ticket #${mapping.ticket_number}.${closeSuffix}${tmSuffix}`
   );
 }
 
