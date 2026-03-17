@@ -642,7 +642,8 @@ function stripQuotedEmail(html: string): string {
 }
 
 /** Convert HTML to plain text with basic formatting. */
-function stripHtml(html: string): string {
+function stripHtml(html: string | undefined | null): string {
+  if (!html) return "";
   return html
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>/gi, "\n")
