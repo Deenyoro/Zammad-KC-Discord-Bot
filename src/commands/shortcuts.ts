@@ -25,8 +25,9 @@ export const replyCommand = new SlashCommandBuilder()
         { name: "to PDF (docs: docx, doc, odt, xlsx, pptx)", value: "pdf" }
       )
   )
-  .addBooleanOption((o) =>
-    o.setName("close").setDescription("Close the ticket after sending the reply").setRequired(false)
+  .addStringOption((o) =>
+    o.setName("close").setDescription("Close the ticket after sending").setRequired(false)
+      .addChoices({ name: "yes", value: "yes" })
   );
 
 export const replyallCommand = new SlashCommandBuilder()
@@ -48,8 +49,9 @@ export const replyallCommand = new SlashCommandBuilder()
         { name: "to PDF (docs: docx, doc, odt, xlsx, pptx)", value: "pdf" }
       )
   )
-  .addBooleanOption((o) =>
-    o.setName("close").setDescription("Close the ticket after sending the reply").setRequired(false)
+  .addStringOption((o) =>
+    o.setName("close").setDescription("Close the ticket after sending").setRequired(false)
+      .addChoices({ name: "yes", value: "yes" })
   );
 
 export const noteCommand = new SlashCommandBuilder()
@@ -61,8 +63,9 @@ export const noteCommand = new SlashCommandBuilder()
   .addAttachmentOption((o) =>
     o.setName("file").setDescription("Attach a file (image, document, etc.)").setRequired(false)
   )
-  .addBooleanOption((o) =>
+  .addStringOption((o) =>
     o.setName("close").setDescription("Close the ticket after adding the note").setRequired(false)
+      .addChoices({ name: "yes", value: "yes" })
   );
 
 export const closeCommand = new SlashCommandBuilder()
