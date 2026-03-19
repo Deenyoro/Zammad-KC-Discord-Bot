@@ -3,7 +3,6 @@ import { env } from "../util/env.js";
 import { logger } from "../util/logger.js";
 import {
   getThreadByTicketId,
-  isArticleSynced,
   isArticleSyncedForTicket,
   markArticleSynced,
   isDeliveryProcessed,
@@ -135,6 +134,19 @@ async function processWebhook(
     "Processing webhook"
   );
 
+  // Safety: if the webhook article's ticket_id doesn't match the webhook ticket,
+  // discard the article to prevent cross-ticket misattribution. This can happen
+  // when Zammad fires webhooks during ticket merges or split operations.
+  const sanitizedArticle = webhookArticle && webhookArticle.ticket_id !== ticketId
+    ? (() => {
+        logger.warn(
+          { ticketId, articleId: webhookArticle.id, articleTicketId: webhookArticle.ticket_id },
+          "Webhook article ticket_id mismatch — discarding article from webhook payload"
+        );
+        return undefined;
+      })()
+    : webhookArticle;
+
   // Fetch the full ticket with expand=true so relationship names
   // (state, priority, group, customer, owner) are resolved.
   // The webhook payload does NOT include expanded data.
@@ -225,8 +237,8 @@ async function processWebhook(
     const customerReplied =
       isDashboardState(oldState) &&
       normalizedState === "open" &&
-      webhookArticle &&
-      webhookArticle.sender === "Customer";
+      sanitizedArticle &&
+      sanitizedArticle.sender === "Customer";
 
     if (isClosedState(normalizedState)) {
       await closeTicketThread(client, mapping.thread_id);
@@ -293,7 +305,7 @@ async function processWebhook(
 
   // If ticket is still "pending close" and a webhook fired (activity while pending),
   // re-add members so the team sees the update
-  if (normalizedState === oldState && normalizedState === "pending close" && webhookArticle) {
+  if (normalizedState === oldState && normalizedState === "pending close" && sanitizedArticle) {
     const thread = (await client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
     if (thread?.isThread() && !thread.archived) {
       await addRoleMembersToThread(thread);
@@ -323,12 +335,12 @@ async function processWebhook(
   // article may not be in the API response yet when syncAllUnsyncedArticles
   // fetches articles. If the webhook included an article and it's STILL not
   // synced after the API fetch, post it directly from the webhook payload.
-  if (webhookArticle && !isArticleSyncedForTicket(webhookArticle.id, ticketId)) {
+  if (sanitizedArticle && !isArticleSyncedForTicket(sanitizedArticle.id, ticketId)) {
     logger.warn(
-      { ticketId, articleId: webhookArticle.id },
+      { ticketId, articleId: sanitizedArticle.id },
       "Webhook article missing from API response — using webhook payload as fallback"
     );
-    await syncWebhookArticleFallback(client, mapping.thread_id, ticketId, webhookArticle);
+    await syncWebhookArticleFallback(client, mapping.thread_id, ticketId, sanitizedArticle);
   }
 
   // Update the Other Tickets dashboard (state may have changed)
@@ -507,6 +519,15 @@ async function syncWebhookArticleFallback(
   ticketId: number,
   webhookArticle: NonNullable<WebhookPayload["article"]>,
 ): Promise<void> {
+  // Guard: verify the webhook article actually belongs to this ticket
+  if (webhookArticle.ticket_id && webhookArticle.ticket_id !== ticketId) {
+    logger.warn(
+      { ticketId, articleId: webhookArticle.id, articleTicketId: webhookArticle.ticket_id },
+      "Webhook fallback: article belongs to a different ticket — skipping"
+    );
+    return;
+  }
+
   // Skip system articles
   if (webhookArticle.sender === "System") {
     markArticleSynced(webhookArticle.id, ticketId, threadId, null, "zammad_to_discord");
