@@ -373,6 +373,13 @@ export async function syncAllUnsyncedArticles(
   // Sort explicitly by ID to guarantee chronological order regardless of API behavior.
   articles.sort((a: { id: number }, b: { id: number }) => a.id - b.id);
 
+  // Filter out articles older than 7 days that aren't in synced_articles.
+  // The synced_articles table is pruned after 30 days, so very old articles
+  // would appear "unsynced" and get re-posted as duplicates. Only sync
+  // recent articles that are genuinely new.
+  const ARTICLE_AGE_LIMIT_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+  const now = Date.now();
+
   const articleIds = articles.map((a: { id: number }) => a.id);
   // Use ticket-aware check: an article synced to the WRONG ticket is treated as unsynced
   const alreadySynced = articleIds.filter((id: number) => isArticleSyncedForTicket(id, ticketId));
@@ -391,6 +398,19 @@ export async function syncAllUnsyncedArticles(
     if (isArticleSyncedForTicket(article.id, ticketId)) {
       if (article.sender !== "System") hasFirstArticle = true;
       continue;
+    }
+
+    // Skip old articles that were likely already synced but pruned from the DB.
+    // Without this guard, the 30-day prune + catch-up cycle would re-post
+    // every old article as a duplicate every time the bot restarts.
+    if (article.created_at) {
+      const articleAge = now - new Date(article.created_at).getTime();
+      if (articleAge > ARTICLE_AGE_LIMIT_MS) {
+        // Silently mark as synced so we don't re-check every cycle
+        markArticleSynced(article.id, ticketId, threadId, null, "zammad_to_discord");
+        if (article.sender !== "System") hasFirstArticle = true;
+        continue;
+      }
     }
 
     // Guard: if Zammad API returned an article that doesn't belong to this ticket
@@ -423,7 +443,7 @@ export async function syncAllUnsyncedArticles(
       content = formatEmailArticle(article.body, senderLabel, prefix, hasFirstArticle);
     } else {
       const body = stripHtml(article.body);
-      content = `**${senderLabel}:** ${prefix}${body}`;
+      content = `**${senderLabel}:** ${prefix}${body || "_(empty message)_"}`;
     }
     hasFirstArticle = true;
 
@@ -545,7 +565,7 @@ async function syncWebhookArticleFallback(
     content = formatEmailArticle(webhookArticle.body, senderLabel, prefix, true);
   } else {
     const body = stripHtml(webhookArticle.body);
-    content = `**${senderLabel}:** ${prefix}${body}`;
+    content = `**${senderLabel}:** ${prefix}${body || "_(empty message)_"}`;
   }
 
   // Process attachments from webhook payload
@@ -707,6 +727,9 @@ function formatEmailArticle(
   prefix: string,
   stripQuotes: boolean,
 ): string {
+  if (!bodyHtml) {
+    return `**${senderLabel}:** ${prefix}_(empty message)_`;
+  }
   const { reply: replyHtml, context: contextHtml } = splitEmailHtml(bodyHtml);
 
   // For non-first articles, also strip any remaining quoted content from
