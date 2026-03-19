@@ -530,7 +530,7 @@ export async function handleNote(interaction: ChatInputCommandInteraction) {
     attachments,
   });
 
-  const shouldClose = interaction.options.getBoolean("close");
+  const shouldClose = !!interaction.options.getString("close");
   let closeSuffix = "";
   if (shouldClose) {
     const closedState = await getStateByName("closed");
@@ -845,7 +845,7 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     attachments,
   });
 
-  const shouldClose = interaction.options.getBoolean("close");
+  const shouldClose = !!interaction.options.getString("close");
   let closeSuffix = "";
   if (shouldClose) {
     const closedState = await getStateByName("closed");
@@ -1010,7 +1010,7 @@ export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
     attachments,
   });
 
-  const shouldClose = interaction.options.getBoolean("close");
+  const shouldClose = !!interaction.options.getString("close");
   let closeSuffix = "";
   if (shouldClose) {
     const closedState = await getStateByName("closed");
