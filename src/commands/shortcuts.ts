@@ -348,10 +348,10 @@ export const aireplyCommand = new SlashCommandBuilder()
   .addStringOption((o) =>
     o.setName("language").setDescription("Response language").setRequired(false)
       .addChoices(
-        { name: "English", value: "en" },
         { name: "Portuguese (Brazilian)", value: "pt-br" },
+        { name: "Chinese", value: "zh" },
         { name: "Arabic", value: "ar" },
-        { name: "Chinese", value: "zh" }
+        { name: "English", value: "en" }
       )
   )
   .addStringOption((o) =>
@@ -391,10 +391,27 @@ export const aisummaryCommand = new SlashCommandBuilder()
   .addStringOption((o) =>
     o.setName("language").setDescription("Response language").setRequired(false)
       .addChoices(
-        { name: "English", value: "en" },
         { name: "Portuguese (Brazilian)", value: "pt-br" },
+        { name: "Chinese", value: "zh" },
         { name: "Arabic", value: "ar" },
-        { name: "Chinese", value: "zh" }
+        { name: "English", value: "en" }
+      )
+  )
+  .addStringOption((o) =>
+    o.setName("translate").setDescription("Translate the summary into this language").setRequired(false)
+      .addChoices(
+        { name: "Portuguese (Brazilian)", value: "pt-br" },
+        { name: "Chinese", value: "zh" },
+        { name: "Arabic", value: "ar" },
+        { name: "English", value: "en" },
+        { name: "Spanish", value: "es" },
+        { name: "French", value: "fr" },
+        { name: "German", value: "de" },
+        { name: "Japanese", value: "ja" },
+        { name: "Korean", value: "ko" },
+        { name: "Russian", value: "ru" },
+        { name: "Italian", value: "it" },
+        { name: "Hindi", value: "hi" }
       )
   )
   .addStringOption((o) =>
@@ -427,10 +444,10 @@ export const aihelpCommand = new SlashCommandBuilder()
   .addStringOption((o) =>
     o.setName("language").setDescription("Response language").setRequired(false)
       .addChoices(
-        { name: "English", value: "en" },
         { name: "Portuguese (Brazilian)", value: "pt-br" },
+        { name: "Chinese", value: "zh" },
         { name: "Arabic", value: "ar" },
-        { name: "Chinese", value: "zh" }
+        { name: "English", value: "en" }
       )
   )
   .addStringOption((o) =>
@@ -486,10 +503,10 @@ export const aiproofreadCommand = new SlashCommandBuilder()
   .addStringOption((o) =>
     o.setName("language").setDescription("Response language").setRequired(false)
       .addChoices(
-        { name: "English", value: "en" },
         { name: "Portuguese (Brazilian)", value: "pt-br" },
+        { name: "Chinese", value: "zh" },
         { name: "Arabic", value: "ar" },
-        { name: "Chinese", value: "zh" }
+        { name: "English", value: "en" }
       )
   )
   .addStringOption((o) =>
@@ -500,4 +517,28 @@ export const aiproofreadCommand = new SlashCommandBuilder()
         { name: "Brief", value: "brief" },
         { name: "Empathetic", value: "empathetic" }
       )
+  );
+
+export const aitranslateCommand = new SlashCommandBuilder()
+  .setName("aitranslate")
+  .setDescription("Translate text or ticket content into a target language")
+  .addStringOption((o) =>
+    o.setName("language").setDescription("Target language (code or name, e.g. pt-br, zh, arabic)").setRequired(true)
+      .addChoices(
+        { name: "Portuguese (Brazilian)", value: "pt-br" },
+        { name: "Chinese", value: "zh" },
+        { name: "Arabic", value: "ar" },
+        { name: "English", value: "en" },
+        { name: "Spanish", value: "es" },
+        { name: "French", value: "fr" },
+        { name: "German", value: "de" },
+        { name: "Japanese", value: "ja" },
+        { name: "Korean", value: "ko" },
+        { name: "Russian", value: "ru" },
+        { name: "Italian", value: "it" },
+        { name: "Hindi", value: "hi" }
+      )
+  )
+  .addStringOption((o) =>
+    o.setName("content").setDescription("Text to translate (omit to translate the full ticket thread)").setRequired(false)
   );
