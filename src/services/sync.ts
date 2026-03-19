@@ -4,6 +4,7 @@ import { logger } from "../util/logger.js";
 import {
   getThreadByTicketId,
   isArticleSynced,
+  isArticleSyncedForTicket,
   markArticleSynced,
   isDeliveryProcessed,
   markDeliveryProcessed,
@@ -322,7 +323,7 @@ async function processWebhook(
   // article may not be in the API response yet when syncAllUnsyncedArticles
   // fetches articles. If the webhook included an article and it's STILL not
   // synced after the API fetch, post it directly from the webhook payload.
-  if (webhookArticle && !isArticleSynced(webhookArticle.id)) {
+  if (webhookArticle && !isArticleSyncedForTicket(webhookArticle.id, ticketId)) {
     logger.warn(
       { ticketId, articleId: webhookArticle.id },
       "Webhook article missing from API response — using webhook payload as fallback"
@@ -361,8 +362,9 @@ export async function syncAllUnsyncedArticles(
   articles.sort((a: { id: number }, b: { id: number }) => a.id - b.id);
 
   const articleIds = articles.map((a: { id: number }) => a.id);
-  const alreadySynced = articleIds.filter((id: number) => isArticleSynced(id));
-  const unsynced = articleIds.filter((id: number) => !isArticleSynced(id));
+  // Use ticket-aware check: an article synced to the WRONG ticket is treated as unsynced
+  const alreadySynced = articleIds.filter((id: number) => isArticleSyncedForTicket(id, ticketId));
+  const unsynced = articleIds.filter((id: number) => !isArticleSyncedForTicket(id, ticketId));
   logger.info(
     { ticketId, total: articles.length, alreadySynced: alreadySynced.length, unsynced: unsynced.length, unsyncedIds: unsynced },
     "Article sync check"
@@ -374,8 +376,18 @@ export async function syncAllUnsyncedArticles(
   let hasFirstArticle = false;
 
   for (const article of articles) {
-    if (isArticleSynced(article.id)) {
+    if (isArticleSyncedForTicket(article.id, ticketId)) {
       if (article.sender !== "System") hasFirstArticle = true;
+      continue;
+    }
+
+    // Guard: if Zammad API returned an article that doesn't belong to this ticket
+    // (can happen with stale API data), skip it to prevent cross-ticket misattribution.
+    if (article.ticket_id && article.ticket_id !== ticketId) {
+      logger.warn(
+        { ticketId, articleId: article.id, articleTicketId: article.ticket_id },
+        "Article belongs to a different ticket — skipping to prevent misattribution"
+      );
       continue;
     }
 
