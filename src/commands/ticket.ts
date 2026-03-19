@@ -1573,6 +1573,14 @@ const LANG_MAP: Record<string, string> = {
   "pt-br": "Brazilian Portuguese",
   ar: "Arabic",
   zh: "Chinese",
+  es: "Spanish",
+  fr: "French",
+  de: "German",
+  ja: "Japanese",
+  ko: "Korean",
+  ru: "Russian",
+  it: "Italian",
+  hi: "Hindi",
 };
 
 const TONE_MAP: Record<string, string> = {
@@ -1599,12 +1607,16 @@ const FORMAT_MAP: Record<string, string> = {
   checklist: "Format as a checkbox checklist.",
 };
 
+function resolveLanguageName(langCode: string): string {
+  return LANG_MAP[langCode] ?? langCode;
+}
+
 function getLanguageInstruction(interaction: ChatInputCommandInteraction): string {
   const langCode = interaction.options.getString("language")
     ?? getSettingOrEnv("AI_DEFAULT_LANGUAGE")
     ?? "en";
   if (langCode === "en") return "";
-  const language = LANG_MAP[langCode] ?? "English";
+  const language = resolveLanguageName(langCode);
   return ` Respond entirely in ${language}.`;
 }
 
@@ -1725,6 +1737,14 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
     const extraContext = interaction.options.getString("context") ?? "";
 
     const ticketContext = await buildTicketContext(mapping.ticket_id, { excludeInternal });
+
+    // Check for translate option — if set, override language for the summary output
+    const translateCode = interaction.options.getString("translate");
+    const translateLang = translateCode ? resolveLanguageName(translateCode) : null;
+    const effectiveLangInstruction = translateLang
+      ? ` Respond entirely in ${translateLang}.`
+      : langInstruction;
+
     const response = await aiChat(
       "You are a support ticket analyst helping an agent quickly understand a ticket.\n\n" +
         `Agent requesting summary: ${callerName}\n\n` +
@@ -1735,8 +1755,9 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
         "- Identify the core issue and current status\n" +
         "- Flag any escalation signals or frustrated customer indicators\n" +
         "- Note if awaiting customer response vs agent action needed" +
+        (translateLang ? `\n- Translate the ENTIRE summary into ${translateLang}` : "") +
         styleInstruction +
-        langInstruction + "\n\n" +
+        effectiveLangInstruction + "\n\n" +
         ticketContext +
         (extraContext ? `\n\n=== AGENT'S ADDITIONAL CONTEXT ===\n${extraContext}` : ""),
       "Provide a brief summary with this structure:\n\n" +
@@ -1744,11 +1765,12 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
         "**Status:** (current state, who's ball is it in?)\n\n" +
         "**Key Info:** (bullet points of critical details - customer sentiment, any deadlines, blockers)\n\n" +
         "**Recommended Action:** (either a 1-2 sentence suggested reply OR 2-3 bullet points of next steps)" +
-        langInstruction
+        effectiveLangInstruction
     );
 
     // Clear AI labeling - this does NOT go to Zammad, stays in Discord only
-    const fullMessage = "🤖 **AI Generated - For Agent Reference Only**\n\n" + response;
+    const translateLabel = translateLang ? ` (Translated to ${translateLang})` : "";
+    const fullMessage = `🤖 **AI Generated - For Agent Reference Only**${translateLabel}\n\n` + response;
 
     const chunks = splitMessage(fullMessage);
     await interaction.editReply(chunks[0]);
@@ -1906,6 +1928,78 @@ export async function handleAiProofread(interaction: ChatInputCommandInteraction
     logger.error({ err }, "AI proofread command failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
     await interaction.editReply(`AI proofread failed: ${msg}`);
+  }
+}
+
+// ---------------------------------------------------------------
+// /aitranslate — Translate text or ticket thread into a language
+// ---------------------------------------------------------------
+
+export async function handleAiTranslate(interaction: ChatInputCommandInteraction) {
+  const mapping = await requireMapping(interaction);
+  if (!mapping) return;
+  await interaction.deferReply({ ephemeral: false });
+
+  try {
+    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+
+    if (!isAIConfigured()) {
+      await interaction.editReply(
+        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+      );
+      return;
+    }
+
+    const langCode = interaction.options.getString("language", true);
+    const targetLanguage = resolveLanguageName(langCode);
+    const content = interaction.options.getString("content");
+
+    let response: string;
+
+    if (content) {
+      // Translate user-provided text directly
+      response = await aiChat(
+        "You are a professional translator. Translate the given text accurately into the target language.\n\n" +
+          "RULES:\n" +
+          "- Translate accurately while preserving meaning and tone\n" +
+          "- Keep technical terms, proper nouns, and brand names untranslated unless there is a standard localized form\n" +
+          "- Maintain formatting (bullet points, paragraphs, etc.)\n" +
+          "- Output ONLY the translated text — no explanations, notes, or preamble\n" +
+          `- Target language: ${targetLanguage}`,
+        `Translate the following text into ${targetLanguage}:\n\n${content}`
+      );
+    } else {
+      // Translate the entire ticket thread
+      const ticketContext = await buildTicketContext(mapping.ticket_id);
+      response = await aiChat(
+        "You are a professional translator for customer support tickets.\n\n" +
+          "INSTRUCTIONS:\n" +
+          "- Translate the entire ticket conversation into the target language\n" +
+          "- Preserve the structure: keep sender labels, timestamps, and message boundaries clear\n" +
+          "- Translate both customer and agent messages\n" +
+          "- Keep technical terms, proper nouns, and brand names untranslated unless there is a standard localized form\n" +
+          "- Present a clean, readable translated summary of the full thread\n" +
+          `- Target language: ${targetLanguage}\n\n` +
+          ticketContext,
+        `Translate the full ticket conversation above into ${targetLanguage}. Output the translated thread preserving the conversation structure.`
+      );
+    }
+
+    const label = content ? "Text Translation" : "Ticket Translation";
+    const fullMessage =
+      `🌐 **AI ${label} → ${targetLanguage}**\n` +
+      "_For agent reference only._\n\n" +
+      `\`\`\`\n${response}\n\`\`\``;
+
+    const chunks = splitMessage(fullMessage);
+    await interaction.editReply(chunks[0]);
+    for (let i = 1; i < chunks.length; i++) {
+      await interaction.followUp(chunks[i]);
+    }
+  } catch (err) {
+    logger.error({ err }, "AI translate command failed");
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    await interaction.editReply(`AI translation failed: ${msg}`);
   }
 }
 
