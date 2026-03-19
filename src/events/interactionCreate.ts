@@ -29,6 +29,7 @@ import {
   handleAiSummary,
   handleAiHelp,
   handleAiProofread,
+  handleAiTranslate,
   handleWeekly,
   handleChecknote,
   handleRename,
@@ -141,6 +142,9 @@ export function onInteractionCreate(client: Client): void {
           break;
         case "aiproofread":
           await handleAiProofread(interaction);
+          break;
+        case "aitranslate":
+          await handleAiTranslate(interaction);
           break;
         case "weekly":
           await handleWeekly(interaction);
