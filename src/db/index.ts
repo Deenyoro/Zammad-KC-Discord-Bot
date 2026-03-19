@@ -146,6 +146,19 @@ export function isArticleSynced(articleId: number): boolean {
   return !!row;
 }
 
+/**
+ * Check if an article is synced AND attributed to the correct ticket.
+ * Returns true only if the article is synced for the specified ticket.
+ * This prevents a race condition where concurrent webhook processing
+ * can cause an article to be attributed to the wrong ticket.
+ */
+export function isArticleSyncedForTicket(articleId: number, ticketId: number): boolean {
+  const row = db()
+    .prepare("SELECT 1 FROM synced_articles WHERE article_id = ? AND ticket_id = ?")
+    .get(articleId, ticketId);
+  return !!row;
+}
+
 export function markArticleSynced(
   articleId: number,
   ticketId: number,
@@ -155,7 +168,7 @@ export function markArticleSynced(
 ): void {
   db()
     .prepare(
-      `INSERT OR IGNORE INTO synced_articles (article_id, ticket_id, thread_id, discord_msg_id, direction)
+      `INSERT OR REPLACE INTO synced_articles (article_id, ticket_id, thread_id, discord_msg_id, direction)
        VALUES (?, ?, ?, ?, ?)`
     )
     .run(articleId, ticketId, threadId, discordMsgId, direction);
