@@ -27,6 +27,11 @@ import { DASHBOARD_STATES } from "../util/states.js";
 const DASHBOARD_THREAD_ID_KEY = "dashboard:other_tickets:thread_id";
 const DASHBOARD_MSG_ID_KEY = "dashboard:other_tickets:message_id";
 
+/** Minimum interval between dashboard re-posts (bumps) in ms. */
+const DASHBOARD_BUMP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+let lastDashboardBumpTime = 0;
+let lastDashboardContentHash = "";
+
 // Migrate from old WFR-only keys if they exist
 function migrateOldKeys(): void {
   const oldThreadId = getSetting("dashboard:waiting_for_reply:thread_id");
@@ -204,35 +209,23 @@ async function tryUpdateExisting(
       logger.warn({ threadId, err }, "Failed to add role members to dashboard thread")
     );
 
-    try {
-      const lastMessages = await thread.messages.fetch({ limit: 1 });
-      const lastMsg = lastMessages.first();
-      const isAtBottom = lastMsg?.id === msgId;
+    // Decide whether to bump (delete + re-post) or just edit in place.
+    // Bumping keeps the thread at the top of the thread list, but we throttle
+    // to avoid excessive churn. Bump immediately if content changed, otherwise
+    // bump every DASHBOARD_BUMP_INTERVAL_MS to keep the thread visible.
+    const contentHash = embed.data.description ?? "";
+    const contentChanged = contentHash !== lastDashboardContentHash;
+    const timeSinceBump = Date.now() - lastDashboardBumpTime;
+    const shouldBump = contentChanged || timeSinceBump >= DASHBOARD_BUMP_INTERVAL_MS;
 
-      if (isAtBottom) {
-        const msg = await thread.messages.fetch(msgId);
-        await discordQueue.add(async () => {
-          await msg.edit({ embeds: [embed] });
-        });
-      } else {
-        try {
-          const oldMsg = await thread.messages.fetch(msgId);
-          await discordQueue.add(async () => { await oldMsg.delete(); });
-        } catch {
-          // Already deleted
-        }
-        const newMsg = (await discordQueue.add(async () =>
-          thread.send({
-            embeds: [embed],
-            flags: 4096, // SUPPRESS_NOTIFICATIONS
-          } as any)
-        )) as Message | undefined;
-        if (newMsg) {
-          setSetting(DASHBOARD_MSG_ID_KEY, newMsg.id);
-        }
+    if (shouldBump) {
+      // Delete old embed and send a fresh one (SUPPRESS_NOTIFICATIONS = silent)
+      try {
+        const oldMsg = await thread.messages.fetch(msgId);
+        await discordQueue.add(async () => { await oldMsg.delete(); });
+      } catch {
+        // Already deleted — that's fine
       }
-    } catch {
-      logger.info({ threadId }, "Dashboard embed message missing, posting new one");
       const newMsg = (await discordQueue.add(async () =>
         thread.send({
           embeds: [embed],
@@ -241,6 +234,19 @@ async function tryUpdateExisting(
       )) as Message | undefined;
       if (newMsg) {
         setSetting(DASHBOARD_MSG_ID_KEY, newMsg.id);
+      }
+      lastDashboardBumpTime = Date.now();
+      lastDashboardContentHash = contentHash;
+    } else {
+      // Just edit the existing embed in place (no bump, saves API calls)
+      try {
+        const msg = await thread.messages.fetch(msgId);
+        await discordQueue.add(async () => {
+          await msg.edit({ embeds: [embed] });
+        });
+      } catch {
+        // Message gone — force a bump next cycle
+        lastDashboardContentHash = "";
       }
     }
 
