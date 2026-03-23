@@ -47,7 +47,7 @@ function buildOpenAICompatibleProvider(
           ],
           max_tokens: 1024,
         }),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(120_000),
       });
 
       if (!res.ok) {
@@ -79,7 +79,7 @@ function buildAnthropicProvider(apiKey: string, model: string): AIProvider {
           system: systemPrompt,
           messages: [{ role: "user", content: userMessage }],
         }),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(120_000),
       });
 
       if (!res.ok) {

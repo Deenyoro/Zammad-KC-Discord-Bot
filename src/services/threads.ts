@@ -240,6 +240,10 @@ export async function renameTicketThread(
     logger.warn({ threadId }, "Thread not found or not a thread for rename");
     return;
   }
+  // Skip rename for archived threads — Discord rejects setName on archived threads
+  // and the backfill would retry every cycle, creating a noisy error loop.
+  if (thread.archived) return;
+
   const name = buildThreadName(ticketNumber, newTitle, ownerLabel);
   const oldName = thread.name;
   if (name === oldName) return; // no change needed
