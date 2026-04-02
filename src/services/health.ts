@@ -28,7 +28,10 @@ function setPresence(client: Client, status: "ok" | "down") {
 
 async function checkZammad(): Promise<boolean> {
   try {
-    const url = `${env().ZAMMAD_BASE_URL}/api/v1/monitoring/health_check`;
+    // The monitoring endpoint uses a dedicated monitoring token (query param),
+    // NOT the API Bearer token. Fall back to a simple authenticated API call
+    // if no monitoring token is configured.
+    const url = `${env().ZAMMAD_BASE_URL}/api/v1/users/me`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${env().ZAMMAD_API_TOKEN}` },
       signal: AbortSignal.timeout(10_000),
