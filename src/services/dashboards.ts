@@ -11,12 +11,14 @@
 
 import {
   Client,
+  Collection,
   EmbedBuilder,
   TextChannel,
   ThreadAutoArchiveDuration,
   ThreadChannel,
   Message,
 } from "discord.js";
+import { createHash } from "node:crypto";
 import { env } from "../util/env.js";
 import { logger } from "../util/logger.js";
 import { getAllTicketThreads, getSetting, setSetting } from "../db/index.js";
@@ -26,11 +28,11 @@ import { DASHBOARD_STATES } from "../util/states.js";
 
 const DASHBOARD_THREAD_ID_KEY = "dashboard:other_tickets:thread_id";
 const DASHBOARD_MSG_ID_KEY = "dashboard:other_tickets:message_id";
+const DASHBOARD_BUMP_TIME_KEY = "dashboard:other_tickets:bump_time";
+const DASHBOARD_CONTENT_HASH_KEY = "dashboard:other_tickets:content_hash";
 
 /** Minimum interval between dashboard re-posts (bumps) in ms. */
 const DASHBOARD_BUMP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-let lastDashboardBumpTime = 0;
-let lastDashboardContentHash = "";
 
 // Migrate from old WFR-only keys if they exist
 function migrateOldKeys(): void {
@@ -210,22 +212,20 @@ async function tryUpdateExisting(
     );
 
     // Decide whether to bump (delete + re-post) or just edit in place.
-    // Bumping keeps the thread at the top of the thread list, but we throttle
-    // to avoid excessive churn. Bump immediately if content changed, otherwise
-    // bump every DASHBOARD_BUMP_INTERVAL_MS to keep the thread visible.
-    const contentHash = embed.data.description ?? "";
-    const contentChanged = contentHash !== lastDashboardContentHash;
-    const timeSinceBump = Date.now() - lastDashboardBumpTime;
+    // Hash only the stable ticket data (IDs + states) so that time-only
+    // changes don't trigger a bump — only actual ticket list changes do.
+    const contentHash = stableContentHash(embed);
+    const lastHash = getSetting(DASHBOARD_CONTENT_HASH_KEY) ?? "";
+    const lastBumpStr = getSetting(DASHBOARD_BUMP_TIME_KEY) ?? "0";
+    const lastBumpTime = parseInt(lastBumpStr, 10) || 0;
+    const contentChanged = contentHash !== lastHash;
+    const timeSinceBump = Date.now() - lastBumpTime;
     const shouldBump = contentChanged || timeSinceBump >= DASHBOARD_BUMP_INTERVAL_MS;
 
     if (shouldBump) {
-      // Delete old embed and send a fresh one (SUPPRESS_NOTIFICATIONS = silent)
-      try {
-        const oldMsg = await thread.messages.fetch(msgId);
-        await discordQueue.add(async () => { await oldMsg.delete(); });
-      } catch {
-        // Already deleted — that's fine
-      }
+      // Delete ALL bot embeds in the thread to prevent duplicates
+      await deleteAllBotEmbeds(thread, client.user!.id);
+
       const newMsg = (await discordQueue.add(async () =>
         thread.send({
           embeds: [embed],
@@ -235,8 +235,8 @@ async function tryUpdateExisting(
       if (newMsg) {
         setSetting(DASHBOARD_MSG_ID_KEY, newMsg.id);
       }
-      lastDashboardBumpTime = Date.now();
-      lastDashboardContentHash = contentHash;
+      setSetting(DASHBOARD_BUMP_TIME_KEY, String(Date.now()));
+      setSetting(DASHBOARD_CONTENT_HASH_KEY, contentHash);
     } else {
       // Just edit the existing embed in place (no bump, saves API calls)
       try {
@@ -246,7 +246,7 @@ async function tryUpdateExisting(
         });
       } catch {
         // Message gone — force a bump next cycle
-        lastDashboardContentHash = "";
+        setSetting(DASHBOARD_CONTENT_HASH_KEY, "");
       }
     }
 
@@ -314,6 +314,48 @@ async function createDashboardThread(
   }
 
   logger.info({ threadId: thread.id }, "Created Other Tickets dashboard thread");
+}
+
+/**
+ * Hash only the ticket numbers and states from the embed title so that
+ * time-only description changes (relative timestamps) don't trigger bumps.
+ */
+function stableContentHash(embed: EmbedBuilder): string {
+  // Extract ticket numbers and state headers from the description
+  const desc = embed.data.description ?? "";
+  // Keep lines that contain ticket numbers (#NNNNN) or state headers (emoji + bold label)
+  const stableLines = desc
+    .split("\n")
+    .filter((l) => /^[🟠🟣🔵]/.test(l) || /^#?\*\*#\d+\*\*/.test(l.trim()))
+    .join("\n");
+  return createHash("sha256").update(stableLines).digest("hex").slice(0, 16);
+}
+
+/**
+ * Delete all embed messages posted by the bot in this thread.
+ * Prevents duplicate dashboard messages from accumulating.
+ */
+async function deleteAllBotEmbeds(thread: ThreadChannel, botUserId: string): Promise<void> {
+  try {
+    let messages: Collection<string, Message>;
+    try {
+      messages = await thread.messages.fetch({ limit: 50 });
+    } catch {
+      return;
+    }
+    const botEmbeds = messages.filter(
+      (m) => m.author.id === botUserId && m.embeds.length > 0
+    );
+    for (const [, msg] of botEmbeds) {
+      try {
+        await discordQueue.add(async () => { await msg.delete(); });
+      } catch {
+        // Already deleted
+      }
+    }
+  } catch (err) {
+    logger.debug({ err, threadId: thread.id }, "Failed to clean up old bot embeds");
+  }
 }
 
 async function archiveDashboard(
