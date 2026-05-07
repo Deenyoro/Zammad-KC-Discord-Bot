@@ -189,16 +189,41 @@ export async function createTicketThread(
   return { threadId: thread.id, headerMessageId: headerMessage.id };
 }
 
+/**
+ * Cache of the most recent embed JSON we wrote per header message, so we can
+ * skip the channel.fetch + message.fetch + msg.edit roundtrip when the
+ * computed embed hasn't changed. Keyed by headerMessageId; values are the
+ * stringified result of `EmbedBuilder.toJSON()`.
+ *
+ * In-memory only; a bot restart clears it, which means the first sync after
+ * restart will write 1 edit per ticket (same as old behavior). Subsequent
+ * syncs only edit when an input field actually changes. Tickets with an
+ * active SLA countdown still update each cycle because the rendered
+ * "Xm remaining" string changes — same as before.
+ */
+const _headerEmbedCache = new Map<string, string>();
+
 export async function updateHeaderEmbed(
   client: Client,
   channelId: string,
   headerMessageId: string,
   ticket: TicketInfo
 ): Promise<void> {
+  const embed = buildTicketEmbed(ticket);
+  const sig = JSON.stringify(embed.toJSON());
+
+  // If the embed we'd write is byte-identical to the last one we wrote for
+  // this header message, skip the entire fetch+edit round-trip. Discord's
+  // copy of the embed will already match, since either we wrote the cached
+  // value last cycle or no other writer is updating this header message.
+  if (_headerEmbedCache.get(headerMessageId) === sig) {
+    return;
+  }
+
   const channel = (await client.channels.fetch(channelId)) as TextChannel;
   const msg = await channel.messages.fetch(headerMessageId);
-  const embed = buildTicketEmbed(ticket);
   await discordQueue.add(async () => { await msg.edit({ embeds: [embed] }); });
+  _headerEmbedCache.set(headerMessageId, sig);
 }
 
 export async function closeTicketThread(client: Client, threadId: string): Promise<void> {
