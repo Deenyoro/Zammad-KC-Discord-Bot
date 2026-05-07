@@ -899,18 +899,21 @@ export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
   // Expand ::shortcut text modules before sending
   const { expanded: text, contentType, used: expandedModules } = await expandTextModules(rawText);
 
-  // Find the last email article to extract recipients
-  const articles = await getArticles(mapping.ticket_id);
-  const lastEmail = [...articles].reverse().find(
-    (a) => a.type === "email" && (a.sender === "Customer" || a.sender === "Agent")
-  );
-
-  if (!lastEmail) {
-    await interaction.editReply("No email articles found on this ticket. Use `/reply` instead.");
+  // Use the same channel-detection logic /reply uses. SMS / Teams tickets
+  // have no concept of CC, and tickets created via the website form may
+  // have no email articles at all — both cases need to fall back to a
+  // regular reply on the ticket's actual channel rather than failing.
+  const channel = await detectReplyChannel(mapping.ticket_id);
+  if (!channel) {
+    await interaction.editReply(
+      "Could not determine reply channel for this ticket. No customer articles found.",
+    );
     return;
   }
 
-  // Get the ticket's customer email (this is who we always reply TO)
+  const articles = await getArticles(mapping.ticket_id);
+
+  // Resolve the customer's email address for use in TO when the channel is email.
   const ticket = await getTicket(mapping.ticket_id);
   let customerEmail: string | undefined;
   if (ticket.customer_id) {
@@ -920,43 +923,56 @@ export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
     } catch { /* ignore */ }
   }
 
-  if (!customerEmail) {
-    await interaction.editReply("Could not determine customer email address.");
-    return;
-  }
+  // Default to whatever detectReplyChannel produced; for email tickets we
+  // overwrite this with the customer's email (consistent with the previous
+  // /replyall behavior).
+  let to: string = channel.to;
+  let cc: string | undefined;
+  let fellBackToReply = false;
 
-  // Collect all unique email addresses from the last email's to/cc/from fields
-  // We'll put the customer in TO and everyone else in CC
-  const allAddresses = new Set<string>();
+  if (channel.type === "email") {
+    if (customerEmail) to = customerEmail;
 
-  for (const field of [lastEmail.from, lastEmail.to, lastEmail.cc]) {
-    if (!field) continue;
-    for (const part of field.split(",")) {
-      const email = parseEmailAddress(part.trim());
-      if (email) allAddresses.add(email.toLowerCase());
+    // Aggregate addresses from EVERY email article on the ticket — not just
+    // the last one. A web-form-created ticket can have zero email articles;
+    // in that case the aggregate is empty and replyall degrades to a plain
+    // reply to the customer.
+    const allAddresses = new Set<string>();
+    for (const a of articles) {
+      if (a.type !== "email") continue;
+      for (const field of [a.from, a.to, a.cc]) {
+        if (!field) continue;
+        for (const part of field.split(",")) {
+          const email = parseEmailAddress(part.trim());
+          if (email) allAddresses.add(email.toLowerCase());
+        }
+      }
     }
-  }
 
-  // Remove the customer (goes in TO) and our own support addresses
-  // Get agent emails from user_map to exclude them too
-  const agentEmail = getUserMap(interaction.user.id)?.zammad_email?.toLowerCase();
-  const excludeSet = new Set<string>();
-  excludeSet.add(customerEmail);
-  if (agentEmail) excludeSet.add(agentEmail);
-
-  // Exclude any Zammad system/channel email addresses (common support@ addresses)
-  // by checking if the address matches the "from" of any agent article
-  for (const a of articles) {
-    if (a.sender === "Agent" && a.from) {
-      const agentFrom = parseEmailAddress(a.from);
-      if (agentFrom) excludeSet.add(agentFrom.toLowerCase());
+    // Build exclude set: the customer (goes in TO), the invoking agent's email,
+    // and any address that has appeared as an Agent "from" (Zammad's outbound
+    // support addresses).
+    const agentEmail = getUserMap(interaction.user.id)?.zammad_email?.toLowerCase();
+    const excludeSet = new Set<string>();
+    if (customerEmail) excludeSet.add(customerEmail);
+    if (agentEmail) excludeSet.add(agentEmail);
+    for (const a of articles) {
+      if (a.sender === "Agent" && a.from) {
+        const agentFrom = parseEmailAddress(a.from);
+        if (agentFrom) excludeSet.add(agentFrom.toLowerCase());
+      }
     }
+
+    const ccAddresses = [...allAddresses].filter((e) => !excludeSet.has(e));
+    cc = ccAddresses.length > 0 ? ccAddresses.join(", ") : undefined;
+    if (!cc) fellBackToReply = true;
+  } else {
+    // SMS / Teams: replyall has no extra recipients to add. Send a regular
+    // reply on the detected channel. (The previous implementation
+    // hard-coded type:"email" here, so SMS/Teams replyalls were silently
+    // misrouted as email articles.)
+    fellBackToReply = true;
   }
-
-  const ccAddresses = [...allAddresses].filter((e) => !excludeSet.has(e));
-
-  const to = customerEmail;
-  const cc = ccAddresses.length > 0 ? ccAddresses.join(", ") : undefined;
 
   // Get user mapping for attribution
   const userEntry = getUserMap(interaction.user.id);
@@ -1011,17 +1027,21 @@ export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
     }
   }
 
+  // Note: origin_by_id is only sent for email — Zammad has a bug where setting
+  // origin_by_id forces sender to "Customer" for non-email types, which breaks
+  // Teams/SMS delivery (the communicate job checks for sender="Agent"). Same
+  // gate as /reply.
   await createArticle({
     ticket_id: mapping.ticket_id,
     body: text,
-    subject: mapping.title || undefined,
-    type: "email",
+    subject: channel.type === "email" ? (mapping.title || undefined) : undefined,
+    type: channel.type,
     sender: "Agent",
     internal: false,
     content_type: contentType,
     to,
     cc,
-    origin_by_id: userEntry?.zammad_id ?? undefined,
+    origin_by_id: channel.type === "email" ? (userEntry?.zammad_id ?? undefined) : undefined,
     attachments,
   });
 
@@ -1041,8 +1061,14 @@ export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
   const fileSuffix = fileOption ? ` with attachment "${fileOption.name}"${convertedLabel}` : "";
   const ccSuffix = cc ? `\nCC: ${cc}` : "";
   const tmSuffix = expandedModules.length > 0 ? `\n📝 Expanded: ${expandedModules.join(", ")}` : "";
+  const fallbackNote = fellBackToReply
+    ? channel.type === "email"
+      ? " (no other email participants found — sent as a regular reply)"
+      : ` (\`/replyall\` has no effect on ${channel.type} tickets — sent as a regular reply)`
+    : "";
+  const verb = fellBackToReply ? "Reply" : "Reply-all";
   await interaction.editReply(
-    `Reply-all sent to ${to}${ccSuffix}${fileSuffix} on ticket #${mapping.ticket_number}.${closeSuffix}${tmSuffix}`
+    `${verb} sent (${channel.label})${ccSuffix}${fileSuffix} on ticket #${mapping.ticket_number}.${closeSuffix}${fallbackNote}${tmSuffix}`,
   );
 }
 
