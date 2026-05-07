@@ -349,19 +349,56 @@ async function getRoleMemberIds(guild: import("discord.js").Guild): Promise<stri
   return _roleMemberIds;
 }
 
-/** Fetch all guild members with the ticket role and add them to the thread. */
+/**
+ * Ensure all guild members with the ticket role are present in the thread.
+ *
+ * Computes the diff between the role's member list and the thread's current
+ * members and only issues `thread.members.add` for the missing ones. Without
+ * this check, every periodic backfill cycle re-issues N adds on every open
+ * ticket (where N = ticket-role member count); each is idempotent server-side
+ * but still costs a Discord REST roundtrip and rate-limit budget. With ~20
+ * open tickets and a ~5-member role the bot was burning ~100 REST calls per
+ * sync cycle and stretching each cycle to ~2 minutes.
+ */
 export async function addRoleMembersToThread(thread: ThreadChannel): Promise<void> {
   try {
-    const memberIds = await getRoleMemberIds(thread.guild);
-    logger.info({ threadId: thread.id, memberCount: memberIds.length }, "Adding role members to thread");
+    const roleMemberIds = await getRoleMemberIds(thread.guild);
+    if (roleMemberIds.length === 0) return;
+
+    let missingMemberIds: string[];
+    try {
+      const currentMembers = await thread.members.fetch();
+      const currentMemberIds = new Set(currentMembers.keys());
+      missingMemberIds = roleMemberIds.filter((id) => !currentMemberIds.has(id));
+    } catch (err) {
+      // If we can't fetch current members, fall back to adding all (old behavior).
+      logger.debug({ threadId: thread.id, err }, "Could not fetch thread members; falling back to add-all");
+      missingMemberIds = roleMemberIds;
+    }
+
+    if (missingMemberIds.length === 0) {
+      logger.debug(
+        { threadId: thread.id, roleMemberCount: roleMemberIds.length },
+        "All role members already in thread; skipping adds",
+      );
+      return;
+    }
+
+    logger.info(
+      { threadId: thread.id, addCount: missingMemberIds.length, roleMemberCount: roleMemberIds.length },
+      "Adding missing role members to thread",
+    );
     await Promise.allSettled(
-      memberIds.map((memberId) =>
+      missingMemberIds.map((memberId) =>
         discordQueue.add(async () => { await thread.members.add(memberId); }).catch((err) => {
           logger.debug({ memberId, threadId: thread.id, err }, "Failed to add role member to thread");
-        })
-      )
+        }),
+      ),
     );
-    logger.info({ threadId: thread.id, memberCount: memberIds.length }, "Role members added to thread");
+    logger.info(
+      { threadId: thread.id, addCount: missingMemberIds.length },
+      "Role members added to thread",
+    );
   } catch (err) {
     logger.warn({ threadId: thread.id, err }, "Failed to add role members to thread");
   }
