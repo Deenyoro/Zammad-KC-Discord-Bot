@@ -713,13 +713,28 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   const fileOption = interaction.options.getAttachment("file");
   const convertOption = interaction.options.getString("convert") as ConvertTarget | null;
 
-  // Validate and normalize "to" override — accepts bare email, "Name <email>", mailto:, etc.
+  // Validate and normalize "to" override — accepts bare email, "Name <email>", mailto:,
+  // or a comma-separated list of any of those (mirrors the cc: parsing below so the
+  // two fields behave consistently).
   let parsedTo: string | null = null;
   if (toOverride) {
-    parsedTo = parseEmailAddress(toOverride);
-    if (!parsedTo) {
-      await interaction.editReply(`Invalid email address: \`${toOverride.trim()}\`\nUse \`/participants\` to see valid addresses.`);
+    const toRaw = toOverride.split(",").map((e) => e.trim()).filter((e) => e.length > 0);
+    const toEmails: string[] = [];
+    const invalidTo: string[] = [];
+    for (const raw of toRaw) {
+      const parsed = parseEmailAddress(raw);
+      if (parsed) toEmails.push(parsed);
+      else invalidTo.push(raw);
+    }
+    if (invalidTo.length > 0) {
+      await interaction.editReply(
+        `Invalid \`to:\` email(s): ${invalidTo.map((e) => `\`${e}\``).join(", ")}\n` +
+          "Use `/participants` to see valid addresses.",
+      );
       return;
+    }
+    if (toEmails.length > 0) {
+      parsedTo = toEmails.join(", ");
     }
   }
 
