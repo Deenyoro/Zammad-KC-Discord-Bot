@@ -7,10 +7,10 @@ export const replyCommand = new SlashCommandBuilder()
     o.setName("text").setDescription("Reply text").setRequired(true)
   )
   .addStringOption((o) =>
-    o.setName("to").setDescription("Override recipient email (autocompletes from ticket)").setRequired(false).setAutocomplete(true)
+    o.setName("to").setDescription("Override recipient email(s) (comma-separated, autocompletes from ticket)").setRequired(false).setAutocomplete(true)
   )
   .addStringOption((o) =>
-    o.setName("cc").setDescription("CC emails (comma-separated, email only)").setRequired(false).setAutocomplete(true)
+    o.setName("cc").setDescription("CC email(s) (comma-separated, autocompletes from ticket)").setRequired(false).setAutocomplete(true)
   )
   .addAttachmentOption((o) =>
     o.setName("file").setDescription("Attach a file (image, document, etc.)").setRequired(false)
