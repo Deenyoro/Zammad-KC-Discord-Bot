@@ -37,6 +37,7 @@ export interface ZammadArticle {
   from?: string;
   to?: string;
   cc?: string;
+  reply_to?: string;
   body: string;
   internal: boolean;
   created_at: string;
