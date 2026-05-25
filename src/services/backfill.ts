@@ -20,7 +20,7 @@ import {
   formatOwnerLabelFromFull,
   type TicketInfo,
 } from "./threads.js";
-import { discordQueue } from "../queue/index.js";
+import { discordQueue, enqueueForTicket } from "../queue/index.js";
 import { isClosedState, isHiddenState, isDashboardState } from "../util/states.js";
 import { updateDashboards } from "./dashboards.js";
 
@@ -111,9 +111,18 @@ export async function syncAllTickets(client: Client): Promise<void> {
 
         // Periodic article catch-up: sync any articles missed by webhooks.
         // Runs every Nth cycle to avoid hammering the Zammad API every 30 s.
+        //
+        // MUST be enqueued through the per-ticket queue so it serializes
+        // with webhook-triggered syncs for the same ticket. Without this,
+        // a backfill cycle running concurrently with a webhook sync will
+        // post messages to Discord in interleaved order — even though each
+        // call sorts by article ID — because discordQueue has concurrency
+        // 10 and both callers' thread.send() requests race at the API.
         if (syncCycleCount % ARTICLE_CATCHUP_INTERVAL === 0) {
           try {
-            await syncAllUnsyncedArticles(client, existing.thread_id, ticket.id);
+            await enqueueForTicket(ticket.id, () =>
+              syncAllUnsyncedArticles(client, existing.thread_id, ticket.id),
+            );
           } catch (err) {
             logger.warn({ ticketId: ticket.id, err }, "Failed to catch up articles during periodic sync");
           }
@@ -178,8 +187,11 @@ export async function syncAllTickets(client: Client): Promise<void> {
             } else {
               await reopenTicketThread(client, existing.thread_id);
               logger.info({ ticketId: ticket.id, freshState: verifiedTicketInfo.state }, "Reopened thread for ticket that is no longer closed");
-              // Sync any articles that were missed while the ticket was closed
-              await syncAllUnsyncedArticles(client, existing.thread_id, ticket.id);
+              // Sync any articles that were missed while the ticket was closed.
+              // Through the per-ticket queue so it serializes with any in-flight webhook.
+              await enqueueForTicket(ticket.id, () =>
+                syncAllUnsyncedArticles(client, existing.thread_id, ticket.id),
+              );
             }
           }
 
