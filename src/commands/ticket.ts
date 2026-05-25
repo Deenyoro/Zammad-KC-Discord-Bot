@@ -567,19 +567,34 @@ export async function detectReplyChannel(
 
   const articleType = channelArticle.type;
 
+  // Helper: resolve the customer email with multiple fallbacks. Some tickets
+  // (web-form anonymous submissions, system-user customers) don't have a
+  // populated customer.email — but the article's `from` field usually does.
+  const resolveCustomerEmail = async (): Promise<string | undefined> => {
+    const ticket = await getTicket(ticketId);
+    // 1. Try the customer user record
+    if (ticket.customer_id && ticket.customer_id !== 1) {
+      try {
+        const customer = await getUser(ticket.customer_id);
+        const email = customer.email?.trim();
+        if (email) return email;
+      } catch { /* ignore */ }
+    }
+    // 2. Try parsing email from any Customer article's `from` field
+    for (const a of [...articles].reverse()) {
+      if (a.sender !== "Customer" || !a.from) continue;
+      const email = parseEmailAddress(a.from);
+      if (email) return email;
+    }
+    // 3. Fall back to ticket.customer (Zammad serialises this as the customer's email/login)
+    const ticketCustomer = (ticket.customer || "").trim();
+    if (ticketCustomer && parseEmailAddress(ticketCustomer)) return ticketCustomer;
+    return undefined;
+  };
+
   switch (articleType) {
     case "email": {
-      // For email: get customer email address
-      const ticket = await getTicket(ticketId);
-      let to: string | undefined;
-      if (ticket.customer_id) {
-        try {
-          const customer = await getUser(ticket.customer_id);
-          to = customer.email;
-        } catch {
-          to = ticket.customer;
-        }
-      }
+      const to = await resolveCustomerEmail();
       if (!to) return null;
       return { type: "email", to, label: `email to ${to}` };
     }
@@ -616,20 +631,14 @@ export async function detectReplyChannel(
       return { type: "teams_chat_message", to, label: `Teams message to ${to}` };
     }
 
-    default:
-      // Unknown channel type (phone, web, etc.) — default to email
-      const ticket = await getTicket(ticketId);
-      let to: string | undefined;
-      if (ticket.customer_id) {
-        try {
-          const customer = await getUser(ticket.customer_id);
-          to = customer.email;
-        } catch {
-          to = ticket.customer;
-        }
-      }
+    default: {
+      // Unknown channel type (phone, web, etc.) — default to email.
+      // This is the path web-form tickets land on; the resolver above
+      // recovers from missing customer.email by reading the article's from field.
+      const to = await resolveCustomerEmail();
       if (!to) return null;
       return { type: "email", to, label: `email to ${to}` };
+    }
   }
 }
 
@@ -649,28 +658,30 @@ export async function handleReplyAutocomplete(
     return;
   }
 
-  // Split the field on the last comma so users can build a list. Everything
-  // before the last comma is preserved verbatim as already-entered addresses;
+  // Split the field on the last separator so users can build a list. Everything
+  // before the last separator is preserved verbatim as already-entered addresses;
   // only the trailing fragment drives the search. Each returned choice
   // prepends the kept prefix so picking a suggestion APPENDS rather than
   // replacing — without this, Discord overwrites the whole field with the
   // selected value and the previously typed addresses are lost.
+  // Accept comma, semicolon, newline, or pipe as separators.
   const raw = focused.value;
-  const lastComma = raw.lastIndexOf(",");
-  const keptPrefix = lastComma >= 0 ? raw.slice(0, lastComma).trim() : "";
-  const query = (lastComma >= 0 ? raw.slice(lastComma + 1) : raw).trim().toLowerCase();
+  const lastSepMatch = raw.match(/[,;\n|](?=[^,;\n|]*$)/);
+  const lastSep = lastSepMatch && lastSepMatch.index !== undefined ? lastSepMatch.index : -1;
+  const keptPrefix = lastSep >= 0 ? raw.slice(0, lastSep).trim() : "";
+  const query = (lastSep >= 0 ? raw.slice(lastSep + 1) : raw).trim().toLowerCase();
   const prefixWithSep = keptPrefix ? `${keptPrefix}, ` : "";
 
   try {
     const articles = await getArticles(mapping.ticket_id);
 
-    // Collect unique emails from all articles
+    // Collect unique emails from all articles (from, to, cc, reply_to).
     const seen = new Map<string, string>(); // lowercase email → display label
     for (const a of articles) {
       if (a.sender === "System") continue;
-      for (const field of [a.from, a.to, a.cc]) {
+      for (const field of [a.from, a.to, a.cc, a.reply_to]) {
         if (!field) continue;
-        for (const part of field.split(",")) {
+        for (const part of field.split(/[,;]+/)) {
           const email = parseEmailAddress(part.trim());
           if (!email) continue;
           const lower = email.toLowerCase();
@@ -699,7 +710,7 @@ export async function handleReplyAutocomplete(
 
     // Don't suggest addresses the user has already typed in the prefix.
     const alreadyEntered = new Set<string>();
-    for (const part of keptPrefix.split(",")) {
+    for (const part of keptPrefix.split(/[,;\n|]+/)) {
       const email = parseEmailAddress(part.trim());
       if (email) alreadyEntered.add(email);
     }
@@ -734,11 +745,11 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   const convertOption = interaction.options.getString("convert") as ConvertTarget | null;
 
   // Validate and normalize "to" override — accepts bare email, "Name <email>", mailto:,
-  // or a comma-separated list of any of those (mirrors the cc: parsing below so the
-  // two fields behave consistently).
+  // or a delimited list (comma / semicolon / newline / pipe). All separators
+  // are accepted so paste-from-email-clients works regardless of style.
   let parsedTo: string | null = null;
   if (toOverride) {
-    const toRaw = toOverride.split(",").map((e) => e.trim()).filter((e) => e.length > 0);
+    const toRaw = toOverride.split(/[,;\n|]+/).map((e) => e.trim()).filter((e) => e.length > 0);
     const toEmails: string[] = [];
     const invalidTo: string[] = [];
     for (const raw of toRaw) {
@@ -746,6 +757,10 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
       if (parsed) toEmails.push(parsed);
       else invalidTo.push(raw);
     }
+    logger.info(
+      { rawInput: toOverride, parsed: toEmails, invalid: invalidTo, count: toEmails.length },
+      "/reply to: field parsed",
+    );
     if (invalidTo.length > 0) {
       await interaction.editReply(
         `Invalid \`to:\` email(s): ${invalidTo.map((e) => `\`${e}\``).join(", ")}\n` +
@@ -754,7 +769,8 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
       return;
     }
     if (toEmails.length > 0) {
-      parsedTo = toEmails.join(", ");
+      // Dedup while preserving order
+      parsedTo = [...new Set(toEmails)].join(", ");
     }
   }
 
@@ -783,12 +799,13 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   // Get user mapping for attribution
   const userEntry = getUserMap(interaction.user.id);
 
-  // Parse and validate CC emails (only applies to email tickets)
+  // Parse and validate CC emails (only applies to email tickets).
+  // Accepts the same delimiter set as the to: field (comma / semicolon / newline / pipe).
   let cc: string | undefined;
   let ccIgnored = false;
   if (ccInput) {
     if (channel.type === "email") {
-      const ccRaw = ccInput.split(',').map(e => e.trim()).filter(e => e.length > 0);
+      const ccRaw = ccInput.split(/[,;\n|]+/).map(e => e.trim()).filter(e => e.length > 0);
       const ccEmails: string[] = [];
       const invalid: string[] = [];
       for (const raw of ccRaw) {
@@ -796,12 +813,16 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
         if (parsed) ccEmails.push(parsed);
         else invalid.push(raw);
       }
+      logger.info(
+        { rawInput: ccInput, parsed: ccEmails, invalid, count: ccEmails.length },
+        "/reply cc: field parsed",
+      );
       if (invalid.length > 0) {
         await interaction.editReply(`Invalid CC email(s): ${invalid.map(e => `\`${e}\``).join(", ")}`);
         return;
       }
       if (ccEmails.length > 0) {
-        cc = ccEmails.join(', ');
+        cc = [...new Set(ccEmails)].join(', ');
       }
     } else {
       ccIgnored = true;
@@ -930,18 +951,6 @@ export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // SMS and Teams tickets have a single recipient by design — there is no
-  // CC concept, so /replyall is not meaningful. Reject explicitly instead
-  // of silently behaving like /reply, which previously confused agents.
-  if (channel.type !== "email") {
-    const channelName = channel.type === "ringcentral_sms_message" ? "SMS" :
-      channel.type === "teams_chat_message" ? "Teams" : channel.type;
-    await interaction.editReply(
-      `\`/replyall\` only applies to email tickets — this ticket's channel is ${channelName}. Use \`/reply\` instead.`,
-    );
-    return;
-  }
-
   const articles = await getArticles(mapping.ticket_id);
 
   // Resolve the customer's email address for use in TO when the channel is email.
@@ -954,43 +963,58 @@ export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
     } catch { /* ignore */ }
   }
 
-  let to: string = customerEmail ?? channel.to;
+  // SMS and Teams tickets have a single recipient by design — there is no
+  // CC concept. Fall back to a regular reply on the ticket's actual channel
+  // and surface that clearly in the response so the agent isn't surprised.
+  const isNonEmailChannel = channel.type !== "email";
+  let nonEmailFallback = false;
+  if (isNonEmailChannel) {
+    nonEmailFallback = true;
+  }
+
+  let to: string = (channel.type === "email" ? customerEmail : undefined) ?? channel.to;
   let cc: string | undefined;
   let fellBackToReply = false;
 
-  // Aggregate addresses from EVERY email article on the ticket — not just
-  // the last one. A web-form-created ticket can have zero email articles;
-  // in that case the aggregate is empty and replyall degrades to a plain
-  // reply to the customer.
-  const allAddresses = new Set<string>();
-  for (const a of articles) {
-    if (a.type !== "email") continue;
-    for (const field of [a.from, a.to, a.cc]) {
-      if (!field) continue;
-      for (const part of field.split(",")) {
-        const email = parseEmailAddress(part.trim());
-        if (email) allAddresses.add(email.toLowerCase());
+  if (!isNonEmailChannel) {
+    // Aggregate addresses from EVERY non-system article on the ticket —
+    // not just the last one, and not just email articles. Web-form tickets
+    // can have non-email participants in `to`/`cc` of the original web
+    // article, and later email replies add their own. Scanning all article
+    // types ensures replyall reaches everyone who has touched the thread.
+    //
+    // Fields scanned: from, to, cc, reply_to. BCC is intentionally EXCLUDED
+    // because revealing hidden recipients defeats the purpose of BCC.
+    const allAddresses = new Set<string>();
+    for (const a of articles) {
+      if (a.sender === "System") continue;
+      for (const field of [a.from, a.to, a.cc, a.reply_to]) {
+        if (!field) continue;
+        for (const part of field.split(/[,;]+/)) {
+          const email = parseEmailAddress(part.trim());
+          if (email) allAddresses.add(email.toLowerCase());
+        }
       }
     }
-  }
 
-  // Build exclude set: the customer (goes in TO), the invoking agent's email,
-  // and any address that has appeared as an Agent "from" (Zammad's outbound
-  // support addresses).
-  const agentEmail = getUserMap(interaction.user.id)?.zammad_email?.toLowerCase();
-  const excludeSet = new Set<string>();
-  if (customerEmail) excludeSet.add(customerEmail);
-  if (agentEmail) excludeSet.add(agentEmail);
-  for (const a of articles) {
-    if (a.sender === "Agent" && a.from) {
-      const agentFrom = parseEmailAddress(a.from);
-      if (agentFrom) excludeSet.add(agentFrom.toLowerCase());
+    // Build exclude set: the customer (goes in TO), the invoking agent's email,
+    // and any address that has appeared as an Agent "from" (Zammad's outbound
+    // support addresses).
+    const agentEmail = getUserMap(interaction.user.id)?.zammad_email?.toLowerCase();
+    const excludeSet = new Set<string>();
+    if (customerEmail) excludeSet.add(customerEmail);
+    if (agentEmail) excludeSet.add(agentEmail);
+    for (const a of articles) {
+      if (a.sender === "Agent" && a.from) {
+        const agentFrom = parseEmailAddress(a.from);
+        if (agentFrom) excludeSet.add(agentFrom.toLowerCase());
+      }
     }
-  }
 
-  const ccAddresses = [...allAddresses].filter((e) => !excludeSet.has(e));
-  cc = ccAddresses.length > 0 ? ccAddresses.join(", ") : undefined;
-  if (!cc) fellBackToReply = true;
+    const ccAddresses = [...allAddresses].filter((e) => !excludeSet.has(e));
+    cc = ccAddresses.length > 0 ? ccAddresses.join(", ") : undefined;
+    if (!cc) fellBackToReply = true;
+  }
 
   // Get user mapping for attribution
   const userEntry = getUserMap(interaction.user.id);
@@ -1079,10 +1103,16 @@ export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
   const fileSuffix = fileOption ? ` with attachment "${fileOption.name}"${convertedLabel}` : "";
   const ccSuffix = cc ? `\nCC: ${cc}` : "";
   const tmSuffix = expandedModules.length > 0 ? `\n📝 Expanded: ${expandedModules.join(", ")}` : "";
-  const fallbackNote = fellBackToReply
-    ? " (no other email participants found — sent as a regular reply)"
-    : "";
-  const verb = fellBackToReply ? "Reply" : "Reply-all";
+  let fallbackNote = "";
+  if (nonEmailFallback) {
+    const channelName = channel.type === "ringcentral_sms_message" ? "SMS"
+      : channel.type === "teams_chat_message" ? "Teams"
+        : channel.type;
+    fallbackNote = ` (${channelName} has no CC concept — sent as a regular reply)`;
+  } else if (fellBackToReply) {
+    fallbackNote = " (no other participants found — sent as a regular reply)";
+  }
+  const verb = nonEmailFallback || fellBackToReply ? "Reply" : "Reply-all";
   await interaction.editReply(
     `${verb} sent (${channel.label})${ccSuffix}${fileSuffix} on ticket #${mapping.ticket_number}.${closeSuffix}${fallbackNote}${tmSuffix}`,
   );
