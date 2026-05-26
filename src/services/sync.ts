@@ -353,9 +353,10 @@ async function processWebhook(
 
 /**
  * Fetch all articles for a ticket from the Zammad API and sync any
- * unsynced ones to Discord in article-ID order. This guarantees
- * correct chronological ordering even when webhooks arrive out of
- * order (e.g. two messages sent in quick succession).
+ * unsynced ones to Discord in chronological (created_at) order. This
+ * guarantees correct ordering even when webhooks arrive out of order
+ * or when Zammad assigns article IDs out of send-time order (e.g. Teams
+ * messages, where outbound agent captures lag behind customer replies).
  */
 export async function syncAllUnsyncedArticles(
   client: Client,
@@ -370,8 +371,18 @@ export async function syncAllUnsyncedArticles(
     return;
   }
 
-  // Sort explicitly by ID to guarantee chronological order regardless of API behavior.
-  articles.sort((a: { id: number }, b: { id: number }) => a.id - b.id);
+  // Sort by created_at (true message time), falling back to ID as a tiebreaker.
+  // Article IDs are assigned in Zammad *ingestion* order, which does NOT match
+  // chronological order for Teams messages: Zammad captures outbound agent Teams
+  // messages via a lagging poll, so they get a higher ID than later customer
+  // messages while their created_at is correctly backdated to the real send time.
+  // Sorting by ID therefore scrambles Teams conversations; created_at restores order.
+  articles.sort((a: { id: number; created_at: string }, b: { id: number; created_at: string }) => {
+    const ta = new Date(a.created_at).getTime();
+    const tb = new Date(b.created_at).getTime();
+    if (Number.isNaN(ta) || Number.isNaN(tb) || ta === tb) return a.id - b.id;
+    return ta - tb;
+  });
 
   // Filter out articles older than 7 days that aren't in synced_articles.
   // The synced_articles table is pruned after 30 days, so very old articles
