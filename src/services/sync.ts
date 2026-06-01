@@ -391,6 +391,13 @@ export async function syncAllUnsyncedArticles(
   const ARTICLE_AGE_LIMIT_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
   const now = Date.now();
 
+  // Filter out articles older than 7 days that aren't in synced_articles.
+  // The synced_articles table is pruned after 30 days, so very old articles
+  // would appear "unsynced" and get re-posted as duplicates. Only sync
+  // recent articles that are genuinely new.
+  const ARTICLE_AGE_LIMIT_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+  const now = Date.now();
+
   const articleIds = articles.map((a: { id: number }) => a.id);
   // Use ticket-aware check: an article synced to the WRONG ticket is treated as unsynced
   const alreadySynced = articleIds.filter((id: number) => isArticleSyncedForTicket(id, ticketId));
