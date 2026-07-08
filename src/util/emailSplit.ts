@@ -31,6 +31,16 @@ const SPLIT_PATTERNS: RegExp[] = [
   // First <blockquote> (standard email quoting)
   /<blockquote[\s>]/i,
 
+  // Outlook (desktop / OWA / Microsoft 365) reply divider: an <hr> immediately
+  // followed by a bold "From: … Sent|Date: …" quoted-header block. This is the
+  // dominant reply format for Outlook and is NOT preceded by dashes, so the
+  // older "---/___ From:" pattern below never matches it. Split at the <hr>.
+  /<hr[^>]*>(?=[\s\S]{0,800}?<b>\s*From:\s*<\/b>[\s\S]{0,800}?<b>\s*(?:Sent|Date):)/i,
+
+  // Outlook quoted-header block with no <hr> divider: a <div>/<p> wrapping a
+  // bold "From:" line followed by a bold "Sent:"/"Date:" line.
+  /<(?:div|p)[^>]*>\s*(?:<[^>]+>\s*)*<b>\s*From:\s*<\/b>[\s\S]{0,800}?<b>\s*(?:Sent|Date):/i,
+
   // "On <date> <person> wrote:" — plain-text style quote intro
   /On\s.{10,120}wrote:\s*(?:<br|<\/p>|<\/div>|\n)/i,
 

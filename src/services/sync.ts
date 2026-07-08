@@ -450,67 +450,25 @@ export async function syncAllUnsyncedArticles(
     // The reply is shown prominently; the context goes behind a spoiler tag.
     // For non-email articles: show the full body as-is.
     let content: string;
+    let replyHtml = "";
     if (article.type === "email") {
-      content = formatEmailArticle(article.body, senderLabel, prefix, hasFirstArticle);
+      const rendered = renderEmailArticle(article.body, senderLabel, prefix, hasFirstArticle);
+      content = rendered.content;
+      replyHtml = rendered.replyHtml;
     } else {
       const body = stripHtml(article.body);
       content = `**${senderLabel}:** ${prefix}${body || "_(empty message)_"}`;
     }
     hasFirstArticle = true;
 
-    // Process attachments:
-    // - Files with known size ≤ threshold: download and upload to Discord
-    // - Files with known size > threshold: link to Zammad (prevents OOM)
-    // - Files with unknown size (0): attempt download (downloadAttachment has configurable safety cap)
-    // - Configurable max file count and total download budget
-    // All limits are configurable via /setup attachments
-    const limits = getAttachmentLimits();
-    const LARGE_FILE_THRESHOLD = limits.perFileBytes;
-    const MAX_TOTAL_DOWNLOAD_BYTES = limits.totalBytes;
-    const MAX_DISCORD_ATTACHMENTS = limits.maxCount;
-    let totalDownloaded = 0;
-    const attachments: { data: Buffer; filename: string }[] = [];
-    const largeFileLinks: string[] = [];
-    const zammadBase = env().ZAMMAD_PUBLIC_URL ?? env().ZAMMAD_BASE_URL;
-
-    if (article.attachments?.length) {
-      for (const att of article.attachments) {
-        const attSize = Number.isFinite(att.size) ? att.size : 0;
-        if (attSize < 10 && attSize > 0) continue; // skip tiny placeholders
-
-        // Known-large files: link instead of downloading
-        if (attSize > LARGE_FILE_THRESHOLD) {
-          const sizeMB = (attSize / 1024 / 1024).toFixed(1);
-          largeFileLinks.push(`[${att.filename} (${sizeMB} MB)](${zammadBase}/#ticket/zoom/${ticketId}/${article.id})`);
-          continue;
-        }
-
-        if (attachments.length >= MAX_DISCORD_ATTACHMENTS) {
-          logger.info({ articleId: article.id, total: article.attachments.length, limit: MAX_DISCORD_ATTACHMENTS }, "Capping attachments at Discord limit");
-          break;
-        }
-        if (attSize > 0 && totalDownloaded + attSize > MAX_TOTAL_DOWNLOAD_BYTES) {
-          // Remaining files go to link list
-          const sizeMB = (attSize / 1024 / 1024).toFixed(1);
-          largeFileLinks.push(`[${att.filename} (${sizeMB} MB)](${zammadBase}/#ticket/zoom/${ticketId}/${article.id})`);
-          continue;
-        }
-        // Download the attachment (size 0 = unknown size, e.g. inline images — try anyway,
-        // downloadAttachment has its own configurable safety cap)
-        try {
-          const downloaded = await downloadAttachment(ticketId, article.id, att.id);
-          const filename = ensureFileExtension(att.filename, downloaded.contentType);
-          attachments.push({ data: downloaded.data, filename });
-          totalDownloaded += downloaded.data.length;
-        } catch (err) {
-          // If download fails for unknown-size file, fall back to link
-          if (attSize === 0) {
-            largeFileLinks.push(`[${att.filename} (? MB)](${zammadBase}/#ticket/zoom/${ticketId}/${article.id})`);
-          }
-          logger.warn({ articleId: article.id, attachmentId: att.id, err }, "Failed to download attachment");
-        }
-      }
-    }
+    // Collect real attachments + inline images (see collectArticleMedia).
+    const { files: attachments, largeFileLinks } = await collectArticleMedia(
+      ticketId,
+      article.id,
+      article.type,
+      replyHtml,
+      article.attachments,
+    );
 
     // Append links for large/overflow files to the message content
     let finalContent = content;
@@ -572,51 +530,24 @@ async function syncWebhookArticleFallback(
     : webhookArticle.sender;
 
   let content: string;
+  let replyHtml = "";
   if (webhookArticle.type === "email") {
-    content = formatEmailArticle(webhookArticle.body, senderLabel, prefix, true);
+    const rendered = renderEmailArticle(webhookArticle.body, senderLabel, prefix, true);
+    content = rendered.content;
+    replyHtml = rendered.replyHtml;
   } else {
     const body = stripHtml(webhookArticle.body);
     content = `**${senderLabel}:** ${prefix}${body || "_(empty message)_"}`;
   }
 
-  // Process attachments from webhook payload
-  const limits = getAttachmentLimits();
-  const LARGE_FILE_THRESHOLD = limits.perFileBytes;
-  const MAX_TOTAL_DOWNLOAD_BYTES = limits.totalBytes;
-  const MAX_DISCORD_ATTACHMENTS = limits.maxCount;
-  let totalDownloaded = 0;
-  const attachments: { data: Buffer; filename: string }[] = [];
-  const largeFileLinks: string[] = [];
-  const zammadBase = env().ZAMMAD_PUBLIC_URL ?? env().ZAMMAD_BASE_URL;
-
-  if (webhookArticle.attachments?.length) {
-    for (const att of webhookArticle.attachments) {
-      const attSize = Number.isFinite(att.size) ? att.size : 0;
-      if (attSize < 10 && attSize > 0) continue;
-      if (attSize > LARGE_FILE_THRESHOLD) {
-        const sizeMB = (attSize / 1024 / 1024).toFixed(1);
-        largeFileLinks.push(`[${att.filename} (${sizeMB} MB)](${zammadBase}/#ticket/zoom/${ticketId}/${webhookArticle.id})`);
-        continue;
-      }
-      if (attachments.length >= MAX_DISCORD_ATTACHMENTS) break;
-      if (attSize > 0 && totalDownloaded + attSize > MAX_TOTAL_DOWNLOAD_BYTES) {
-        const sizeMB = (attSize / 1024 / 1024).toFixed(1);
-        largeFileLinks.push(`[${att.filename} (${sizeMB} MB)](${zammadBase}/#ticket/zoom/${ticketId}/${webhookArticle.id})`);
-        continue;
-      }
-      try {
-        const downloaded = await downloadAttachment(ticketId, webhookArticle.id, att.id);
-        const filename = ensureFileExtension(att.filename, downloaded.contentType);
-        attachments.push({ data: downloaded.data, filename });
-        totalDownloaded += downloaded.data.length;
-      } catch (err) {
-        if (attSize === 0) {
-          largeFileLinks.push(`[${att.filename} (? MB)](${zammadBase}/#ticket/zoom/${ticketId}/${webhookArticle.id})`);
-        }
-        logger.warn({ articleId: webhookArticle.id, attachmentId: att.id, err }, "Failed to download attachment (fallback)");
-      }
-    }
-  }
+  // Collect real attachments + inline images (see collectArticleMedia).
+  const { files: attachments, largeFileLinks } = await collectArticleMedia(
+    ticketId,
+    webhookArticle.id,
+    webhookArticle.type,
+    replyHtml,
+    webhookArticle.attachments,
+  );
 
   let finalContent = content;
   if (largeFileLinks.length > 0) {
@@ -673,7 +604,7 @@ function ensureFileExtension(filename: string, contentType: string): string {
  * Strips <blockquote> elements, Gmail/Outlook quote containers, and
  * common text-based reply separators so only the new reply remains.
  */
-function stripQuotedEmail(html: string): string {
+export function stripQuotedEmail(html: string): string {
   let cleaned = html;
 
   // Remove <blockquote> elements and everything inside (handles nesting)
@@ -698,6 +629,14 @@ function stripQuotedEmail(html: string): string {
 
   // Strip "On <date> <person> wrote:" line (plain-text style, sometimes outside blockquotes)
   cleaned = cleaned.replace(/On\s.+wrote:\s*$/gim, "");
+
+  // Outlook divider + quoted-header block: an <hr> that is shortly followed by a
+  // bold "From:" line — remove the <hr> and everything after it.
+  cleaned = cleaned.replace(/<hr[^>]*>(?=[\s\S]{0,800}?<b>\s*From:\s*<\/b>)[\s\S]*/gi, "");
+
+  // Outlook quoted-header block with no <hr>: a <div>/<p> wrapping a bold "From:"
+  // line — remove it and everything after.
+  cleaned = cleaned.replace(/<(?:div|p)[^>]*>\s*(?:<[^>]+>\s*)*<b>\s*From:\s*<\/b>[\s\S]*/gi, "");
 
   // Strip Outlook-style header block: "From: ... Sent: ... To: ... Subject: ..."
   cleaned = cleaned.replace(/[-_]{2,}[\s\S]*?From:\s.+[\s\S]*?Subject:\s.+/gi, "");
@@ -731,26 +670,31 @@ function stripHtml(html: string | undefined | null): string {
  * The actual reply is shown prominently.  Quoted content (previous emails,
  * signatures, forwarded content) is collapsed behind a Discord spoiler tag
  * so it's still accessible but doesn't clutter the thread.
+ *
+ * Returns both the rendered Discord `content` and the `replyHtml` (the reply
+ * portion, quotes removed) so the caller can extract inline images from ONLY
+ * the new reply — never from the quoted chain, which would re-post images
+ * that already appeared on earlier messages in the thread.
  */
-function formatEmailArticle(
+export function renderEmailArticle(
   bodyHtml: string,
   senderLabel: string,
   prefix: string,
   stripQuotes: boolean,
-): string {
+): { content: string; replyHtml: string } {
   if (!bodyHtml) {
-    return `**${senderLabel}:** ${prefix}_(empty message)_`;
+    return { content: `**${senderLabel}:** ${prefix}_(empty message)_`, replyHtml: "" };
   }
-  const { reply: replyHtml, context: contextHtml } = splitEmailHtml(bodyHtml);
+  const { reply: splitReplyHtml, context: contextHtml } = splitEmailHtml(bodyHtml);
 
   // For non-first articles, also strip any remaining quoted content from
   // the reply portion (catches nested quotes the split didn't find)
-  const cleanedReplyHtml = stripQuotes ? stripQuotedEmail(replyHtml) : replyHtml;
-  const replyText = stripHtml(cleanedReplyHtml);
+  const replyHtml = stripQuotes ? stripQuotedEmail(splitReplyHtml) : splitReplyHtml;
+  const replyText = stripHtml(replyHtml);
 
   // If split found no context, just return the reply (same as before)
   if (!contextHtml) {
-    return `**${senderLabel}:** ${prefix}${replyText}`;
+    return { content: `**${senderLabel}:** ${prefix}${replyText}`, replyHtml };
   }
 
   // Convert context HTML to plain text
@@ -758,7 +702,7 @@ function formatEmailArticle(
 
   // Skip context if it's trivially short (just whitespace or a delimiter)
   if (contextText.length < 10) {
-    return `**${senderLabel}:** ${prefix}${replyText}`;
+    return { content: `**${senderLabel}:** ${prefix}${replyText}`, replyHtml };
   }
 
   // Truncate context to a reasonable length for Discord
@@ -775,8 +719,167 @@ function formatEmailArticle(
     .replace(/\n{3,}/g, "\n\n");
 
   // Build the message: reply shown normally, context behind a spoiler
-  return (
-    `**${senderLabel}:** ${prefix}${replyText}\n` +
-    `📧 ||${truncatedContext}||`
-  );
+  return {
+    content:
+      `**${senderLabel}:** ${prefix}${replyText}\n` +
+      `📧 ||${truncatedContext}||`,
+    replyHtml,
+  };
+}
+
+// ---------------------------------------------------------------
+// Attachment + inline-image collection (Zammad → Discord)
+// ---------------------------------------------------------------
+
+/** Parse a CSS/attribute pixel value (e.g. `width: 262px` or `width="262"`).
+ *  Deliberately does NOT match `max-width` (the char before "width" there is
+ *  "-", which the leading class excludes), so a bare `width` wins over a
+ *  responsive `max-width`. Returns null when the property is absent. */
+export function parseImgPx(tag: string, prop: string): number | null {
+  const style = new RegExp(`(?:^|[;\\s"'])${prop}\\s*:\\s*([0-9.]+)\\s*px`, "i").exec(tag);
+  if (style) return parseFloat(style[1]);
+  const attr = new RegExp(`\\b${prop}\\s*=\\s*["']?([0-9.]+)`, "i").exec(tag);
+  if (attr) return parseFloat(attr[1]);
+  return null;
+}
+
+/** Heuristic: an <img> with a small explicit width (or a very short height) is
+ *  decorative — a signature logo, email-client chrome, or a tracking pixel —
+ *  not a real screenshot the user meant to share. Screenshots are wide and
+ *  typically declare only a large `max-width`, so they pass through. */
+export function isDecorativeImage(tag: string): boolean {
+  const width = parseImgPx(tag, "width");
+  const height = parseImgPx(tag, "height");
+  if (width !== null && width <= 300) return true;   // logos/icons are narrow
+  if (height !== null && height > 0 && height <= 60) return true; // thin banners/pixels
+  return false;
+}
+
+/**
+ * Extract inline-image attachment IDs referenced in an email HTML body.
+ *
+ * Zammad embeds inline images as
+ *   <img src="/api/v1/ticket_attachment/{ticket}/{article}/{attId}?view=inline">
+ * and does NOT list them in `article.attachments`, so they are invisible to a
+ * plain attachment loop and never reach Discord. We recover them from the body.
+ *
+ * Only images belonging to THIS article are returned (a quoted reply re-embeds
+ * the previous message's images under new IDs; those live in the context
+ * portion and are excluded by passing only the reply HTML here). Small
+ * decorative images are filtered out.
+ */
+export function extractInlineImageIds(html: string, ticketId: number, articleId: number): number[] {
+  if (!html) return [];
+  const ids: number[] = [];
+  const seen = new Set<number>();
+  const imgRe = /<img\b[^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(html)) !== null) {
+    const tag = m[0];
+    const src = /src\s*=\s*["']([^"']+)["']/i.exec(tag);
+    if (!src) continue;
+    const ref = /\/ticket_attachment\/(\d+)\/(\d+)\/(\d+)/.exec(src[1]);
+    if (!ref) continue;
+    const t = Number(ref[1]), a = Number(ref[2]), attId = Number(ref[3]);
+    if (t !== ticketId || a !== articleId) continue; // only this article's own images
+    if (seen.has(attId)) continue;
+    if (isDecorativeImage(tag)) continue;
+    seen.add(attId);
+    ids.push(attId);
+  }
+  return ids;
+}
+
+/** True for Zammad's internal raw-source copies (e.g. `message.html`) that it
+ *  keeps as content-alternative / original-format attachments. These are never
+ *  user-supplied files and only add clutter if forwarded to Discord. */
+export function isRawSourceAttachment(att: { filename?: string; preferences?: unknown }): boolean {
+  const p = (att.preferences ?? {}) as Record<string, unknown>;
+  if (p["content-alternative"] || p["Content-Alternative"]) return true;
+  if (p["original-format"] || p["Original-Format"]) return true;
+  return /^message\.(html?|txt|eml)$/i.test(att.filename ?? "");
+}
+
+interface RawAttachment {
+  id: number;
+  filename: string;
+  size: number | string;
+  preferences?: unknown;
+}
+
+/**
+ * Collect everything to send to Discord for one article: real file
+ * attachments PLUS inline images embedded in the email body. Returns the
+ * files to upload and Zammad links for any file too large / over budget.
+ *
+ * Shared by the API-sync and webhook-fallback paths so both behave identically.
+ */
+async function collectArticleMedia(
+  ticketId: number,
+  articleId: number,
+  articleType: string,
+  replyHtml: string,
+  rawAttachments: RawAttachment[] | undefined,
+): Promise<{ files: { data: Buffer; filename: string }[]; largeFileLinks: string[] }> {
+  const limits = getAttachmentLimits();
+  const LARGE_FILE_THRESHOLD = limits.perFileBytes;
+  const MAX_TOTAL_DOWNLOAD_BYTES = limits.totalBytes;
+  const MAX_DISCORD_ATTACHMENTS = limits.maxCount;
+  const zammadBase = env().ZAMMAD_PUBLIC_URL ?? env().ZAMMAD_BASE_URL;
+
+  const files: { data: Buffer; filename: string }[] = [];
+  const largeFileLinks: string[] = [];
+  const downloadedIds = new Set<number>();
+  let totalDownloaded = 0;
+  const zammadLink = (name: string, note: string) =>
+    `[${name} (${note})](${zammadBase}/#ticket/zoom/${ticketId}/${articleId})`;
+
+  // 1) Real file attachments (skip Zammad's internal raw-source copies).
+  for (const att of rawAttachments ?? []) {
+    if (isRawSourceAttachment(att)) continue;
+    const attSize = Number.isFinite(Number(att.size)) ? Number(att.size) : 0;
+    if (attSize < 10 && attSize > 0) continue; // skip tiny placeholders
+    if (attSize > LARGE_FILE_THRESHOLD) {
+      largeFileLinks.push(zammadLink(att.filename, `${(attSize / 1024 / 1024).toFixed(1)} MB`));
+      continue;
+    }
+    if (files.length >= MAX_DISCORD_ATTACHMENTS) {
+      logger.info({ articleId, limit: MAX_DISCORD_ATTACHMENTS }, "Capping attachments at Discord limit");
+      break;
+    }
+    if (attSize > 0 && totalDownloaded + attSize > MAX_TOTAL_DOWNLOAD_BYTES) {
+      largeFileLinks.push(zammadLink(att.filename, `${(attSize / 1024 / 1024).toFixed(1)} MB`));
+      continue;
+    }
+    try {
+      const dl = await downloadAttachment(ticketId, articleId, att.id);
+      files.push({ data: dl.data, filename: ensureFileExtension(att.filename, dl.contentType) });
+      totalDownloaded += dl.data.length;
+      downloadedIds.add(att.id);
+    } catch (err) {
+      if (attSize === 0) largeFileLinks.push(zammadLink(att.filename, "? MB"));
+      logger.warn({ articleId, attachmentId: att.id, err }, "Failed to download attachment");
+    }
+  }
+
+  // 2) Inline images embedded in the email body (email only). These are NOT in
+  //    the attachments array, so they must be pulled from the reply HTML.
+  if (articleType === "email") {
+    for (const attId of extractInlineImageIds(replyHtml, ticketId, articleId)) {
+      if (downloadedIds.has(attId)) continue;
+      if (files.length >= MAX_DISCORD_ATTACHMENTS) break;
+      if (totalDownloaded >= MAX_TOTAL_DOWNLOAD_BYTES) break;
+      try {
+        const dl = await downloadAttachment(ticketId, articleId, attId);
+        if (totalDownloaded + dl.data.length > MAX_TOTAL_DOWNLOAD_BYTES) continue;
+        files.push({ data: dl.data, filename: ensureFileExtension(`inline-image-${attId}`, dl.contentType) });
+        totalDownloaded += dl.data.length;
+        downloadedIds.add(attId);
+      } catch (err) {
+        logger.warn({ ticketId, articleId, attachmentId: attId, err }, "Failed to download inline image");
+      }
+    }
+  }
+
+  return { files, largeFileLinks };
 }
