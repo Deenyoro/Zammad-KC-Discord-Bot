@@ -70,17 +70,36 @@ export interface ZammadUser {
 // API client
 // ---------------------------------------------------------------
 
-async function zammadFetch(path: string, init?: RequestInit): Promise<Response> {
+async function zammadFetch(
+  path: string,
+  init?: RequestInit,
+  opts?: { onBehalfOf?: number | string | null }
+): Promise<Response> {
   const url = `${env().ZAMMAD_BASE_URL}/api/v1${path}`;
-  const res = await fetch(url, {
-    ...init,
-    signal: init?.signal ?? AbortSignal.timeout(30_000),
-    headers: {
-      Authorization: `Bearer ${env().ZAMMAD_API_TOKEN}`,
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-  });
+  const doFetch = (behalf: number | string | null | undefined) =>
+    fetch(url, {
+      ...init,
+      signal: init?.signal ?? AbortSignal.timeout(30_000),
+      headers: {
+        Authorization: `Bearer ${env().ZAMMAD_API_TOKEN}`,
+        "Content-Type": "application/json",
+        ...(behalf != null ? { "X-On-Behalf-Of": String(behalf) } : {}),
+        ...init?.headers,
+      },
+    });
+
+  let res = await doFetch(opts?.onBehalfOf);
+  // If impersonation is rejected (stale/deactivated mapping, missing
+  // permission), fall back to the token identity rather than losing the
+  // write. 401/403 happen before any state change, so the retry is safe.
+  if (!res.ok && opts?.onBehalfOf != null && (res.status === 401 || res.status === 403)) {
+    const body = await res.text().catch(() => "");
+    logger.warn(
+      { status: res.status, path, onBehalfOf: opts.onBehalfOf, body },
+      "X-On-Behalf-Of rejected — retrying as token user"
+    );
+    res = await doFetch(null);
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     logger.error({ status: res.status, path, body }, "Zammad API error");
@@ -164,12 +183,17 @@ export async function getAllOpenTickets(): Promise<ZammadTicket[]> {
 
 export async function updateTicket(
   ticketId: number,
-  data: Partial<Pick<ZammadTicket, "title" | "state_id" | "priority_id" | "owner_id" | "group_id">> & { pending_time?: string }
+  data: Partial<Pick<ZammadTicket, "title" | "state_id" | "priority_id" | "owner_id" | "group_id">> & { pending_time?: string },
+  onBehalfOf?: number | null
 ): Promise<ZammadTicket> {
-  const res = await zammadFetch(`/tickets/${ticketId}`, {
-    method: "PUT",
-    body: JSON.stringify(data),
-  });
+  const res = await zammadFetch(
+    `/tickets/${ticketId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(data),
+    },
+    { onBehalfOf }
+  );
   return res.json() as Promise<ZammadTicket>;
 }
 
@@ -202,23 +226,31 @@ export async function createArticle(data: {
   origin_by_id?: number;
   attachments?: ArticleAttachment[];
   preferences?: Record<string, unknown>;
+  /** Zammad user id to author the article as (X-On-Behalf-Of).
+   *  Without it, created_by is the API token's owner. */
+  on_behalf_of?: number | null;
 }): Promise<ZammadArticle> {
+  const { on_behalf_of, ...articleData } = data;
   const payload = {
     type: "note",
     sender: "Agent",
     internal: false,
     content_type: "text/plain",
-    ...data,
+    ...articleData,
     preferences: {
-      ...data.preferences,
+      ...articleData.preferences,
       discord: { synced: true },
     },
   };
   logger.debug({ payload }, "Creating article with payload");
-  const res = await zammadFetch("/ticket_articles", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  const res = await zammadFetch(
+    "/ticket_articles",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    { onBehalfOf: on_behalf_of }
+  );
   return res.json() as Promise<ZammadArticle>;
 }
 
@@ -436,11 +468,18 @@ export async function createTicket(data: {
     to?: string;
     from?: string;
   };
+  /** Zammad user id to create the ticket as (X-On-Behalf-Of). */
+  on_behalf_of?: number | null;
 }): Promise<ZammadTicket> {
-  const res = await zammadFetch("/tickets", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
+  const { on_behalf_of, ...ticketData } = data;
+  const res = await zammadFetch(
+    "/tickets",
+    {
+      method: "POST",
+      body: JSON.stringify(ticketData),
+    },
+    { onBehalfOf: on_behalf_of }
+  );
   return res.json() as Promise<ZammadTicket>;
 }
 
