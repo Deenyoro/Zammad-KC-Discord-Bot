@@ -97,13 +97,14 @@ export async function handleClose(interaction: ChatInputCommandInteraction) {
       sender: "Agent",
       content_type: contentType,
       origin_by_id: userEntry?.zammad_id ?? undefined,
+      on_behalf_of: userEntry?.zammad_id ?? null,
     });
   }
 
   const closedState = await getStateByName("closed");
   if (!closedState) throw new Error("Could not find 'closed' state in Zammad");
 
-  await updateTicket(mapping.ticket_id, { state_id: closedState.id });
+  await updateTicket(mapping.ticket_id, { state_id: closedState.id }, getUserMap(interaction.user.id)?.zammad_id ?? null);
 
   // Update local DB state IMMEDIATELY so the grace period starts now,
   // preventing the backfill from reopening the thread due to stale Zammad API data
@@ -133,7 +134,7 @@ export async function handleAssign(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  await updateTicket(mapping.ticket_id, { owner_id: userEntry.zammad_id });
+  await updateTicket(mapping.ticket_id, { owner_id: userEntry.zammad_id }, getUserMap(interaction.user.id)?.zammad_id ?? null);
 
   // Rename thread to reflect new owner
   try {
@@ -173,7 +174,7 @@ export async function handlePriority(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const priorityId = parseInt(interaction.options.getString("level", true), 10);
-  await updateTicket(mapping.ticket_id, { priority_id: priorityId });
+  await updateTicket(mapping.ticket_id, { priority_id: priorityId }, getUserMap(interaction.user.id)?.zammad_id ?? null);
   await interaction.editReply(
     `Ticket #${mapping.ticket_number} priority updated.`
   );
@@ -188,7 +189,7 @@ export async function handleState(interaction: ChatInputCommandInteraction) {
   const state = await getStateByName(stateName);
   if (!state) throw new Error(`Unknown state: ${stateName}`);
 
-  await updateTicket(mapping.ticket_id, { state_id: state.id });
+  await updateTicket(mapping.ticket_id, { state_id: state.id }, getUserMap(interaction.user.id)?.zammad_id ?? null);
 
   // Immediately update the Discord thread to match the new state
   const normalizedState = stateName.toLowerCase();
@@ -231,7 +232,7 @@ export async function handleRename(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  await updateTicket(mapping.ticket_id, { title: newTitle });
+  await updateTicket(mapping.ticket_id, { title: newTitle }, getUserMap(interaction.user.id)?.zammad_id ?? null);
 
   // Update the Discord thread name and local DB
   if (mapping.thread_id) {
@@ -285,7 +286,7 @@ export async function handleLock(interaction: ChatInputCommandInteraction) {
     if (!timedState) throw new Error("Could not find 'closed (locked until)' state in Zammad. This feature requires Zammad-KC.");
 
     const pendingTime = computeLockExpiry(duration);
-    await updateTicket(mapping.ticket_id, { state_id: timedState.id, pending_time: pendingTime });
+    await updateTicket(mapping.ticket_id, { state_id: timedState.id, pending_time: pendingTime }, getUserMap(interaction.user.id)?.zammad_id ?? null);
     updateThreadState(mapping.ticket_id, "closed (locked until)");
 
     if (interaction.client && mapping.thread_id) {
@@ -301,7 +302,7 @@ export async function handleLock(interaction: ChatInputCommandInteraction) {
     const lockedState = await getStateByName("closed (locked)");
     if (!lockedState) throw new Error("Could not find 'closed (locked)' state in Zammad");
 
-    await updateTicket(mapping.ticket_id, { state_id: lockedState.id });
+    await updateTicket(mapping.ticket_id, { state_id: lockedState.id }, getUserMap(interaction.user.id)?.zammad_id ?? null);
     updateThreadState(mapping.ticket_id, "closed (locked)");
 
     if (interaction.client && mapping.thread_id) {
@@ -527,6 +528,7 @@ export async function handleNote(interaction: ChatInputCommandInteraction) {
     sender: "Agent",
     content_type: contentType,
     origin_by_id: userEntry?.zammad_id ?? undefined,
+    on_behalf_of: userEntry?.zammad_id ?? null,
     attachments,
   });
 
@@ -535,7 +537,7 @@ export async function handleNote(interaction: ChatInputCommandInteraction) {
   if (shouldClose) {
     const closedState = await getStateByName("closed");
     if (!closedState) throw new Error("Could not find 'closed' state in Zammad");
-    await updateTicket(mapping.ticket_id, { state_id: closedState.id });
+    await updateTicket(mapping.ticket_id, { state_id: closedState.id }, getUserMap(interaction.user.id)?.zammad_id ?? null);
     updateThreadState(mapping.ticket_id, "closed");
     if (interaction.client && mapping.thread_id) {
       await closeTicketThread(interaction.client, mapping.thread_id);
@@ -898,6 +900,7 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
     to: channel.to,
     cc,
     origin_by_id: channel.type === "email" ? (userEntry?.zammad_id ?? undefined) : undefined,
+    on_behalf_of: userEntry?.zammad_id ?? null,
     attachments,
   });
 
@@ -906,7 +909,7 @@ export async function handleReply(interaction: ChatInputCommandInteraction) {
   if (shouldClose) {
     const closedState = await getStateByName("closed");
     if (!closedState) throw new Error("Could not find 'closed' state in Zammad");
-    await updateTicket(mapping.ticket_id, { state_id: closedState.id });
+    await updateTicket(mapping.ticket_id, { state_id: closedState.id }, getUserMap(interaction.user.id)?.zammad_id ?? null);
     updateThreadState(mapping.ticket_id, "closed");
     if (interaction.client && mapping.thread_id) {
       await closeTicketThread(interaction.client, mapping.thread_id);
@@ -1084,6 +1087,7 @@ export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
     to,
     cc,
     origin_by_id: channel.type === "email" ? (userEntry?.zammad_id ?? undefined) : undefined,
+    on_behalf_of: userEntry?.zammad_id ?? null,
     attachments,
   });
 
@@ -1092,7 +1096,7 @@ export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
   if (shouldClose) {
     const closedState = await getStateByName("closed");
     if (!closedState) throw new Error("Could not find 'closed' state in Zammad");
-    await updateTicket(mapping.ticket_id, { state_id: closedState.id });
+    await updateTicket(mapping.ticket_id, { state_id: closedState.id }, getUserMap(interaction.user.id)?.zammad_id ?? null);
     updateThreadState(mapping.ticket_id, "closed");
     if (interaction.client && mapping.thread_id) {
       await closeTicketThread(interaction.client, mapping.thread_id);
@@ -1173,7 +1177,7 @@ export async function handlePending(interaction: ChatInputCommandInteraction) {
     pendingTime = computePendingTime(duration!);
   }
 
-  await updateTicket(mapping.ticket_id, { state_id: state.id, pending_time: pendingTime });
+  await updateTicket(mapping.ticket_id, { state_id: state.id, pending_time: pendingTime }, getUserMap(interaction.user.id)?.zammad_id ?? null);
   await interaction.editReply(
     `${interaction.user} set ticket #${mapping.ticket_number} to **${type}** until ${new Date(pendingTime).toLocaleDateString()}.`
   );
@@ -1485,6 +1489,7 @@ export async function handleNewTicket(interaction: ChatInputCommandInteraction) 
         ticket = await createTicket({
           title: subject,
           group: "Users",
+          on_behalf_of: userEntry.zammad_id,
           customer: to,
           article: {
             subject,
@@ -1510,6 +1515,7 @@ export async function handleNewTicket(interaction: ChatInputCommandInteraction) 
         ticket = await createTicket({
           title: subject,
           group: "Users",
+          on_behalf_of: userEntry.zammad_id,
           customer: to,
           article: {
             subject,
@@ -1615,6 +1621,7 @@ export async function handleTextModule(interaction: ChatInputCommandInteraction)
         content_type: "text/html",
         to: channel.to,
         origin_by_id: channel.type === "email" ? (userEntry?.zammad_id ?? undefined) : undefined,
+        on_behalf_of: userEntry?.zammad_id ?? null,
       });
 
       await interaction.editReply(
@@ -2189,6 +2196,7 @@ export async function handleChecknote(interaction: ChatInputCommandInteraction) 
       internal: true,
       content_type: "text/html",
       origin_by_id: userEntry?.zammad_id ?? undefined,
+      on_behalf_of: userEntry?.zammad_id ?? null,
       attachments: imageAttachment ? [imageAttachment] : undefined,
     });
 
@@ -2481,6 +2489,7 @@ export async function handleWeekly(interaction: ChatInputCommandInteraction) {
     const ticket = await createTicket({
       title,
       group: "Users",
+      on_behalf_of: getUserMap(interaction.user.id)?.zammad_id ?? null,
       customer: customerEmail,
       article: {
         subject: title,
@@ -2503,7 +2512,7 @@ export async function handleWeekly(interaction: ChatInputCommandInteraction) {
       await updateTicket(ticket.id, {
         state_id: pendingState.id,
         pending_time: pendingTime.toISOString(),
-      });
+      }, getUserMap(interaction.user.id)?.zammad_id ?? null);
     } else {
       logger.warn("Could not find 'pending reminder' state — ticket left in default state");
     }
