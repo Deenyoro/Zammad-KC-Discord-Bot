@@ -92,6 +92,7 @@ async function forwardToZammad(
     internal: true,
     content_type: contentType,
     origin_by_id: userEntry.zammad_id ?? undefined,
+    on_behalf_of: userEntry.zammad_id,
     attachments: attachments.length > 0 ? attachments : undefined,
   });
 
