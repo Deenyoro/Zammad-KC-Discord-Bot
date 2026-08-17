@@ -68,6 +68,10 @@ export function startDailySummary(client: Client): void {
       postSummary(client).catch((err) =>
         logger.error({ err }, "Daily summary post failed")
       );
+    } else if (currentHour !== hour) {
+      // Re-arm after the target hour passes — otherwise the summary posts
+      // exactly once per process lifetime.
+      lastPostedHour = -1;
     }
   }, 60_000);
 }

@@ -4,10 +4,10 @@ import { logger } from "../util/logger.js";
 import {
   getThreadByTicketId,
   isArticleSyncedForTicket,
+  getSyncedArticle,
   markArticleSynced,
   isDeliveryProcessed,
   markDeliveryProcessed,
-  unmarkDeliveryProcessed,
   updateThreadState,
   updateThreadTitle,
 } from "../db/index.js";
@@ -101,24 +101,21 @@ export async function handleWebhook(
   payload: WebhookPayload,
   deliveryId?: string
 ): Promise<void> {
-  // Dedup by delivery ID (Zammad retries up to 4 times).
-  // Mark BEFORE processing, but unmark on failure so retries work.
-  if (deliveryId) {
-    if (isDeliveryProcessed(deliveryId)) {
-      logger.debug({ deliveryId }, "Duplicate delivery, skipping");
-      return;
-    }
-    markDeliveryProcessed(deliveryId);
+  // Dedup by delivery ID (Zammad retries up to 4 times). Mark only AFTER
+  // successful processing: handleWebhook always runs inside the per-ticket
+  // queue, so a retry for the same delivery is serialized behind the
+  // original — it either sees the mark (original succeeded) and skips, or
+  // runs the work again (original failed). Marking up-front instead would
+  // consume a retry that arrived while the original was still in flight.
+  if (deliveryId && isDeliveryProcessed(deliveryId)) {
+    logger.debug({ deliveryId }, "Duplicate delivery, skipping");
+    return;
   }
 
-  try {
-    await processWebhook(client, payload);
-  } catch (err) {
-    // Unmark so Zammad retries can succeed
-    if (deliveryId) {
-      unmarkDeliveryProcessed(deliveryId);
-    }
-    throw err;
+  await processWebhook(client, payload);
+
+  if (deliveryId) {
+    markDeliveryProcessed(deliveryId);
   }
 }
 
@@ -407,6 +404,25 @@ export async function syncAllUnsyncedArticles(
 
   for (const article of articles) {
     if (isArticleSyncedForTicket(article.id, ticketId)) {
+      if (article.sender !== "System") hasFirstArticle = true;
+      continue;
+    }
+
+    // Article already delivered to Discord under ANOTHER ticket: this is a
+    // merge (Zammad reassigns the source's articles to the target ticket).
+    // The content is already visible in the source's (now archived) thread,
+    // so re-posting the whole moved history here would flood the target
+    // thread with duplicates. Re-home the record instead of re-sending.
+    // (Cross-ticket misattribution — the original reason for the
+    // ticket-aware check — is now prevented up-front by the ticket_id
+    // guards on both webhook and API sync paths.)
+    const prior = getSyncedArticle(article.id);
+    if (prior && prior.ticket_id !== ticketId && prior.discord_msg_id) {
+      logger.info(
+        { ticketId, articleId: article.id, priorTicketId: prior.ticket_id },
+        "Article moved by merge — marking synced without re-posting"
+      );
+      markArticleSynced(article.id, ticketId, threadId, prior.discord_msg_id, "zammad_to_discord");
       if (article.sender !== "System") hasFirstArticle = true;
       continue;
     }

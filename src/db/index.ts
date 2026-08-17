@@ -159,6 +159,21 @@ export function isArticleSyncedForTicket(articleId: number, ticketId: number): b
   return !!row;
 }
 
+export interface SyncedArticleRow {
+  ticket_id: number;
+  thread_id: string;
+  discord_msg_id: string | null;
+}
+
+/** Full synced-record lookup — lets callers distinguish "never synced" from
+ *  "synced under a different ticket" (which happens when a merge moves
+ *  articles to the target ticket). */
+export function getSyncedArticle(articleId: number): SyncedArticleRow | undefined {
+  return db()
+    .prepare("SELECT ticket_id, thread_id, discord_msg_id FROM synced_articles WHERE article_id = ?")
+    .get(articleId) as SyncedArticleRow | undefined;
+}
+
 export function markArticleSynced(
   articleId: number,
   ticketId: number,
