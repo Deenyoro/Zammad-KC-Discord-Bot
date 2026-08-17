@@ -2,6 +2,7 @@ import { ChatInputCommandInteraction, ThreadChannel } from "discord.js";
 import { logger } from "../util/logger.js";
 import {
   getThreadByThreadId,
+  getThreadByTicketId,
   getAllTicketThreads,
   getUserMap,
   updateThreadState,
@@ -36,8 +37,9 @@ import {
   clearTextModulesCache,
   type ArticleAttachment,
 } from "../services/zammad.js";
-import { ticketUrl, closeTicketThread, removeRoleMembersFromThread, renameTicketThread, formatOwnerLabel } from "../services/threads.js";
+import { ticketUrl, closeTicketThread, removeRoleMembersFromThread, renameTicketThread, formatOwnerLabel, sendToThread } from "../services/threads.js";
 import { discordQueue } from "../queue/index.js";
+import { isClosedState, isHiddenState, isDashboardState } from "../util/states.js";
 import { parseTime } from "../util/parseTime.js";
 import { formatInBotTz, getBotTimezone } from "../util/timezone.js";
 import { truncate, splitMessage } from "../util/truncate.js";
@@ -191,28 +193,26 @@ export async function handleState(interaction: ChatInputCommandInteraction) {
 
   await updateTicket(mapping.ticket_id, { state_id: state.id }, getUserMap(interaction.user.id)?.zammad_id ?? null);
 
-  // Immediately update the Discord thread to match the new state
+  // Immediately update the Discord thread to match the new state.
+  // Uses the central state helpers so every closed/hidden variant
+  // ("closed (locked until)", "on-site", "project", …) behaves the same
+  // as its family instead of silently falling through and leaving the
+  // DB/thread stale until a webhook happens to land.
   const normalizedState = stateName.toLowerCase();
-  if (normalizedState === "closed" || normalizedState === "closed (locked)") {
-    updateThreadState(mapping.ticket_id, normalizedState);
-    if (interaction.client && mapping.thread_id) {
+  updateThreadState(mapping.ticket_id, normalizedState);
+  if (interaction.client && mapping.thread_id) {
+    if (isClosedState(normalizedState)) {
       await closeTicketThread(interaction.client, mapping.thread_id);
-    }
-  } else if (normalizedState === "waiting for reply") {
-    updateThreadState(mapping.ticket_id, normalizedState);
-    if (interaction.client && mapping.thread_id) {
+    } else if (isHiddenState(normalizedState)) {
       await removeRoleMembersFromThread(interaction.client, mapping.thread_id);
-      const thread = (await interaction.client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
-      if (thread?.isThread() && !thread.archived) {
-        await discordQueue.add(async () => {
-          await thread.edit({ archived: true, reason: "Ticket set to waiting for reply" });
-        });
+      if (isDashboardState(normalizedState)) {
+        const thread = (await interaction.client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
+        if (thread?.isThread() && !thread.archived) {
+          await discordQueue.add(async () => {
+            await thread.edit({ archived: true, reason: `Ticket set to ${normalizedState}` });
+          });
+        }
       }
-    }
-  } else if (normalizedState === "pending close") {
-    updateThreadState(mapping.ticket_id, normalizedState);
-    if (interaction.client && mapping.thread_id) {
-      await removeRoleMembersFromThread(interaction.client, mapping.thread_id);
     }
   }
 
@@ -1332,11 +1332,48 @@ export async function handleMerge(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  await mergeTickets(mapping.ticket_id, targetTicket.id);
-  updateThreadState(mapping.ticket_id, "merged");
+  try {
+    await mergeTickets(
+      mapping.ticket_id,
+      targetTicket.number,
+      getUserMap(interaction.user.id)?.zammad_id ?? null
+    );
+  } catch (err) {
+    logger.error(
+      { ticketId: mapping.ticket_id, target: targetTicket.number, err },
+      "Ticket merge failed"
+    );
+    await interaction.editReply(
+      `Merge of #${mapping.ticket_number} into #${targetTicket.number} FAILED — nothing was changed in Zammad. ${err instanceof Error ? err.message : ""}`
+    );
+    return;
+  }
+
+  // zammad-kc rewrites merged children to "closed" (Kc::MergeToClosedState).
+  // Read the real post-merge state instead of assuming, so the DB matches
+  // Zammad and the backfill never tries to "reopen" this thread.
+  let mergedState = "closed";
+  try {
+    mergedState = (await getTicket(mapping.ticket_id)).state.toLowerCase();
+  } catch {
+    /* keep default */
+  }
+  updateThreadState(mapping.ticket_id, mergedState);
   await closeTicketThread(interaction.client, mapping.thread_id);
+
+  // Leave a pointer in the target's thread so the team knows where the
+  // correspondence went.
+  const targetMapping = getThreadByTicketId(targetTicket.id);
+  if (targetMapping) {
+    await sendToThread(
+      interaction.client,
+      targetMapping.thread_id,
+      `🔀 Ticket #${mapping.ticket_number} (**${mapping.title ?? "Untitled"}**) was merged into this ticket. Its correspondence now lands here.`
+    );
+  }
+
   await interaction.editReply(
-    `Ticket #${mapping.ticket_number} merged into #${targetNumber}. Thread closed.`
+    `Ticket #${mapping.ticket_number} merged into #${targetTicket.number}. Thread closed.`
   );
 }
 
@@ -2201,7 +2238,7 @@ export async function handleChecknote(interaction: ChatInputCommandInteraction) 
     });
 
     await interaction.editReply(
-      `Service status snapshot added as internal note to ticket #${mapping.ticket_id}.` +
+      `Service status snapshot added as internal note to ticket #${mapping.ticket_number}.` +
       (imageAttachment ? " (with PNG image)" : " (text only)")
     );
   } catch (err) {
@@ -2503,18 +2540,29 @@ export async function handleWeekly(interaction: ChatInputCommandInteraction) {
     });
 
     // Set to "pending reminder" with pending_time = day after end date at 23:59 UTC
-    // (gives 1 extra day after the week ends to send out emails)
-    const pendingState = await getStateByName("pending reminder");
-    if (pendingState) {
-      const pendingTime = new Date(endDate);
-      pendingTime.setUTCDate(pendingTime.getUTCDate() + 1);
-      pendingTime.setUTCHours(23, 59, 0, 0);
-      await updateTicket(ticket.id, {
-        state_id: pendingState.id,
-        pending_time: pendingTime.toISOString(),
-      }, getUserMap(interaction.user.id)?.zammad_id ?? null);
-    } else {
-      logger.warn("Could not find 'pending reminder' state — ticket left in default state");
+    // (gives 1 extra day after the week ends to send out emails).
+    // Separate try/catch: the ticket already exists at this point, so a
+    // failure here must NOT surface as "Failed to create" — that reads as
+    // "retry me" and produces duplicate Weekly Check tickets.
+    try {
+      const pendingState = await getStateByName("pending reminder");
+      if (pendingState) {
+        const pendingTime = new Date(endDate);
+        pendingTime.setUTCDate(pendingTime.getUTCDate() + 1);
+        pendingTime.setUTCHours(23, 59, 0, 0);
+        await updateTicket(ticket.id, {
+          state_id: pendingState.id,
+          pending_time: pendingTime.toISOString(),
+        }, getUserMap(interaction.user.id)?.zammad_id ?? null);
+      } else {
+        logger.warn("Could not find 'pending reminder' state — ticket left in default state");
+      }
+    } catch (stateErr) {
+      logger.error({ err: stateErr, ticketId: ticket.id }, "Weekly Check created but could not be set to pending reminder");
+      await interaction.editReply(
+        `Weekly Check ticket **#${ticket.number}** was created, but setting it to pending reminder failed — set the state manually in Zammad.\n${ticketUrl(ticket.id)}`
+      );
+      return;
     }
 
     await interaction.editReply(

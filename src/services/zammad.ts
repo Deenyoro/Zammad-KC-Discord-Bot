@@ -1,6 +1,7 @@
 import { env } from "../util/env.js";
 import { logger } from "../util/logger.js";
 import { getAttachmentLimits } from "../util/attachmentLimits.js";
+import { CLOSED_STATE_NAMES } from "../util/states.js";
 
 // ---------------------------------------------------------------
 // Types matching Zammad REST API responses
@@ -125,16 +126,9 @@ export async function getTickets(page = 1, perPage = 100): Promise<ZammadTicket[
   return res.json() as Promise<ZammadTicket[]>;
 }
 
-// Closed-equivalent state names — anything in this set is excluded from
-// the open-ticket fetch. Kept as a Set so we can also filter defensively
-// on the client side if the server-side query ever lets one slip through.
-const CLOSED_STATE_NAMES = new Set([
-  "closed",
-  "closed (locked)",
-  "closed (locked until)",
-  "merged",
-  "removed",
-]);
+// Closed-equivalent state names come from the central state helpers
+// (CLOSED_STATE_NAMES import above) so the open-ticket fetch filter can
+// never drift out of sync with isClosedState().
 
 // Server-side query negating the closed states. The `!` is Zammad's Lucene-
 // style NOT operator. Quoted because state names contain spaces/parentheses.
@@ -511,10 +505,27 @@ export async function removeTicketTag(ticketId: number, tag: string): Promise<vo
 // Merge
 // ---------------------------------------------------------------
 
-export async function mergeTickets(sourceTicketId: number, targetTicketId: number): Promise<void> {
-  await zammadFetch(`/ticket_merge/${sourceTicketId}/${targetTicketId}`, {
-    method: "PUT",
-  });
+export async function mergeTickets(
+  sourceTicketId: number,
+  targetTicketNumber: string,
+  onBehalfOf?: number | null
+): Promise<void> {
+  // PUT /ticket_merge/{source_ticket_id}/{target_ticket_NUMBER} — the second
+  // path segment is the ticket NUMBER, not the internal id. Passing an id
+  // here silently merges nothing: Zammad responds HTTP 200 with
+  // {result:"failed"} when the number doesn't exist, so success must be
+  // checked from the response body, never from the status code.
+  const res = await zammadFetch(
+    `/ticket_merge/${sourceTicketId}/${encodeURIComponent(targetTicketNumber)}`,
+    { method: "PUT" },
+    { onBehalfOf }
+  );
+  const data = (await res.json()) as { result?: string; message?: string };
+  if (data.result !== "success") {
+    throw new Error(
+      `Zammad merge failed: ${data.message ?? JSON.stringify(data)}`
+    );
+  }
 }
 
 // ---------------------------------------------------------------

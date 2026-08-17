@@ -313,30 +313,47 @@ export async function sendToThread(
   const chunks = splitMessage(content);
   let firstMsgId: string | null = null;
 
-  for (let i = 0; i < chunks.length; i++) {
-    const msg = await discordQueue.add(async () =>
-      thread.send({
-        content: chunks[i],
-        // Only attach files to the first message
-        files: i === 0 ? files : undefined,
-        allowedMentions: { parse: [] },
-      })
-    ) as Message | undefined;
+  // Once chunk 0 is delivered the article IS in Discord — a later failure
+  // (rate-limited follow-up chunk, re-archive edit) must not propagate,
+  // otherwise the caller never marks the article synced and every webhook
+  // retry / backfill catch-up re-posts it as a duplicate.
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      const msg = await discordQueue.add(async () =>
+        thread.send({
+          content: chunks[i],
+          // Only attach files to the first message
+          files: i === 0 ? files : undefined,
+          allowedMentions: { parse: [] },
+        })
+      ) as Message | undefined;
 
-    if (i === 0) {
-      firstMsgId = msg?.id ?? null;
+      if (i === 0) {
+        firstMsgId = msg?.id ?? null;
+      }
     }
+  } catch (err) {
+    if (firstMsgId === null) throw err;
+    logger.warn(
+      { threadId, err },
+      "sendToThread: follow-up chunk failed after first chunk was delivered — treating article as sent"
+    );
   }
 
-  // Restore archived/locked state so the thread stays visually "closed"
+  // Restore archived/locked state so the thread stays visually "closed".
+  // Best-effort for the same reason: the message is already delivered.
   if (wasArchived) {
-    await discordQueue.add(async () => {
-      await thread.edit({
-        ...(wasLocked ? { locked: true } : {}),
-        archived: true,
-        reason: "Re-archiving after article sync",
+    try {
+      await discordQueue.add(async () => {
+        await thread.edit({
+          ...(wasLocked ? { locked: true } : {}),
+          archived: true,
+          reason: "Re-archiving after article sync",
+        });
       });
-    });
+    } catch (err) {
+      logger.warn({ threadId, err }, "sendToThread: failed to re-archive thread after sync");
+    }
   }
 
   return firstMsgId;

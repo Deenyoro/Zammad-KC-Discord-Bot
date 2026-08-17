@@ -384,6 +384,11 @@ export function startKeepalive(client: Client): void {
       runKeepaliveSweep(client).catch((err) =>
         logger.error({ err }, "Keepalive sweep failed")
       );
+    } else if (currentHour !== hour) {
+      // Re-arm once the target hour has passed — without this the sweep
+      // fires exactly once per process lifetime and threads silently
+      // auto-archive from day 2 of uptime onward.
+      lastPostedHour = -1;
     }
   }, 60_000);
 

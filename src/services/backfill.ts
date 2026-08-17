@@ -132,19 +132,27 @@ export async function syncAllTickets(client: Client): Promise<void> {
         // Skip for hidden states (pending close, waiting for reply, on-site, project) — members were intentionally removed
         if (!isHiddenState(verifiedTicketInfo.state)) {
           try {
-            const thread = await client.channels.fetch(existing.thread_id, { force: true }) as ThreadChannel | null;
-            if (thread?.isThread()) {
+            // MUST run through the per-ticket queue: a /close command or
+            // close-webhook can archive+lock the thread and remove members
+            // while this backfill iteration is mid-flight. Unqueued, the
+            // force-unarchive below would then undo the close permanently —
+            // DB says "closed" so neither the open-list loop nor the
+            // stale-close loop ever re-archives it. Inside the queue we
+            // re-read the DB state and skip if the ticket went terminal.
+            await enqueueForTicket(ticket.id, async () => {
+              const current = getThreadByTicketId(ticket.id);
+              if (!current || isClosedState(current.state) || isHiddenState(current.state)) return;
+              const thread = await client.channels.fetch(existing.thread_id, { force: true }) as ThreadChannel | null;
+              if (!thread?.isThread()) return;
               // Always force-unarchive non-hidden/non-closed threads.
               // Discord auto-archives after inactivity and the cached state
               // may not reflect reality. This is cheap (Discord ignores
               // no-op edits) and guarantees the thread stays visible.
-              if (!isClosedState(existing.state) && !isHiddenState(existing.state)) {
-                await discordQueue.add(async () => {
-                  await thread.edit({ archived: false, locked: false, reason: "Ticket is open — ensuring thread is visible" });
-                });
-              }
+              await discordQueue.add(async () => {
+                await thread.edit({ archived: false, locked: false, reason: "Ticket is open — ensuring thread is visible" });
+              });
               await addRoleMembersToThread(thread);
-            }
+            });
           } catch (err) {
             logger.debug({ ticketId: ticket.id, err }, "Failed to sync role members to thread");
           }
