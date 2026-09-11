@@ -612,11 +612,48 @@ export async function cancelScheduledArticle(ticketId: number, articleId: number
 
 export async function createSmsConversation(data: {
   phone_number: string;
+  /** Additional recipients for a group text (RingCentral allows up to 10). */
+  phone_numbers?: string[];
   body: string;
   channel_id?: number;
   skip_send?: boolean;
 }): Promise<ZammadTicket> {
   const res = await zammadFetch("/kc/conversations/sms", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.json() as Promise<ZammadTicket>;
+}
+
+// ---------------------------------------------------------------
+// Teams conversations (KC)
+// ---------------------------------------------------------------
+
+export interface TeamsContact {
+  id: string;
+  display_name: string;
+  email: string | null;
+  job_title?: string | null;
+}
+
+/** Search the connected tenant's directory (KC endpoint). */
+export async function searchTeamsContacts(query: string, channelId?: number): Promise<TeamsContact[]> {
+  const params = new URLSearchParams({ query });
+  if (channelId) params.set("channel_id", String(channelId));
+  const res = await zammadFetch(`/kc/conversations/teams_contacts?${params.toString()}`);
+  const data = (await res.json()) as { contacts?: TeamsContact[] };
+  return data.contacts ?? [];
+}
+
+export async function createTeamsConversation(data: {
+  teams_user_id: string;
+  display_name: string;
+  email?: string;
+  body: string;
+  channel_id?: number;
+  skip_send?: boolean;
+}): Promise<ZammadTicket> {
+  const res = await zammadFetch("/kc/conversations/teams", {
     method: "POST",
     body: JSON.stringify(data),
   });
