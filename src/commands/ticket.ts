@@ -36,6 +36,8 @@ import {
   expandTextModules,
   clearTextModulesCache,
   type ArticleAttachment,
+  searchTeamsContacts,
+  createTeamsConversation,
 } from "../services/zammad.js";
 import { ticketUrl, closeTicketThread, removeRoleMembersFromThread, renameTicketThread, formatOwnerLabel, sendToThread } from "../services/threads.js";
 import { discordQueue } from "../queue/index.js";
@@ -1540,13 +1542,58 @@ export async function handleNewTicket(interaction: ChatInputCommandInteraction) 
         });
         break;
 
-      case "sms":
+      case "sms": {
+        // One or more numbers (comma / semicolon separated) — several make a
+        // group text; Zammad normalizes and validates them.
+        const numbers = to
+          .split(/[,;]+/)
+          .map((n) => n.trim())
+          .filter(Boolean);
+        if (numbers.length === 0) {
+          await interaction.editReply("Enter at least one phone number.");
+          return;
+        }
         ticket = await createSmsConversation({
-          phone_number: to,
+          phone_number: numbers[0],
+          phone_numbers: numbers,
           body,
           skip_send: sendOption === false ? true : undefined,
         });
         break;
+      }
+
+      case "teams": {
+        // Resolve the contact in the connected tenant's directory. An exact
+        // email match wins; otherwise the search must be unambiguous.
+        const contacts = await searchTeamsContacts(to);
+        const wanted = to.trim().toLowerCase();
+        let contact = contacts.find((c) => (c.email ?? "").toLowerCase() === wanted);
+        if (!contact) {
+          const byName = contacts.filter((c) => (c.display_name ?? "").toLowerCase() === wanted);
+          contact = byName.length === 1 ? byName[0] : undefined;
+        }
+        if (!contact && contacts.length === 1) contact = contacts[0];
+        if (!contact) {
+          if (contacts.length === 0) {
+            await interaction.editReply(`No Teams contact found for "${to}". Use the person's email or exact display name.`);
+          } else {
+            const list = contacts
+              .slice(0, 10)
+              .map((c) => `• ${c.display_name}${c.email ? ` <${c.email}>` : ""}`)
+              .join("\n");
+            await interaction.editReply(`Several Teams contacts match "${to}" — use the email address of the right one:\n${list}`);
+          }
+          return;
+        }
+        ticket = await createTeamsConversation({
+          teams_user_id: contact.id,
+          display_name: contact.display_name,
+          email: contact.email ?? undefined,
+          body,
+          skip_send: sendOption === false ? true : undefined,
+        });
+        break;
+      }
 
       case "phone":
         ticket = await createTicket({
