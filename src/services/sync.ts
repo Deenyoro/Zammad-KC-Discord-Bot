@@ -427,6 +427,18 @@ export async function syncAllUnsyncedArticles(
       continue;
     }
 
+    // Conversation-context notes are backdated on purpose; post them as-is.
+    if (isContextNote(article)) {
+      const discordMsgId = await sendToThread(client, threadId, renderContextNote(article));
+      if (!discordMsgId) {
+        logger.warn({ ticketId, articleId: article.id }, "sendToThread returned null for context note — will retry");
+        break;
+      }
+      markArticleSynced(article.id, ticketId, threadId, discordMsgId, "zammad_to_discord");
+      logger.info({ ticketId, articleId: article.id, discordMsgId }, "Synced conversation-context note to Discord");
+      continue;
+    }
+
     // Skip old articles that were likely already synced but pruned from the DB.
     // Without this guard, the 30-day prune + catch-up cycle would re-post
     // every old article as a duplicate every time the bot restarts.
@@ -530,6 +542,15 @@ async function syncWebhookArticleFallback(
       { ticketId, articleId: webhookArticle.id, articleTicketId: webhookArticle.ticket_id },
       "Webhook fallback: article belongs to a different ticket — skipping"
     );
+    return;
+  }
+
+  // Conversation-context notes are System-sender but wanted in the thread.
+  if (isContextNote(webhookArticle)) {
+    const discordMsgId = await sendToThread(client, threadId, renderContextNote(webhookArticle));
+    if (discordMsgId) {
+      markArticleSynced(webhookArticle.id, ticketId, threadId, discordMsgId, "zammad_to_discord");
+    }
     return;
   }
 
@@ -658,6 +679,27 @@ export function stripQuotedEmail(html: string): string {
   cleaned = cleaned.replace(/[-_]{2,}[\s\S]*?From:\s.+[\s\S]*?Subject:\s.+/gi, "");
 
   return cleaned;
+}
+
+/**
+ * The KC integrations (RingCentral SMS, Teams) open new tickets with one
+ * internal, System-sender note titled "Conversation context" holding the
+ * last few messages of the conversation from before the ticket. It is
+ * backdated to sort first in Zammad, so it must bypass both the System-sender
+ * skip and the 7-day age guard here — the thread should start with it.
+ */
+function isContextNote(article: { sender?: string; subject?: string | null }): boolean {
+  return article.sender === "System" && article.subject === "Conversation context";
+}
+
+function renderContextNote(article: { body: string; from?: string }): string {
+  const source = article.from ? ` — ${article.from}` : "";
+  const body = stripHtml(article.body) || "_(empty)_";
+  const quoted = body
+    .split("\n")
+    .map((line) => (line.trim() ? `> ${line}` : ">"))
+    .join("\n");
+  return `📜 **Earlier conversation**${source}\n${quoted}`;
 }
 
 /** Convert HTML to plain text with basic formatting. */
