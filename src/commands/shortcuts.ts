@@ -277,20 +277,24 @@ export const newticketCommand = new SlashCommandBuilder()
       .addChoices(
         { name: "email", value: "email" },
         { name: "sms", value: "sms" },
+        { name: "teams", value: "teams" },
         { name: "phone-log", value: "phone" }
       )
   )
   .addStringOption((o) =>
-    o.setName("to").setDescription("Recipient (email address or phone number)").setRequired(true)
+    o
+      .setName("to")
+      .setDescription("Recipient: email, phone number(s, comma-separated for a group text), or Teams contact name/email")
+      .setRequired(true)
   )
   .addStringOption((o) =>
-    o.setName("subject").setDescription("Ticket subject/title").setRequired(true)
+    o.setName("subject").setDescription("Ticket subject/title (email/phone-log; SMS and Teams title themselves)").setRequired(true)
   )
   .addStringOption((o) =>
     o.setName("body").setDescription("Message body").setRequired(true)
   )
   .addBooleanOption((o) =>
-    o.setName("send").setDescription("Send the initial message? (default: true, set false for SMS log-only)").setRequired(false)
+    o.setName("send").setDescription("Send the initial message? (default: true; false = create the SMS/Teams ticket only)").setRequired(false)
   );
 
 export const weeklyCommand = new SlashCommandBuilder()
