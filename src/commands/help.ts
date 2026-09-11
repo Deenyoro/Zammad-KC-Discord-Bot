@@ -56,7 +56,7 @@ export async function handleHelpCommand(
         name: "Search & Create",
         value: [
           "`/search <query>` -Search Zammad tickets",
-          "`/newticket <type> <to> <subject> <body>` -Create a new ticket (email/sms/phone-log)",
+          "`/newticket <type> <to> <subject> <body> [send]` -Create a ticket: email, sms (comma-separate numbers for a group text), teams (contact name/email), phone-log. `send:false` creates the SMS/Teams ticket without sending",
           "`/weekly [start] [end] [email]` -Create a Weekly Check ticket (auto-detects dates)",
           "`/checknote` -Snapshot service status board into ticket note (with image)",
         ].join("\n"),
