@@ -1,0 +1,18 @@
+# Container images for Zammad-KC-Discord-Bot, built on GitLab and mirrored to GHCR.
+#
+# Ported from .github/workflows/build-and-push.yml — GitHub Actions is disabled on the
+# repository, so this is the only thing that builds these images. Pipelines run
+# on a v* tag, or manually from the UI/API (set RELEASE_VERSION=v1.2.3 to stamp
+# a version without tagging, DOCKER_PUSH=false to build without publishing).
+
+include:
+  - project: dean/ci-templates
+    ref: main
+    file: /docker.yml
+
+build:
+  extends: .docker-build
+  parallel:
+    matrix:
+    - IMAGE: zammad-kc-discord-bot
+      CONTEXT: .
