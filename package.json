@@ -9,7 +9,8 @@
     "dev": "tsx watch src/index.ts",
     "deploy-commands": "tsx src/commands/deploy.ts",
     "lint": "eslint src/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "engines": {
     "node": ">=22"
