@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.2] - 2026-09-24
+
+### Added
+- GitLab CI check job in the test stage (`ci/check.sh`). It runs on
+  `node:24-alpine`, the image the Dockerfile uses, and gates the image build:
+  - fails if the job's Node major differs from the Dockerfile's `FROM node:<N>`;
+  - on a `v*` tag or `RELEASE_VERSION` run, fails unless `package.json` and
+    `package-lock.json` carry that version;
+  - `npm ci`, a load check of `better-sqlite3` and `sharp`, `npm run typecheck`,
+    `npm run build`, and `npm test` (webhook signature and image conversion tests).
+- README section "Building / Releases (GitLab CI)".
+
+### Changed
+- Version bumped to 1.0.2 in package.json and package-lock.json. There are no
+  application behavior changes.
+
 ## [1.0.1] - 2026-09-24
 
 Changes since the last pre-release baseline (commit 38c34db, version 1.0.0).
