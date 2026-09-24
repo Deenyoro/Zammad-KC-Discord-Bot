@@ -236,6 +236,43 @@ kubectl apply -f k8s/service.yaml
 - SQLite data persisted on a 1Gi PVC at `/app/data`
 - Deployment uses `Recreate` strategy (SQLite supports one writer)
 
+## Building / Releases (GitLab CI)
+
+Container images are built by GitLab CI (`.gitlab-ci.yml`). GitHub Actions is
+disabled; `.github/workflows/build-and-push.yml` is kept only for reference.
+
+Pipelines run on a `v*` tag, or when started manually from the GitLab UI or API.
+Plain pushes and merge requests do not start a pipeline.
+
+1. **test** stage, `check` job (`ci/check.sh`, cluster runner, `node:24-alpine`,
+   which is the same image both Dockerfile stages use):
+   - fails if the job's Node major differs from the Dockerfile's `FROM node:<N>`;
+   - on a release (a `v*` tag, or `RELEASE_VERSION`), fails unless `package.json`
+     and `package-lock.json` carry that version;
+   - `npm ci`, a load check of the native modules (`better-sqlite3`, `sharp`),
+     `npm run typecheck`, `npm run build`, and `npm test` (Zammad webhook
+     signature checks and attachment image conversion).
+2. **build** stage, `build` job: builds the `Dockerfile` with the shared
+   `dean/ci-templates` docker template. It runs only if `check` passed. It pushes
+   to the GitLab container registry and mirrors to
+   `ghcr.io/deenyoro/zammad-kc-discord-bot` (the image `k8s/deployment.yaml` uses).
+   A tag `v1.2.3` publishes `1.2.3`, `1.2` and `latest`, plus `sha-<commit>`.
+   A manual run without `RELEASE_VERSION` publishes `sha-<commit>`, `<branch>` and
+   `<branch>-<commit>`, and also `latest` when run on `master`.
+
+To release, bump `version` in `package.json` and `package-lock.json` (for example
+with `npm version patch --no-git-tag-version`), add a `CHANGELOG.md` entry, commit,
+and push a matching `v*` tag.
+
+Manual runs (GitLab: Build > Pipelines > Run pipeline) accept these variables:
+
+| Variable | Effect |
+|---|---|
+| `RELEASE_VERSION=v1.2.3` | Build and publish as that version without a tag (package.json must match) |
+| `DOCKER_PUSH=false` | Run the checks and build the image, but publish nothing |
+
+To run the same checks locally with Node 24: `sh ci/check.sh`.
+
 ## Commands Reference
 
 ### Communication (use inside a ticket thread)

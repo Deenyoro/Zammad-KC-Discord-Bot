@@ -4,11 +4,33 @@
 # repository, so this is the only thing that builds these images. Pipelines run
 # on a v* tag, or manually from the UI/API (set RELEASE_VERSION=v1.2.3 to stamp
 # a version without tagging, DOCKER_PUSH=false to build without publishing).
+#
+# The check job (test stage) gates the image build: npm ci, type check,
+# build and `npm test` on the Dockerfile's Node image, plus a release version
+# check against package.json. A failed check means no image is built or pushed.
 
 include:
   - project: dean/ci-templates
     ref: main
     file: /docker.yml
+
+variables:
+  # Same base image as both Dockerfile stages; ci/check.sh fails if they drift.
+  NODE_IMAGE: node:24-alpine
+
+check:
+  stage: test
+  tags: [linux]
+  image: $NODE_IMAGE
+  interruptible: true
+  variables:
+    GIT_DEPTH: "1"
+    NPM_CACHE_DIR: $CI_PROJECT_DIR/.npm
+  cache:
+    key: npm-node24
+    paths: [.npm/]
+  script:
+    - sh ci/check.sh
 
 build:
   extends: .docker-build
