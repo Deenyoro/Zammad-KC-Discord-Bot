@@ -8,6 +8,11 @@
 # The check job (test stage) gates the image build: npm ci, type check,
 # build and `npm test` on the Dockerfile's Node image, plus a release version
 # check against package.json. A failed check means no image is built or pushed.
+#
+# Merge requests (e.g. Renovate MRs) also get a pipeline, via the template's
+# workflow rules: tests and image builds only. The template never pushes,
+# mirrors to GHCR or releases from an MR pipeline, and release jobs here are
+# kept off MRs.
 
 include:
   - project: dean/ci-templates

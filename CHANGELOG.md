@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.3] - 2026-09-25
+
+CI only; no application changes.
+
+### Changed
+- CI: pipelines run on merge requests (tests/builds only, nothing published).
+  Through the shared `dean/ci-templates` workflow rules, a merge request (e.g. a Renovate MR) now gets a pipeline that runs the tests and builds the image(s), but it never publishes anything: no registry push, no GHCR mirror, no release.
+  Plain pushes still start no pipeline; tags and manual runs behave as before.
+- Docs: README and `.gitlab-ci.yml` comments describe the merge-request pipelines.
+- Version 1.0.2 -> 1.0.3 in `package.json`, `package-lock.json`.
+
 ## [1.0.2] - 2026-09-24
 
 ### Added

@@ -242,7 +242,9 @@ Container images are built by GitLab CI (`.gitlab-ci.yml`). GitHub Actions is
 disabled; `.github/workflows/build-and-push.yml` is kept only for reference.
 
 Pipelines run on a `v*` tag, or when started manually from the GitLab UI or API.
-Plain pushes and merge requests do not start a pipeline.
+A merge request (e.g. a Renovate MR) also gets a pipeline that runs `check` and
+builds the image, but never publishes anything (no registry push, no GHCR
+mirror). Plain pushes do not start a pipeline.
 
 1. **test** stage, `check` job (`ci/check.sh`, cluster runner, `node:24-alpine`,
    which is the same image both Dockerfile stages use):
