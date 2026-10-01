@@ -12,6 +12,8 @@ Built for [Zammad-KC](https://github.com/Deenyoro/zammad-kc) (which adds SMS, Te
 - **Real-time sync** - Zammad webhooks push new articles, state changes, and title updates to Discord instantly
 - **Bidirectional messaging** - messages in a ticket thread become Zammad internal notes; Zammad articles appear in Discord
 - **Full attachment support** - images, documents, and files sync in both directions (up to 25 MB)
+- **Inline images** - images embedded in an article body (Zammad `ticket_attachment` URLs, `cid:` references, `data:` URIs) are posted as Discord image attachments, for emails and notes alike. Images in a reply's quoted chain are posted too, but an image is posted only once per ticket (matched by content), so quoted copies of earlier screenshots are not repeated. HEIC images are converted to JPEG when the bundled image library can decode them
+- **All notes** - every Zammad note reaches the thread, internal or public, agent or System (e.g. Zammad-KC call activity notes); only System-sender non-note articles (trigger auto-replies) are skipped
 - **Multi-channel replies** - `/reply` auto-detects whether a ticket is email, SMS (RingCentral), or Teams and sends via the correct channel
 - **Thread lifecycle** - threads lock/archive on close, unlock/unarchive on reopen, rename on title change
 - **Role-based membership** - users with a configured Discord role are auto-added to every open ticket thread
@@ -24,6 +26,13 @@ Built for [Zammad-KC](https://github.com/Deenyoro/zammad-kc) (which adds SMS, Te
 - **Tags** - list, add, and remove tags directly from Discord
 - **Merge** - merge duplicate tickets from Discord
 - **History** - view the last 15 ticket history entries
+- **Markdown export** - `/md` exports the whole ticket to `ticket-<number>.md`, posted in the thread and attached to the Zammad ticket as an internal note
+
+### Reminders
+
+- **`/remind-me <when> [message]`** - pings you in the same channel or thread later; `when` takes the same syntax as `/schedule`
+- **`/reminders [cancel]`** - list your pending reminders or cancel one
+- Stored in the bot's SQLite database, so reminders survive restarts and redeploys
 
 ### Scheduled Replies (Zammad-KC)
 
@@ -302,12 +311,22 @@ To run the same checks locally with Node 24: `sh ci/check.sh`.
 | `/tags list\|add\|remove` | Manage ticket tags |
 | `/merge <target>` | Merge this ticket into another by ticket number |
 | `/history` | Show last 15 history entries |
+| `/md` | Export the whole ticket to Markdown (`ticket-<number>.md`): a header (number, title, state, priority, group, owner, customer, organization, created/updated, tags) and every article in order with time, from/to/cc, type, sender, internal flag, the body converted from HTML, and attachment links. The file is posted in the thread (split into parts if it exceeds Discord's upload limit) and added to the Zammad ticket as an internal note attachment |
+
+### Reminders (any channel or thread)
+
+| Command | Description |
+|---------|-------------|
+| `/remind-me <when> [message]` | Ping you in this channel/thread at `when`, with the message and a link back. `when` accepts a duration (`30m`, `2h`, `1h30m`, `3d`, `1w`, `2mo`, `in 2h`) or a date/time (`tomorrow 9am`, `today 5pm`, `friday 3pm`, `17:30`, `2026-10-05`, `2026-10-05 14:00`), read in the bot timezone (`/setup timezone`). Past times and times more than 366 days ahead are rejected |
+| `/reminders [cancel:<id>]` | List your pending reminders, or cancel one |
+
+Reminders are stored in SQLite (`data/bot.db`), checked every 15 seconds, and delivered after a restart if they fell due while the bot was down (marked as late). If the channel is gone the reminder is sent by DM.
 
 ### Scheduled Replies (use inside a ticket thread)
 
 | Command | Description |
 |---------|-------------|
-| `/schedule <text> <time>` | Schedule a reply (e.g. `2h`, `1d`, `tomorrow 9am`, ISO date) |
+| `/schedule <text> <time>` | Schedule a reply (e.g. `2h`, `1d`, `tomorrow 9am`, `2026-10-05 14:00`; same syntax as `/remind-me`) |
 | `/schedules` | List pending scheduled replies for this ticket |
 | `/unschedule <id>` | Cancel a scheduled reply by ID |
 
@@ -438,6 +457,8 @@ Discord <──WebSocket──> Bot <──HTTP POST──> Zammad (webhooks)
 | `webhook_dedup` | Prevents processing the same webhook delivery twice |
 | `templates` | Stores canned response templates |
 | `settings` | Runtime configuration overrides (from `/setup` commands) |
+| `posted_media` | Content hashes of images already posted per ticket (inline-image de-duplication) |
+| `reminders` | `/remind-me` reminders and their delivery state |
 
 ## Compatibility
 

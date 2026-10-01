@@ -10,6 +10,8 @@ import {
   markDeliveryProcessed,
   updateThreadState,
   updateThreadTitle,
+  isMediaPosted,
+  recordPostedMedia,
 } from "../db/index.js";
 import {
   downloadAttachment,
@@ -35,10 +37,25 @@ import { isClosedState, isHiddenState, isDashboardState } from "../util/states.j
 import { getAttachmentLimits } from "../util/attachmentLimits.js";
 import { updateDashboards } from "./dashboards.js";
 import { splitEmailHtml } from "../util/emailSplit.js";
+import { createHash } from "node:crypto";
+import {
+  extractInlineImages,
+  inlineAttachmentIds,
+  extensionForMime,
+  isHeic,
+  isDecorativeImage,
+  parseImgPx,
+} from "../util/inlineImages.js";
+import { convertHeicToJpeg } from "../util/fileConvert.js";
+
+// Re-exported for existing importers; the implementation lives in util/inlineImages.
+export { isDecorativeImage, parseImgPx };
 
 /** Extract a display name from an article "from" field like "John Doe <john@example.com>" */
-function extractDisplayName(from: string | undefined): string | undefined {
+function extractDisplayName(from: string | undefined | null): string | undefined {
   if (!from) return undefined;
+  // Zammad writes "-" as the from of System-created notes
+  if (/^[\s-]*$/.test(from)) return undefined;
   // "John Doe <john@example.com>" → "John Doe"
   const match = from.match(/^(.+?)\s*<[^>]+>$/);
   if (match) return match[1].trim();
@@ -134,10 +151,15 @@ async function processWebhook(
   // Safety: if the webhook article's ticket_id doesn't match the webhook ticket,
   // discard the article to prevent cross-ticket misattribution. This can happen
   // when Zammad fires webhooks during ticket merges or split operations.
-  const sanitizedArticle = webhookArticle && webhookArticle.ticket_id !== ticketId
+  // Zammad sends an empty `article: {}` for ticket-only updates; treat that as
+  // "no article" rather than as a ticket_id mismatch.
+  const hasArticle = !!webhookArticle && Number.isFinite(Number(webhookArticle.id)) && Number(webhookArticle.id) > 0;
+  const sanitizedArticle = !hasArticle
+    ? undefined
+    : webhookArticle!.ticket_id !== ticketId
     ? (() => {
         logger.warn(
-          { ticketId, articleId: webhookArticle.id, articleTicketId: webhookArticle.ticket_id },
+          { ticketId, articleId: webhookArticle!.id, articleTicketId: webhookArticle!.ticket_id },
           "Webhook article ticket_id mismatch — discarding article from webhook payload"
         );
         return undefined;
@@ -462,27 +484,23 @@ export async function syncAllUnsyncedArticles(
       continue;
     }
 
-    // Skip system-generated articles (state changes etc.)
-    if (article.sender === "System") {
+    // System-sender articles other than notes (trigger auto-replies) are
+    // skipped; every note, including System notes such as call activity, is
+    // posted. See classifyArticle.
+    if (classifyArticle(article) === "skip") {
       markArticleSynced(article.id, ticketId, threadId, null, "zammad_to_discord");
       continue;
     }
 
     const prefix = article.internal ? "**[Internal]** " : "";
-    const fromName = extractDisplayName(article.from);
-    const senderLabel = fromName
-      ? `${fromName} (${article.sender})`
-      : article.sender;
+    const senderLabel = articleSenderLabel(article);
 
     // For email articles: split into reply + context (signatures/quoted chain).
     // The reply is shown prominently; the context goes behind a spoiler tag.
     // For non-email articles: show the full body as-is.
     let content: string;
-    let replyHtml = "";
     if (article.type === "email") {
-      const rendered = renderEmailArticle(article.body, senderLabel, prefix, hasFirstArticle);
-      content = rendered.content;
-      replyHtml = rendered.replyHtml;
+      content = renderEmailArticle(article.body, senderLabel, prefix, hasFirstArticle).content;
     } else {
       const body = stripHtml(article.body);
       content = `**${senderLabel}:** ${prefix}${body || "_(empty message)_"}`;
@@ -490,13 +508,12 @@ export async function syncAllUnsyncedArticles(
     hasFirstArticle = true;
 
     // Collect real attachments + inline images (see collectArticleMedia).
-    const { files: attachments, largeFileLinks } = await collectArticleMedia(
+    const { files: attachments, largeFileLinks, mediaHashes } = await collectArticleMedia({
       ticketId,
-      article.id,
-      article.type,
-      replyHtml,
-      article.attachments,
-    );
+      articleId: article.id,
+      bodyHtml: article.body,
+      attachments: article.attachments,
+    });
 
     // Append links for large/overflow files to the message content
     let finalContent = content;
@@ -517,9 +534,10 @@ export async function syncAllUnsyncedArticles(
       break;
     }
     markArticleSynced(article.id, ticketId, threadId, discordMsgId, "zammad_to_discord");
+    recordPostedMedia(ticketId, article.id, mediaHashes);
 
     logger.info(
-      { ticketId, articleId: article.id, discordMsgId },
+      { ticketId, articleId: article.id, discordMsgId, files: attachments.length },
       "Synced article to Discord"
     );
   }
@@ -554,37 +572,30 @@ async function syncWebhookArticleFallback(
     return;
   }
 
-  // Skip system articles
-  if (webhookArticle.sender === "System") {
+  // Same filter as the API sync path (see classifyArticle)
+  if (classifyArticle(webhookArticle) === "skip") {
     markArticleSynced(webhookArticle.id, ticketId, threadId, null, "zammad_to_discord");
     return;
   }
 
   const prefix = webhookArticle.internal ? "**[Internal]** " : "";
-  const fromName = extractDisplayName(webhookArticle.from);
-  const senderLabel = fromName
-    ? `${fromName} (${webhookArticle.sender})`
-    : webhookArticle.sender;
+  const senderLabel = articleSenderLabel(webhookArticle);
 
   let content: string;
-  let replyHtml = "";
   if (webhookArticle.type === "email") {
-    const rendered = renderEmailArticle(webhookArticle.body, senderLabel, prefix, true);
-    content = rendered.content;
-    replyHtml = rendered.replyHtml;
+    content = renderEmailArticle(webhookArticle.body, senderLabel, prefix, true).content;
   } else {
     const body = stripHtml(webhookArticle.body);
     content = `**${senderLabel}:** ${prefix}${body || "_(empty message)_"}`;
   }
 
   // Collect real attachments + inline images (see collectArticleMedia).
-  const { files: attachments, largeFileLinks } = await collectArticleMedia(
+  const { files: attachments, largeFileLinks, mediaHashes } = await collectArticleMedia({
     ticketId,
-    webhookArticle.id,
-    webhookArticle.type,
-    replyHtml,
-    webhookArticle.attachments,
-  );
+    articleId: webhookArticle.id,
+    bodyHtml: webhookArticle.body,
+    attachments: webhookArticle.attachments,
+  });
 
   let finalContent = content;
   if (largeFileLinks.length > 0) {
@@ -600,6 +611,7 @@ async function syncWebhookArticleFallback(
     return;
   }
   markArticleSynced(webhookArticle.id, ticketId, threadId, discordMsgId, "zammad_to_discord");
+  recordPostedMedia(ticketId, webhookArticle.id, mediaHashes);
   logger.info(
     { ticketId, articleId: webhookArticle.id, discordMsgId },
     "Synced article to Discord (webhook fallback)"
@@ -673,7 +685,9 @@ export function stripQuotedEmail(html: string): string {
 
   // Outlook quoted-header block with no <hr>: a <div>/<p> wrapping a bold "From:"
   // line — remove it and everything after.
-  cleaned = cleaned.replace(/<(?:div|p)[^>]*>\s*(?:<[^>]+>\s*)*<b>\s*From:\s*<\/b>[\s\S]*/gi, "");
+  // (Tags skipped before the "From:" line exclude <img>, so a screenshot that
+  // sits right above the header block stays in the reply.)
+  cleaned = cleaned.replace(/<(?:div|p)[^>]*>\s*(?:<(?!img\b)[^>]+>\s*)*<b>\s*From:\s*<\/b>[\s\S]*/gi, "");
 
   // Strip Outlook-style header block: "From: ... Sent: ... To: ... Subject: ..."
   cleaned = cleaned.replace(/[-_]{2,}[\s\S]*?From:\s.+[\s\S]*?Subject:\s.+/gi, "");
@@ -690,6 +704,35 @@ export function stripQuotedEmail(html: string): string {
  */
 function isContextNote(article: { sender?: string; subject?: string | null }): boolean {
   return article.sender === "System" && article.subject === "Conversation context";
+}
+
+export type ArticleSyncAction = "context" | "skip" | "post";
+
+/**
+ * What the Zammad -> Discord sync does with an article.
+ *
+ * - "context": the integrations' "Conversation context" note, rendered as a
+ *   quoted block (see renderContextNote).
+ * - "post": everything else that is a note, whatever its sender or internal
+ *   flag (agent notes, KC "Call activity" notes, monitoring notes, ...), and
+ *   every Customer/Agent article.
+ * - "skip": System-sender articles that are NOT notes. In Zammad these are
+ *   trigger-generated auto-replies and notification emails to the customer:
+ *   template text that adds nothing to the thread.
+ */
+export function classifyArticle(article: { sender?: string; type?: string; subject?: string | null }): ArticleSyncAction {
+  if (isContextNote(article)) return "context";
+  if (article.sender === "System" && article.type !== "note") return "skip";
+  return "post";
+}
+
+/** "Display Name (Sender)", or for System notes "System (Subject)". */
+export function articleSenderLabel(article: { sender?: string; from?: string | null; subject?: string | null }): string {
+  const sender = article.sender || "Unknown";
+  const fromName = extractDisplayName(article.from);
+  if (fromName) return `${fromName} (${sender})`;
+  if (sender === "System" && article.subject) return `System (${article.subject})`;
+  return sender;
 }
 
 function renderContextNote(article: { body: string; from?: string }): string {
@@ -789,63 +832,16 @@ export function renderEmailArticle(
 // Attachment + inline-image collection (Zammad → Discord)
 // ---------------------------------------------------------------
 
-/** Parse a CSS/attribute pixel value (e.g. `width: 262px` or `width="262"`).
- *  Deliberately does NOT match `max-width` (the char before "width" there is
- *  "-", which the leading class excludes), so a bare `width` wins over a
- *  responsive `max-width`. Returns null when the property is absent. */
-export function parseImgPx(tag: string, prop: string): number | null {
-  const style = new RegExp(`(?:^|[;\\s"'])${prop}\\s*:\\s*([0-9.]+)\\s*px`, "i").exec(tag);
-  if (style) return parseFloat(style[1]);
-  const attr = new RegExp(`\\b${prop}\\s*=\\s*["']?([0-9.]+)`, "i").exec(tag);
-  if (attr) return parseFloat(attr[1]);
-  return null;
-}
-
-/** Heuristic: an <img> with a small explicit width (or a very short height) is
- *  decorative — a signature logo, email-client chrome, or a tracking pixel —
- *  not a real screenshot the user meant to share. Screenshots are wide and
- *  typically declare only a large `max-width`, so they pass through. */
-export function isDecorativeImage(tag: string): boolean {
-  const width = parseImgPx(tag, "width");
-  const height = parseImgPx(tag, "height");
-  if (width !== null && width <= 300) return true;   // logos/icons are narrow
-  if (height !== null && height > 0 && height <= 60) return true; // thin banners/pixels
-  return false;
-}
-
 /**
- * Extract inline-image attachment IDs referenced in an email HTML body.
- *
- * Zammad embeds inline images as
- *   <img src="/api/v1/ticket_attachment/{ticket}/{article}/{attId}?view=inline">
- * and does NOT list them in `article.attachments`, so they are invisible to a
- * plain attachment loop and never reach Discord. We recover them from the body.
- *
- * Only images belonging to THIS article are returned (a quoted reply re-embeds
- * the previous message's images under new IDs; those live in the context
- * portion and are excluded by passing only the reply HTML here). Small
- * decorative images are filtered out.
+ * Attachment ids of the inline images in an article body that belong to this
+ * article and are not decorative. Kept for callers of the old API; new code
+ * uses extractInlineImages (util/inlineImages.ts), which also handles cid:
+ * and data: images and quoted-chain images.
  */
 export function extractInlineImageIds(html: string, ticketId: number, articleId: number): number[] {
-  if (!html) return [];
-  const ids: number[] = [];
-  const seen = new Set<number>();
-  const imgRe = /<img\b[^>]*>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = imgRe.exec(html)) !== null) {
-    const tag = m[0];
-    const src = /src\s*=\s*["']([^"']+)["']/i.exec(tag);
-    if (!src) continue;
-    const ref = /\/ticket_attachment\/(\d+)\/(\d+)\/(\d+)/.exec(src[1]);
-    if (!ref) continue;
-    const t = Number(ref[1]), a = Number(ref[2]), attId = Number(ref[3]);
-    if (t !== ticketId || a !== articleId) continue; // only this article's own images
-    if (seen.has(attId)) continue;
-    if (isDecorativeImage(tag)) continue;
-    seen.add(attId);
-    ids.push(attId);
-  }
-  return ids;
+  return extractInlineImages(html, ticketId, articleId)
+    .filter((r): r is Extract<typeof r, { kind: "attachment" }> => r.kind === "attachment" && r.articleId === articleId)
+    .map((r) => r.attachmentId);
 }
 
 /** True for Zammad's internal raw-source copies (e.g. `message.html`) that it
@@ -858,27 +854,65 @@ export function isRawSourceAttachment(att: { filename?: string; preferences?: un
   return /^message\.(html?|txt|eml)$/i.test(att.filename ?? "");
 }
 
-interface RawAttachment {
+export interface RawAttachment {
   id: number;
   filename: string;
   size: number | string;
   preferences?: unknown;
 }
 
+export type AttachmentDownloader = (
+  ticketId: number,
+  articleId: number,
+  attachmentId: number,
+) => Promise<{ data: Buffer; contentType: string; filename?: string }>;
+
+export interface ArticleMedia {
+  files: { data: Buffer; filename: string }[];
+  largeFileLinks: string[];
+  /** Content hashes of the files in `files`; the caller records them
+   *  (recordPostedMedia) once the Discord message has been sent. */
+  mediaHashes: string[];
+}
+
+const sha256 = (buf: Buffer) => createHash("sha256").update(buf).digest("hex");
+
+/** HEIC/HEIF → JPEG so Discord shows it inline (best effort). */
+async function displayable(data: Buffer, filename: string, contentType: string): Promise<{ data: Buffer; filename: string }> {
+  if (isHeic(filename, contentType)) {
+    const conv = await convertHeicToJpeg(data, filename);
+    if (conv) return { data: conv.data, filename: conv.filename };
+  }
+  return { data, filename };
+}
+
 /**
  * Collect everything to send to Discord for one article: real file
- * attachments PLUS inline images embedded in the email body. Returns the
+ * attachments PLUS inline images embedded in the HTML body. Returns the
  * files to upload and Zammad links for any file too large / over budget.
+ *
+ * Inline images are taken from the whole body, reply first and then the
+ * quoted chain, in every form Zammad produces (ticket_attachment URLs, cid:,
+ * data: URIs; see util/inlineImages.ts). A reply re-embeds the earlier
+ * messages' images under new attachment ids, so inline images are
+ * de-duplicated by content hash against what this ticket's thread already
+ * received (posted_media); an image first seen in a quoted chain (e.g. a
+ * screenshot from an email that never reached the ticket) is still posted.
  *
  * Shared by the API-sync and webhook-fallback paths so both behave identically.
  */
-async function collectArticleMedia(
-  ticketId: number,
-  articleId: number,
-  articleType: string,
-  replyHtml: string,
-  rawAttachments: RawAttachment[] | undefined,
-): Promise<{ files: { data: Buffer; filename: string }[]; largeFileLinks: string[] }> {
+export async function collectArticleMedia(
+  input: {
+    ticketId: number;
+    articleId: number;
+    bodyHtml: string | null | undefined;
+    attachments: RawAttachment[] | undefined;
+  },
+  deps: { download?: AttachmentDownloader; isPosted?: (ticketId: number, hash: string) => boolean } = {},
+): Promise<ArticleMedia> {
+  const { ticketId, articleId, bodyHtml } = input;
+  const download = deps.download ?? downloadAttachment;
+  const isPosted = deps.isPosted ?? isMediaPosted;
   const limits = getAttachmentLimits();
   const LARGE_FILE_THRESHOLD = limits.perFileBytes;
   const MAX_TOTAL_DOWNLOAD_BYTES = limits.totalBytes;
@@ -887,14 +921,22 @@ async function collectArticleMedia(
 
   const files: { data: Buffer; filename: string }[] = [];
   const largeFileLinks: string[] = [];
-  const downloadedIds = new Set<number>();
+  const mediaHashes: string[] = [];
+  const downloaded = new Set<string>(); // "articleId/attachmentId"
+  const hashesThisArticle = new Set<string>();
   let totalDownloaded = 0;
   const zammadLink = (name: string, note: string) =>
     `[${name} (${note})](${zammadBase}/#ticket/zoom/${ticketId}/${articleId})`;
 
+  const rawAttachments = input.attachments ?? [];
+  // Attachments the body shows inline are handled with the inline images
+  // (hash de-duplication), not re-sent as plain files.
+  const inlineIds = inlineAttachmentIds(bodyHtml, ticketId, articleId, rawAttachments);
+
   // 1) Real file attachments (skip Zammad's internal raw-source copies).
-  for (const att of rawAttachments ?? []) {
+  for (const att of rawAttachments) {
     if (isRawSourceAttachment(att)) continue;
+    if (inlineIds.has(att.id)) continue;
     const attSize = Number.isFinite(Number(att.size)) ? Number(att.size) : 0;
     if (attSize < 10 && attSize > 0) continue; // skip tiny placeholders
     if (attSize > LARGE_FILE_THRESHOLD) {
@@ -910,34 +952,71 @@ async function collectArticleMedia(
       continue;
     }
     try {
-      const dl = await downloadAttachment(ticketId, articleId, att.id);
-      files.push({ data: dl.data, filename: ensureFileExtension(att.filename, dl.contentType) });
+      const dl = await download(ticketId, articleId, att.id);
+      const named = ensureFileExtension(att.filename, dl.contentType);
+      files.push(await displayable(dl.data, named, dl.contentType));
       totalDownloaded += dl.data.length;
-      downloadedIds.add(att.id);
+      downloaded.add(`${articleId}/${att.id}`);
+      // Recorded too, so a later reply quoting this file inline is not re-posted.
+      const h = sha256(dl.data);
+      hashesThisArticle.add(h);
+      mediaHashes.push(h);
     } catch (err) {
       if (attSize === 0) largeFileLinks.push(zammadLink(att.filename, "? MB"));
       logger.warn({ articleId, attachmentId: att.id, err }, "Failed to download attachment");
     }
   }
 
-  // 2) Inline images embedded in the email body (email only). These are NOT in
-  //    the attachments array, so they must be pulled from the reply HTML.
-  if (articleType === "email") {
-    for (const attId of extractInlineImageIds(replyHtml, ticketId, articleId)) {
-      if (downloadedIds.has(attId)) continue;
-      if (files.length >= MAX_DISCORD_ATTACHMENTS) break;
-      if (totalDownloaded >= MAX_TOTAL_DOWNLOAD_BYTES) break;
+  // 2) Inline images in the body (any article type; reply first, then quoted).
+  let inlineIndex = 0;
+  for (const ref of extractInlineImages(bodyHtml, ticketId, articleId, rawAttachments)) {
+    if (files.length >= MAX_DISCORD_ATTACHMENTS) break;
+    if (totalDownloaded >= MAX_TOTAL_DOWNLOAD_BYTES) break;
+    inlineIndex++;
+    let data: Buffer;
+    let contentType: string;
+    let baseName: string;
+    if (ref.kind === "attachment") {
+      const key = `${ref.articleId}/${ref.attachmentId}`;
+      if (downloaded.has(key)) continue;
+      downloaded.add(key);
+      let served: string | undefined;
       try {
-        const dl = await downloadAttachment(ticketId, articleId, attId);
-        if (totalDownloaded + dl.data.length > MAX_TOTAL_DOWNLOAD_BYTES) continue;
-        files.push({ data: dl.data, filename: ensureFileExtension(`inline-image-${attId}`, dl.contentType) });
-        totalDownloaded += dl.data.length;
-        downloadedIds.add(attId);
+        const dl = await download(ref.ticketId, ref.articleId, ref.attachmentId);
+        data = dl.data;
+        contentType = dl.contentType;
+        served = dl.filename && !/^attachment_\d+$/.test(dl.filename) ? dl.filename : undefined;
       } catch (err) {
-        logger.warn({ ticketId, articleId, attachmentId: attId, err }, "Failed to download inline image");
+        logger.warn({ ticketId, articleId, attachmentId: ref.attachmentId, err }, "Failed to download inline image");
+        continue;
       }
+      baseName = ref.filename?.trim() || served || `inline-image-${ref.attachmentId}`;
+    } else {
+      data = ref.data;
+      contentType = ref.mimeType;
+      baseName = `inline-image-${articleId}-${inlineIndex}`;
     }
+    if (!/^image\//i.test(contentType) && !/\.(png|jpe?g|gif|webp|bmp|heic|heif|avif|tiff?)$/i.test(baseName)) {
+      continue; // an inline reference that is not an image
+    }
+    const hash = sha256(data);
+    if (hashesThisArticle.has(hash)) continue;
+    if (isPosted(ticketId, hash)) continue; // already shown earlier in this thread
+    if (totalDownloaded + data.length > MAX_TOTAL_DOWNLOAD_BYTES) continue;
+    if (data.length > LARGE_FILE_THRESHOLD) {
+      largeFileLinks.push(zammadLink(baseName, `${(data.length / 1024 / 1024).toFixed(1)} MB`));
+      continue;
+    }
+    hashesThisArticle.add(hash);
+    mediaHashes.push(hash);
+    let filename = baseName;
+    if (!/\.\w{2,5}$/.test(filename)) {
+      const ext = extensionForMime(contentType);
+      if (ext) filename = `${filename}.${ext}`;
+    }
+    files.push(await displayable(data, filename, contentType));
+    totalDownloaded += data.length;
   }
 
-  return { files, largeFileLinks };
+  return { files, largeFileLinks, mediaHashes };
 }

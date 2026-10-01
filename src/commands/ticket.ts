@@ -54,7 +54,7 @@ import { canConvert, convertFile, type ConvertTarget } from "../util/fileConvert
 // Handler utilities
 // ---------------------------------------------------------------
 
-async function requireMapping(
+export async function requireMapping(
   interaction: ChatInputCommandInteraction
 ): Promise<TicketThread | null> {
   const mapping = getThreadByThreadId(interaction.channelId);

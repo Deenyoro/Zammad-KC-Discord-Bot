@@ -39,7 +39,10 @@ const SPLIT_PATTERNS: RegExp[] = [
 
   // Outlook quoted-header block with no <hr> divider: a <div>/<p> wrapping a
   // bold "From:" line followed by a bold "Sent:"/"Date:" line.
-  /<(?:div|p)[^>]*>\s*(?:<[^>]+>\s*)*<b>\s*From:\s*<\/b>[\s\S]{0,800}?<b>\s*(?:Sent|Date):/i,
+  // The tags it skips before "From:" exclude <img>: otherwise a <div> holding
+  // a screenshot just above an <hr> + header block matched here, and the
+  // split moved the reply's own image into the quoted context.
+  /<(?:div|p)[^>]*>\s*(?:<(?!img\b)[^>]+>\s*)*<b>\s*From:\s*<\/b>[\s\S]{0,800}?<b>\s*(?:Sent|Date):/i,
 
   // "On <date> <person> wrote:" — plain-text style quote intro
   /On\s.{10,120}wrote:\s*(?:<br|<\/p>|<\/div>|\n)/i,

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Client, REST, Routes } from "discord.js";
 import { loadEnv, env } from "./util/env.js";
 import { logger } from "./util/logger.js";
-import { initDb, closeDb, pruneDedup, pruneSyncedArticles } from "./db/index.js";
+import { initDb, closeDb, pruneDedup, pruneSyncedArticles, prunePostedMedia, pruneReminders } from "./db/index.js";
 import { createClient } from "./client.js";
 import { startWebServer } from "./web/server.js";
 import { syncAllTickets } from "./services/backfill.js";
@@ -44,6 +44,9 @@ import {
   checknoteCommand,
   renameCommand,
 } from "./commands/shortcuts.js";
+import { mdCommand } from "./commands/md.js";
+import { remindMeCommand, remindersCommand } from "./commands/remind.js";
+import { startReminders, stopReminders } from "./services/reminders.js";
 
 let discordClient: Client | null = null;
 let server: Awaited<ReturnType<typeof startWebServer>> | null = null;
@@ -86,6 +89,9 @@ async function deployCommands() {
     weeklyCommand.toJSON(),
     checknoteCommand.toJSON(),
     renameCommand.toJSON(),
+    mdCommand.toJSON(),
+    remindMeCommand.toJSON(),
+    remindersCommand.toJSON(),
   ];
 
   const rest = new REST().setToken(config.DISCORD_TOKEN);
@@ -150,6 +156,8 @@ async function main() {
   cleanupTimer = setInterval(() => {
     pruneDedup();
     pruneSyncedArticles();
+    prunePostedMedia();
+    pruneReminders();
   }, 60 * 60 * 1000);
 
   // 9. Zammad health monitoring — alerts @everyone if Zammad goes down
@@ -160,6 +168,9 @@ async function main() {
 
   // 11. Daily keepalive sweep — silent status updates to prevent Discord from hiding threads
   startKeepalive(client);
+
+  // 12. /remind-me delivery (stored in SQLite; due ones are sent on startup too)
+  startReminders(client);
 
   logger.info("Bot fully started");
 }
@@ -176,6 +187,7 @@ async function shutdown(signal: string) {
   stopHealthCheck();
   stopDailySummary();
   stopKeepalive();
+  stopReminders();
 
   // Stop accepting new webhooks
   if (server) {

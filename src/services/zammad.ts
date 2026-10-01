@@ -25,6 +25,13 @@ export interface ZammadTicket {
   escalation_at?: string | null;
   preferences?: Record<string, any>;
   tags?: string[];
+  organization?: string | null;
+  organization_id?: number | null;
+  owner?: string;
+  pending_time?: string | null;
+  close_at?: string | null;
+  article_count?: number;
+  article_ids?: number[];
 }
 
 export interface ZammadArticle {
@@ -45,6 +52,7 @@ export interface ZammadArticle {
   updated_at: string;
   attachments?: ZammadAttachment[];
   preferences?: Record<string, unknown>;
+  content_type?: string;
 }
 
 export interface ZammadAttachment {
@@ -200,6 +208,32 @@ export async function getArticles(ticketId: number): Promise<ZammadArticle[]> {
   return res.json() as Promise<ZammadArticle[]>;
 }
 
+export async function getArticle(articleId: number): Promise<ZammadArticle> {
+  const res = await zammadFetch(`/ticket_articles/${articleId}?expand=true`);
+  return res.json() as Promise<ZammadArticle>;
+}
+
+/**
+ * Every article of a ticket. `by_ticket` returns the whole list on current
+ * Zammad versions; if it ever comes back short of the ticket's article_ids
+ * (paginated or capped), the missing articles are fetched one by one.
+ */
+export async function getAllArticles(ticket: Pick<ZammadTicket, "id" | "article_ids">): Promise<ZammadArticle[]> {
+  const list = await getArticles(ticket.id);
+  const have = new Set(list.map((a) => a.id));
+  const missing = (ticket.article_ids ?? []).filter((id) => !have.has(id));
+  const MAX_EXTRA = 2000;
+  for (const id of missing.slice(0, MAX_EXTRA)) {
+    try {
+      const a = await getArticle(id);
+      if (a.ticket_id === ticket.id) list.push(a);
+    } catch (err) {
+      logger.warn({ ticketId: ticket.id, articleId: id, err }, "Failed to fetch article for export");
+    }
+  }
+  return list;
+}
+
 export interface ArticleAttachment {
   filename: string;
   data: string;         // base64-encoded
@@ -284,7 +318,23 @@ export async function downloadAttachment(
     );
   }
 
-  return { data: buf, contentType, filename: `attachment_${attachmentId}` };
+  const filename = filenameFromContentDisposition(res.headers.get("content-disposition"));
+  return { data: buf, contentType, filename: filename ?? `attachment_${attachmentId}` };
+}
+
+/** Filename from a Content-Disposition header (RFC 6266 `filename*` first). */
+export function filenameFromContentDisposition(header: string | null | undefined): string | undefined {
+  if (!header) return undefined;
+  const star = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(header);
+  if (star) {
+    try {
+      const v = decodeURIComponent(star[2].trim().replace(/^"|"$/g, ""));
+      if (v) return v.replace(/[\\/]/g, "_");
+    } catch { /* fall through */ }
+  }
+  const plain = /filename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]+))/i.exec(header);
+  const v = (plain?.[1] ?? plain?.[2])?.trim();
+  return v ? v.replace(/[\\/]/g, "_") : undefined;
 }
 
 // ---------------------------------------------------------------
