@@ -38,6 +38,8 @@ import {
   aihelpCommand,
   aiproofreadCommand,
 } from "./shortcuts.js";
+import { mdCommand } from "./md.js";
+import { remindMeCommand, remindersCommand } from "./remind.js";
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -76,6 +78,9 @@ const commands = [
   aisummaryCommand.toJSON(),
   aihelpCommand.toJSON(),
   aiproofreadCommand.toJSON(),
+  mdCommand.toJSON(),
+  remindMeCommand.toJSON(),
+  remindersCommand.toJSON(),
 ];
 const rest = new REST().setToken(token);
 

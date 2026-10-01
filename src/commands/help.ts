@@ -40,6 +40,7 @@ export async function handleHelpCommand(
           "`/tags list|add|remove` -Manage ticket tags",
           "`/merge <target>` -Merge this ticket into another",
           "`/history` -Show recent ticket history",
+          "`/md` -Export the whole ticket to a Markdown file (posted here and added to Zammad as an internal note)",
         ].join("\n"),
         inline: false,
       },
@@ -59,6 +60,14 @@ export async function handleHelpCommand(
           "`/newticket <type> <to> <subject> <body> [send]` -Create a ticket: email, sms (comma-separate numbers for a group text), teams (contact name/email), phone-log. `send:false` creates the SMS/Teams ticket without sending",
           "`/weekly [start] [end] [email]` -Create a Weekly Check ticket (auto-detects dates)",
           "`/checknote` -Snapshot service status board into ticket note (with image)",
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name: "Reminders (anywhere)",
+        value: [
+          "`/remind-me <when> [message]` -Ping you here later. `when`: 30m, 2h, 1h30m, 3d, 1w, tomorrow 9am, friday 3pm, 17:30, 2026-10-05 14:00 (bot timezone)",
+          "`/reminders [cancel]` -List your pending reminders or cancel one by ID",
         ].join("\n"),
         inline: false,
       },

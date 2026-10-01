@@ -48,6 +48,34 @@ CREATE TABLE IF NOT EXISTS settings (
   value  TEXT NOT NULL
 );
 
+-- Content hashes of inline images already posted to a ticket's thread, so an
+-- image re-embedded in a later reply (quoted chain) is not posted again.
+CREATE TABLE IF NOT EXISTS posted_media (
+  ticket_id   INTEGER NOT NULL,
+  sha256      TEXT    NOT NULL,
+  article_id  INTEGER NOT NULL,
+  posted_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (ticket_id, sha256)
+);
+
+-- /remind-me reminders. Stored here (the bot's persistent volume) so they
+-- survive restarts and redeploys. due_at is an ISO 8601 UTC timestamp.
+CREATE TABLE IF NOT EXISTS reminders (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       TEXT    NOT NULL,
+  guild_id      TEXT,
+  channel_id    TEXT    NOT NULL,
+  message       TEXT,
+  source_url    TEXT,
+  due_at        TEXT    NOT NULL,
+  created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+  delivered_at  TEXT,
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT,
+  last_error    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_pending ON reminders(delivered_at, due_at);
+
 CREATE INDEX IF NOT EXISTS idx_synced_articles_ticket ON synced_articles(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_threads_thread  ON ticket_threads(thread_id);
 `;
@@ -260,6 +288,128 @@ export function pruneSyncedArticles(): void {
   if (result.changes > 0) {
     logger.debug({ pruned: result.changes }, "Pruned synced articles entries");
   }
+}
+
+// ---------------------------------------------------------------
+// posted_media (inline-image dedup per ticket)
+// ---------------------------------------------------------------
+
+export function isMediaPosted(ticketId: number, sha256: string): boolean {
+  return !!db()
+    .prepare("SELECT 1 FROM posted_media WHERE ticket_id = ? AND sha256 = ?")
+    .get(ticketId, sha256);
+}
+
+export function recordPostedMedia(ticketId: number, articleId: number, hashes: string[]): void {
+  const stmt = db().prepare(
+    "INSERT OR IGNORE INTO posted_media (ticket_id, sha256, article_id) VALUES (?, ?, ?)"
+  );
+  for (const h of hashes) stmt.run(ticketId, h, articleId);
+}
+
+/** Clean up posted_media entries older than 180 days. */
+export function prunePostedMedia(): void {
+  db().prepare("DELETE FROM posted_media WHERE posted_at < datetime('now', '-180 days')").run();
+}
+
+// ---------------------------------------------------------------
+// reminders
+// ---------------------------------------------------------------
+
+export interface Reminder {
+  id: number;
+  user_id: string;
+  guild_id: string | null;
+  channel_id: string;
+  message: string | null;
+  source_url: string | null;
+  due_at: string;
+  created_at: string;
+  delivered_at: string | null;
+  attempts: number;
+  next_attempt_at: string | null;
+  last_error: string | null;
+}
+
+export function createReminder(row: {
+  user_id: string;
+  guild_id: string | null;
+  channel_id: string;
+  message: string | null;
+  due_at: string;
+}): number {
+  const res = db()
+    .prepare(
+      `INSERT INTO reminders (user_id, guild_id, channel_id, message, due_at)
+       VALUES (@user_id, @guild_id, @channel_id, @message, @due_at)`
+    )
+    .run(row);
+  return Number(res.lastInsertRowid);
+}
+
+export function setReminderSourceUrl(id: number, url: string): void {
+  db().prepare("UPDATE reminders SET source_url = ? WHERE id = ?").run(url, id);
+}
+
+/** Undelivered reminders due at or before `nowIso`, oldest first. */
+export function getDueReminders(nowIso: string, limit = 25): Reminder[] {
+  return db()
+    .prepare(
+      `SELECT * FROM reminders
+       WHERE delivered_at IS NULL AND due_at <= ?
+         AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+       ORDER BY due_at ASC, id ASC LIMIT ?`
+    )
+    .all(nowIso, nowIso, limit) as Reminder[];
+}
+
+export function getPendingRemindersForUser(userId: string): Reminder[] {
+  return db()
+    .prepare(
+      "SELECT * FROM reminders WHERE user_id = ? AND delivered_at IS NULL ORDER BY due_at ASC, id ASC"
+    )
+    .all(userId) as Reminder[];
+}
+
+export function countPendingRemindersForUser(userId: string): number {
+  const row = db()
+    .prepare("SELECT COUNT(*) AS n FROM reminders WHERE user_id = ? AND delivered_at IS NULL")
+    .get(userId) as { n: number };
+  return row.n;
+}
+
+export function markReminderDelivered(id: number, note?: string): void {
+  db()
+    .prepare("UPDATE reminders SET delivered_at = ?, last_error = ? WHERE id = ?")
+    .run(new Date().toISOString(), note ?? null, id);
+}
+
+/** Record a failed delivery; the next attempt waits `retryAfterMs`. Returns the attempt count. */
+export function markReminderFailed(id: number, error: string, retryAfterMs = 60_000): number {
+  db()
+    .prepare("UPDATE reminders SET attempts = attempts + 1, last_error = ?, next_attempt_at = ? WHERE id = ?")
+    .run(error.slice(0, 500), new Date(Date.now() + retryAfterMs).toISOString(), id);
+  const row = db().prepare("SELECT attempts FROM reminders WHERE id = ?").get(id) as
+    | { attempts: number }
+    | undefined;
+  return row?.attempts ?? 0;
+}
+
+/** Cancel a pending reminder. Only the owner can cancel; returns true if one was cancelled. */
+export function cancelReminder(id: number, userId: string): boolean {
+  const res = db()
+    .prepare(
+      "UPDATE reminders SET delivered_at = ?, last_error = 'cancelled' WHERE id = ? AND user_id = ? AND delivered_at IS NULL"
+    )
+    .run(new Date().toISOString(), id, userId);
+  return res.changes > 0;
+}
+
+/** Remove delivered/cancelled reminders older than 30 days. */
+export function pruneReminders(): void {
+  db()
+    .prepare("DELETE FROM reminders WHERE delivered_at IS NOT NULL AND delivered_at < ?")
+    .run(new Date(Date.now() - 30 * 24 * 3600_000).toISOString());
 }
 
 // ---------------------------------------------------------------

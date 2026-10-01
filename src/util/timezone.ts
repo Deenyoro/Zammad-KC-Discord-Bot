@@ -46,9 +46,8 @@ export function formatInBotTz(date: Date | string): string {
  * Get the current date/time components in the bot's configured timezone.
  * Returns { year, month (1-12), day, hour (0-23), minute }.
  */
-export function nowInBotTz(): { year: number; month: number; day: number; hour: number; minute: number } {
+export function nowInBotTz(now: Date = new Date()): { year: number; month: number; day: number; hour: number; minute: number } {
   const tz = getBotTimezone();
-  const now = new Date();
 
   if (!tz) {
     return {

@@ -88,6 +88,25 @@ async function convertImageToPng(
   }
 }
 
+/**
+ * Convert a HEIC/HEIF image to JPEG so Discord can display it inline.
+ * Best effort: sharp's bundled libvips decodes only some HEIF variants, so a
+ * null result means "send the original file".
+ */
+export async function convertHeicToJpeg(
+  buf: Buffer,
+  filename: string,
+): Promise<{ data: Buffer; filename: string; mimeType: string } | null> {
+  try {
+    const sharp = (await import("sharp")).default;
+    const jpg = await sharp(buf).rotate().jpeg({ quality: 85 }).toBuffer();
+    return { data: Buffer.from(jpg), filename: replaceExtension(filename, "jpg"), mimeType: "image/jpeg" };
+  } catch (err: any) {
+    logger.debug({ err: err?.message, filename }, "HEIC to JPEG conversion not possible; sending original");
+    return null;
+  }
+}
+
 async function convertDocToPdf(
   buf: Buffer,
   filename: string,

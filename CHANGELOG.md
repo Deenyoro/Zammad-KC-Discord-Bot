@@ -2,6 +2,64 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.4] - 2026-10-01
+
+### Fixed
+- Notes missing from ticket threads. The Zammad -> Discord sync skipped every
+  System-sender article, which dropped the internal "Call activity" notes the
+  Zammad-KC RingCentral integration adds (and monitoring notes such as "API
+  health check failure detected"). Every note is now posted, internal or
+  public, agent or System; System notes are labelled "System (<subject>)".
+  Only System-sender articles that are not notes (trigger auto-replies) are
+  still skipped.
+- Inline images not reaching Discord:
+  - The Outlook quoted-header pattern in the email splitter skipped over
+    `<img>` tags, so a screenshot placed just above the `<hr>` + "From:/Sent:"
+    block was cut into the quoted context and never extracted. Same fix in
+    the quote stripper.
+  - Only the reply part was searched for images, so a screenshot in the
+    quoted or forwarded part (e.g. from an email that never reached the
+    ticket) was never posted. Images are now taken from the whole body,
+    reply first, and de-duplicated per ticket by content hash (new table
+    `posted_media`), so quoted copies of images already in the thread are
+    not posted again.
+  - Inline images were handled for emails only; notes and other article
+    types are covered now.
+  - `cid:` references (webhook payloads) and `data:` URIs are handled, with
+    lenient base64 decoding (wrapped lines, percent-encoding, URL-safe
+    alphabet, missing padding); undecodable ones are skipped.
+  - Inline images keep their Zammad filename (from Content-Disposition).
+  - HEIC/HEIF images are converted to JPEG when sharp can decode them.
+- Webhooks with an empty `article` object no longer log a false
+  "ticket_id mismatch" warning.
+
+### Added
+- `/md`: exports the ticket of the current thread to `ticket-<number>.md`
+  (header with number, title, state, priority, group, owner, customer,
+  organization, created/updated, tags; every article in order with time,
+  from/to/cc, type, sender, internal flag, body converted from HTML to
+  Markdown, attachment links). The file is posted in the thread, split into
+  parts if it exceeds Discord's upload limit, and added to the Zammad ticket
+  as an internal note attachment. Articles missing from the by-ticket list
+  are fetched individually.
+- `/remind-me <when> [message]`: pings the user in the same channel or
+  thread with the message and a link back. Reminders are stored in SQLite
+  (new table `reminders` in `data/bot.db`), survive restarts, are delivered
+  late (and marked so) if they fell due while the bot was down, and fall back
+  to a DM if the channel is gone. Past times, times under 30 seconds away and
+  times more than 366 days ahead are rejected.
+- `/reminders [cancel]`: list or cancel your pending reminders.
+- Tests for note filtering, inline-image extraction and collection, the time
+  parser, the Markdown export and reminders (53 tests in total).
+
+### Changed
+- Time parsing (shared by `/schedule` and `/remind-me`): dates and date-times
+  without an offset (`2026-10-05`, `2026-10-05 14:00`) are read in the bot
+  timezone instead of the container's; added combined durations (`1h30m`),
+  months (`2mo`), `in 2h`, weekdays (`friday 3pm`) and bare times (`17:30`).
+- New runtime dependency: turndown (HTML to Markdown for `/md`).
+- Version 1.0.3 -> 1.0.4.
+
 ## [1.0.3] - 2026-09-25
 
 CI only; no application changes.
