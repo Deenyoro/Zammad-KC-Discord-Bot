@@ -8,7 +8,7 @@
 // bypassed (upstream merge path, overlay failure) the child sits in "merged"
 // forever — and without these entries the bot would treat it as open, keep the
 // thread alive, and the backfill would re-add members it had just removed.
-const CLOSED_STATES = new Set(["closed", "closed (locked)", "closed (locked until)", "merged", "removed"]);
+const CLOSED_STATES = new Set(["deleted", "closed", "closed (locked)", "closed (locked until)", "merged", "removed"]);
 
 /** Exported for the Zammad client's open-ticket query — single source of
  *  truth so the fetch filter can never disagree with isClosedState(). */

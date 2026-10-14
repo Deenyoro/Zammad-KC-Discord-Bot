@@ -298,6 +298,23 @@ export async function syncAllTickets(client: Client): Promise<void> {
       closed++;
       logger.info({ ticketId: mapping.ticket_id, freshState }, "Closed thread for ticket confirmed closed");
     } catch (err) {
+      if (err instanceof Error && /Zammad API 404:/.test(err.message)) {
+        // The ticket no longer exists in Zammad (deleted/merged away). Retire the
+        // thread once instead of re-fetching it every sync cycle forever.
+        updateThreadState(mapping.ticket_id, "deleted");
+        try {
+          const thread = (await client.channels.fetch(mapping.thread_id)) as ThreadChannel | null;
+          if (thread?.isThread()) {
+            await discordQueue.add(() => thread.send("\u{1F5D1}\uFE0F This ticket was deleted in Zammad. Thread archived."));
+          }
+          await closeTicketThread(client, mapping.thread_id);
+        } catch (closeErr) {
+          logger.warn({ ticketId: mapping.ticket_id, err: closeErr }, "Ticket deleted in Zammad but the thread could not be archived");
+        }
+        closed++;
+        logger.info({ ticketId: mapping.ticket_id }, "Ticket deleted in Zammad — thread retired");
+        continue;
+      }
       logger.warn({ ticketId: mapping.ticket_id, err }, "Failed to verify/close stale thread");
     }
   }
