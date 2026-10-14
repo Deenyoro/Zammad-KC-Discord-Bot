@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.7] - 2026-10-14
+
+### Security
+- sharp 0.35.4 -> 0.35.5 (bundled libvips/librsvg advisory GHSA-wq5f-xc86-pv6w); fast-copy 4.0.2 -> 4.1.0 (dev-only). Lockfile only.
+
 ## [1.0.6] - 2026-10-14
 
 ### Fixed
