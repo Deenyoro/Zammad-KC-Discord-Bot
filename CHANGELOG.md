@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.6] - 2026-10-14
+
+### Fixed
+- A ticket deleted in Zammad is retired once (thread notice + archive, state
+  `deleted`) instead of being re-fetched with a 404 every 30-second sync cycle.
+
 ## [1.0.5] - 2026-10-14
 
 ### Changed
