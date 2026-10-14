@@ -16,9 +16,11 @@ export function onMessageCreate(client: Client): void {
     const mapping = getThreadByThreadId(message.channelId);
     if (!mapping) return; // Not a tracked ticket thread
 
-    // Only mapped agents may post into ticket threads
-    const userEntry = getUserMap(message.author.id);
-    if (!userEntry) return;
+    // Every human message in a ticket thread becomes an internal note on the
+    // ticket. Mapped agents author it as themselves (X-On-Behalf-Of); anyone
+    // else is attributed in the note body and the article is created by the
+    // bot's API user. Slash commands never arrive here (they are interactions).
+    const userEntry = getUserMap(message.author.id) ?? null;
 
     await enqueueForTicket(mapping.ticket_id, async () => {
       try {
@@ -37,11 +39,18 @@ async function forwardToZammad(
   message: Message,
   ticketId: number,
   threadId: string,
-  userEntry: UserMapEntry
+  userEntry: UserMapEntry | null
 ): Promise<void> {
   // Expand ::shortcut text modules before sending
   const rawBody = message.content || "";
-  const { expanded: body, contentType } = await expandTextModules(rawBody);
+  const { expanded: expandedBody, contentType } = await expandTextModules(rawBody);
+  // Unmapped Discord users: name them in the note (Zammad shows the bot's API
+  // user as the author otherwise).
+  const who = message.member?.displayName || message.author.globalName || message.author.username;
+  const attribution = userEntry ? "" : (contentType === "text/html"
+    ? `<p><em>Discord message from ${escapeHtml(who)} (@${escapeHtml(message.author.username)})</em></p>`
+    : `Discord message from ${who} (@${message.author.username}):\n`);
+  const body = attribution + expandedBody;
 
   // Download Discord attachments and base64-encode for Zammad.
   // Limits configurable via /setup attachments — prevents OOM from
@@ -80,7 +89,7 @@ async function forwardToZammad(
     }
   }
 
-  if (!body.trim() && attachments.length === 0) return; // nothing to forward
+  if (!expandedBody.trim() && attachments.length === 0) return; // nothing to forward
 
   // Thread messages are always internal notes — use /reply to send externally.
   // This prevents accidental outbound messages to customers via Teams/SMS/email.
@@ -91,8 +100,8 @@ async function forwardToZammad(
     sender: "Agent",
     internal: true,
     content_type: contentType,
-    origin_by_id: userEntry.zammad_id ?? undefined,
-    on_behalf_of: userEntry.zammad_id,
+    origin_by_id: userEntry?.zammad_id ?? undefined,
+    on_behalf_of: userEntry?.zammad_id ?? null,
     attachments: attachments.length > 0 ? attachments : undefined,
   });
 
@@ -100,7 +109,11 @@ async function forwardToZammad(
   markArticleSynced(article.id, ticketId, threadId, message.id, "discord_to_zammad");
 
   logger.info(
-    { ticketId, articleId: article.id, discordMsgId: message.id, attachmentCount: attachments.length },
+    { ticketId, articleId: article.id, discordMsgId: message.id, attachmentCount: attachments.length, mapped: !!userEntry },
     "Forwarded Discord message as internal note to Zammad"
   );
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 }
