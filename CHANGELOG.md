@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.8] - 2026-10-28
+
+### Security
+- `/setup` no longer lets everyone in when `ADMIN_USER_IDS` is empty. Only the listed Discord user IDs are admins; an empty list means nobody is.
+- The `/debug/*` web routes had no authentication, so any pod in the cluster could read ticket titles and thread members, start a keepalive sweep or change the keepalive hour. They are now off unless `DEBUG_TOKEN` is set, and then need `Authorization: Bearer <DEBUG_TOKEN>`.
+- `/search`, `/weekly` and the `/merge` ticket suggestions now need a Discord user mapped to a Zammad agent (`/setup usermap`), like the other ticket commands. Before, any member who could see the commands could search every ticket or open tickets with the bot's token.
+- Dependency updates for advisories (lockfile only): undici 6.28.1 -> 6.29.1, zod 4.3.6 -> 4.6.7, fastify 5.12.5 -> 5.12.7, fast-uri 3.1.8 -> 3.1.9 and 4.2.1 -> 4.2.3.
+
 ## [1.0.7] - 2026-10-14
 
 ### Security

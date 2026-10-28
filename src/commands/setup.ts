@@ -9,9 +9,11 @@ import { findUserByEmail } from "../services/zammad.js";
 import { env } from "../util/env.js";
 import { getAttachmentLimits } from "../util/attachmentLimits.js";
 
+// Only user IDs listed in ADMIN_USER_IDS are admins. An empty list means
+// nobody is, rather than every member who can see the command.
 function isAdmin(userId: string): boolean {
   const ids = env().ADMIN_USER_IDS;
-  return ids.length === 0 || ids.includes(userId);
+  return ids.length > 0 && ids.includes(userId);
 }
 
 export const setupCommand = new SlashCommandBuilder()
