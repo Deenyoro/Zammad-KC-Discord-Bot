@@ -148,11 +148,12 @@ ZAMMAD_API_TOKEN=<token with admin + ticket.agent>
 ZAMMAD_WEBHOOK_SECRET=<random secret>
 
 # Access Control
-ADMIN_USER_IDS=                            # optional - comma-separated Discord user IDs (empty = everyone is admin)
+ADMIN_USER_IDS=                            # comma-separated Discord user IDs allowed to run /setup (empty = nobody)
 
 # Server
 PORT=3100
 LOG_LEVEL=info
+DEBUG_TOKEN=                               # optional - enables /debug/* routes; send as "Authorization: Bearer <token>"
 ```
 
 ### 5. Create the Zammad Webhook + Triggers

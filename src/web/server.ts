@@ -37,12 +37,12 @@ export async function startWebServer(client: Client): Promise<FastifyInstance> {
   // Zammad webhook routes
   registerZammadRoutes(app, client);
 
-  // Debug/diagnostic routes (cluster-internal only)
-  registerDebugRoutes(app, client);
+  // Debug/diagnostic routes (only with DEBUG_TOKEN, which they then require)
+  registerDebugRoutes(app, client, env().DEBUG_TOKEN);
 
   const port = env().PORT;
   await app.listen({ port, host: "0.0.0.0" });
-  logger.info({ port }, "Webhook server listening");
+  logger.info({ port, debugEndpoints: !!env().DEBUG_TOKEN?.trim() }, "Webhook server listening");
 
   return app;
 }

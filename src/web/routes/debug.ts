@@ -1,16 +1,42 @@
 /**
  * Debug endpoints — inspect the actual state of Discord threads.
- * Only accessible via kubectl port-forward or cluster-internal calls.
+ *
+ * They expose ticket titles and thread members and can change settings, and
+ * any pod in the cluster can reach the service, so they are only registered
+ * when DEBUG_TOKEN is set, and then require it as "Authorization: Bearer <token>".
  */
 
-import type { FastifyInstance } from "fastify";
+import { createHash, timingSafeEqual } from "node:crypto";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Client } from "discord.js";
 import { EmbedBuilder, ThreadChannel } from "discord.js";
 import { getAllTicketThreads, getSetting, setSetting } from "../../db/index.js";
 import { isClosedState, isHiddenState } from "../../util/states.js";
 import { runKeepaliveSweep } from "../../services/keepalive.js";
 
-export function registerDebugRoutes(app: FastifyInstance, client: Client): void {
+/** Constant-time check of "Authorization: Bearer <token>". */
+function hasDebugToken(req: FastifyRequest, token: string): boolean {
+  const header = req.headers.authorization ?? "";
+  const given = header.startsWith("Bearer ") ? header.slice(7) : "";
+  const a = createHash("sha256").update(given).digest();
+  const b = createHash("sha256").update(token).digest();
+  return given.length > 0 && timingSafeEqual(a, b);
+}
+
+export function registerDebugRoutes(app: FastifyInstance, client: Client, debugToken: string | undefined): void {
+  const token = debugToken?.trim();
+  if (!token) return;
+  app.register(async (debug) => {
+    debug.addHook("onRequest", async (req, reply) => {
+      if (!hasDebugToken(req, token)) {
+        return reply.code(401).send({ ok: false, error: "unauthorized" });
+      }
+    });
+    registerDebugRouteHandlers(debug, client);
+  });
+}
+
+function registerDebugRouteHandlers(app: FastifyInstance, client: Client): void {
   // Full thread state report
   app.get("/debug/threads", async () => {
     const allThreads = getAllTicketThreads();

@@ -15,6 +15,8 @@ const envSchema = z.object({
     .default("")
     .transform((v) => v.split(",").map((s) => s.trim()).filter(Boolean)),
   PORT: z.coerce.number().default(3100),
+  // Bearer token for the /debug/* routes; they are not registered without it.
+  DEBUG_TOKEN: z.string().optional(),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
 
   // AI provider configuration (all optional — features degrade gracefully)

@@ -1191,9 +1191,11 @@ export async function handlePending(interaction: ChatInputCommandInteraction) {
 // Admin check (reuses env ADMIN_USER_IDS)
 // ---------------------------------------------------------------
 
+// Only user IDs listed in ADMIN_USER_IDS are admins. An empty list means
+// nobody is, rather than every member who can see the command.
 function isAdmin(userId: string): boolean {
   const ids = env().ADMIN_USER_IDS;
-  return ids.length === 0 || ids.includes(userId);
+  return ids.length > 0 && ids.includes(userId);
 }
 
 // ---------------------------------------------------------------
@@ -1201,6 +1203,11 @@ function isAdmin(userId: string): boolean {
 // ---------------------------------------------------------------
 
 export async function handleSearch(interaction: ChatInputCommandInteraction) {
+  // Searches every ticket in Zammad with the bot's token: agents only.
+  if (!getUserMap(interaction.user.id)) {
+    await interaction.reply({ content: "You must be mapped to a Zammad agent before using ticket commands. Ask an admin to run `/setup usermap`.", ephemeral: true });
+    return;
+  }
   await interaction.deferReply({ ephemeral: true });
 
   const query = interaction.options.getString("query", true);
@@ -1259,6 +1266,11 @@ export async function handleMergeAutocomplete(
 ): Promise<void> {
   const focused = interaction.options.getFocused(true);
   if (focused.name !== "target") return;
+  // Suggestions list open ticket titles: agents only.
+  if (!getUserMap(interaction.user.id)) {
+    await interaction.respond([]);
+    return;
+  }
 
   const currentMapping = getThreadByThreadId(interaction.channelId);
   const query = focused.value.toLowerCase();
@@ -2476,6 +2488,11 @@ function nextFriday(from: Date): Date {
 }
 
 export async function handleWeekly(interaction: ChatInputCommandInteraction) {
+  // Creates a ticket in Zammad with the bot's token: agents only.
+  if (!getUserMap(interaction.user.id)) {
+    await interaction.reply({ content: "You must be mapped to a Zammad agent before using ticket commands. Ask an admin to run `/setup usermap`.", ephemeral: true });
+    return;
+  }
   await interaction.deferReply({ ephemeral: true });
 
   // Resolve customer email: command option > /setup weekly-email setting
