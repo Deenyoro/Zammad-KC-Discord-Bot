@@ -1264,6 +1264,10 @@ export async function handleTags(interaction: ChatInputCommandInteraction) {
 // /merge
 // ---------------------------------------------------------------
 
+// States a ticket can never be merged INTO. Plain closed states are allowed:
+// zammad-kc merges into a closed target and leaves it closed.
+const UNMERGEABLE_TARGET_STATES = new Set(["merged", "removed", "deleted"]);
+
 export async function handleMergeAutocomplete(
   interaction: import("discord.js").AutocompleteInteraction
 ): Promise<void> {
@@ -1279,10 +1283,10 @@ export async function handleMergeAutocomplete(
   const query = focused.value.toLowerCase();
 
   try {
-    // Local DB is instant — get all tracked threads that aren't closed/merged
-    const closedStates = new Set(["closed", "closed (locked)", "closed (locked until)", "merged", "removed"]);
+    // Local DB is instant — default suggestions are open tickets only, so
+    // closed tickets never clutter the list.
     const threads = getAllTicketThreads().filter(
-      (t) => !closedStates.has(t.state.toLowerCase()) && t.ticket_id !== currentMapping?.ticket_id
+      (t) => !isClosedState(t.state) && t.ticket_id !== currentMapping?.ticket_id
     );
 
     // Filter by query (match on ticket number or title)
@@ -1292,26 +1296,34 @@ export async function handleMergeAutocomplete(
         (t.title ?? "").toLowerCase().includes(query)
     );
 
-    // If few local matches and user typed something, also search Zammad
-    if (matches.length < 10 && query.length >= 2) {
+    // Closed tickets are valid merge targets (zammad-kc keeps the target
+    // closed), but they only appear once the agent searches for them, and
+    // after every open match, labelled "[closed]". Merged/removed/deleted
+    // tickets can never be targets.
+    const closedMatches: TicketThread[] = [];
+    if (query.length >= 2) {
       try {
         const apiResults = await searchTickets(query, 15);
         for (const t of apiResults) {
           if (t.id === currentMapping?.ticket_id) continue;
-          if (closedStates.has(t.state.toLowerCase())) continue;
+          if (UNMERGEABLE_TARGET_STATES.has(t.state.toLowerCase())) continue;
           if (matches.some((m) => m.ticket_id === t.id)) continue;
-          matches.push({
+          if (closedMatches.some((m) => m.ticket_id === t.id)) continue;
+          const row = {
             ticket_id: t.id,
             ticket_number: t.number,
             title: t.title,
-            state: t.state,
-          } as TicketThread);
+            state: t.state.toLowerCase(),
+          } as TicketThread;
+          (isClosedState(t.state) ? closedMatches : matches).push(row);
         }
       } catch { /* API search failed — use local results only */ }
     }
+    matches = [...matches, ...closedMatches];
 
     const choices = matches.slice(0, 25).map((t) => {
-      const label = `#${t.ticket_number} — ${t.title ?? "Untitled"}`;
+      const tag = isClosedState(t.state) ? " [closed]" : "";
+      const label = `#${t.ticket_number}${tag} — ${t.title ?? "Untitled"}`;
       return {
         name: label.length > 100 ? label.slice(0, 97) + "..." : label,
         value: t.ticket_number,
@@ -1343,8 +1355,7 @@ export async function handleMerge(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const closedStates = new Set(["closed", "closed (locked)", "closed (locked until)", "merged", "removed"]);
-  if (closedStates.has(targetTicket.state.toLowerCase())) {
+  if (UNMERGEABLE_TARGET_STATES.has(targetTicket.state.toLowerCase())) {
     await interaction.editReply(`Cannot merge into ticket #${targetNumber} — it is ${targetTicket.state}.`);
     return;
   }
@@ -1379,9 +1390,12 @@ export async function handleMerge(interaction: ChatInputCommandInteraction) {
   await closeTicketThread(interaction.client, mapping.thread_id);
 
   // Leave a pointer in the target's thread so the team knows where the
-  // correspondence went.
+  // correspondence went — only while the target is open. A closed target
+  // stays closed: no thread is created, and its archived thread is not
+  // touched (sendToThread would briefly unarchive it).
+  const targetClosed = isClosedState(targetTicket.state);
   const targetMapping = getThreadByTicketId(targetTicket.id);
-  if (targetMapping) {
+  if (targetMapping && !targetClosed && !isClosedState(targetMapping.state)) {
     await sendToThread(
       interaction.client,
       targetMapping.thread_id,
@@ -1390,7 +1404,9 @@ export async function handleMerge(interaction: ChatInputCommandInteraction) {
   }
 
   await interaction.editReply(
-    `Ticket #${mapping.ticket_number} merged into #${targetTicket.number}. Thread closed.`
+    `Ticket #${mapping.ticket_number} merged into #${targetTicket.number}` +
+      (targetClosed ? ` (target stays ${targetTicket.state.toLowerCase()})` : "") +
+      ". Thread closed."
   );
 }
 

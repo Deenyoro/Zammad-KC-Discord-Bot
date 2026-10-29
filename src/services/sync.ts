@@ -217,6 +217,16 @@ async function processWebhook(
   let mapping = getThreadByTicketId(ticketId);
   let threadJustCreated = false;
 
+  // Never create a thread for a ticket that is already closed: a closed
+  // ticket with no thread (e.g. the target of a merge into a closed ticket,
+  // or any ticket closed before the bot tracked it) must not post a header
+  // into the tickets channel. If it is reopened later, the next webhook or
+  // backfill cycle creates the thread then.
+  if (!mapping && isClosedState(normalizedState)) {
+    logger.info({ ticketId, state: normalizedState }, "Webhook for closed ticket without a thread — not creating one");
+    return;
+  }
+
   // Create thread if it doesn't exist
   if (!mapping) {
     await createTicketThread(client, ticketInfo);
