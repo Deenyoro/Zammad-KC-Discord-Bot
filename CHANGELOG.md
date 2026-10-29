@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.10] - 2026-10-29
+
+### Changed
+- `/merge` accepts closed tickets as targets (zammad-kc 0.0.9 keeps the target closed). Only merged, removed and deleted tickets are refused. Default suggestions stay open-only; closed tickets appear only when searching, after the open matches, tagged `[closed]`.
+- Merging into a closed ticket posts no pointer note into its archived thread, and the reply says the target stays closed.
+
+### Fixed
+- A Zammad webhook for a closed ticket that has no thread no longer creates one (it used to create the thread, post the header in the tickets channel and archive it). Closed tickets never show up in the tickets channel.
+
 ## [1.0.9] - 2026-10-29
 
 ### Added
