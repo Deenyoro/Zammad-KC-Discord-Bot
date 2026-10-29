@@ -236,7 +236,7 @@ export const tagsCommand = new SlashCommandBuilder()
 
 export const mergeCommand = new SlashCommandBuilder()
   .setName("merge")
-  .setDescription("Merge this ticket into another open ticket")
+  .setDescription("Merge this ticket into another ticket (open or closed)")
   .addStringOption((o) =>
     o.setName("target").setDescription("Target ticket (search by number or title)").setRequired(true).setAutocomplete(true)
   );
