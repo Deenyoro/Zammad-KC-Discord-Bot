@@ -603,13 +603,16 @@ export async function detectReplyChannel(
       return { type: "email", to, label: `email to ${to}` };
     }
 
-    case "ringcentral_sms_message": {
-      // For SMS: use the customer's phone number from article "from" or customer record
+    case "ringcentral_sms_message":
+    case "freepbx_sms_message": {
+      // For SMS (RingCentral or FreePBX): use the customer's phone number from
+      // article "from" or customer record. Zammad's delivery job texts every
+      // participant of the conversation; `to` here is the label.
       const ticket = await getTicket(ticketId);
       let to: string | undefined;
       // First try to get from the customer article's "from" field (phone number)
       const customerArticle = [...articles].reverse().find(
-        (a) => a.type === "ringcentral_sms_message" && a.sender === "Customer"
+        (a) => a.type === articleType && a.sender === "Customer"
       );
       if (customerArticle?.from) {
         to = customerArticle.from;
@@ -623,7 +626,7 @@ export async function detectReplyChannel(
         }
       }
       if (!to) return null;
-      return { type: "ringcentral_sms_message", to, label: `SMS to ${to}` };
+      return { type: articleType, to, label: `SMS to ${to}` };
     }
 
     case "teams_chat_message": {

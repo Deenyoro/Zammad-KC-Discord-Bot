@@ -36,7 +36,8 @@ import { discordQueue } from "../queue/index.js";
 import { isClosedState, isHiddenState, isDashboardState } from "../util/states.js";
 import { getAttachmentLimits } from "../util/attachmentLimits.js";
 import { updateDashboards } from "./dashboards.js";
-import { splitEmailHtml } from "../util/emailSplit.js";
+import { splitEmailHtml, isForwardedEmail } from "../util/emailSplit.js";
+import { articleHeader } from "../util/articleHeader.js";
 import { createHash } from "node:crypto";
 import {
   extractInlineImages,
@@ -95,8 +96,12 @@ export interface WebhookPayload {
     type_id: number;
     type: string;           // resolved: "note", "email", etc.
     from?: string;
+    to?: string;
+    cc?: string;
+    bcc?: string;
     subject?: string;
     internal: boolean;
+    preferences?: Record<string, unknown>;
     content_type?: string;
     created_at: string;
     attachments?: {
@@ -500,11 +505,12 @@ export async function syncAllUnsyncedArticles(
     // For non-email articles: show the full body as-is.
     let content: string;
     if (article.type === "email") {
-      content = renderEmailArticle(article.body, senderLabel, prefix, hasFirstArticle).content;
+      content = renderEmailArticle(article.body, senderLabel, prefix, hasFirstArticle, article.subject).content;
     } else {
       const body = stripHtml(article.body);
       content = `**${senderLabel}:** ${prefix}${body || "_(empty message)_"}`;
     }
+    content = `${articleHeader(article)}\n${content}`;
     hasFirstArticle = true;
 
     // Collect real attachments + inline images (see collectArticleMedia).
@@ -583,11 +589,12 @@ async function syncWebhookArticleFallback(
 
   let content: string;
   if (webhookArticle.type === "email") {
-    content = renderEmailArticle(webhookArticle.body, senderLabel, prefix, true).content;
+    content = renderEmailArticle(webhookArticle.body, senderLabel, prefix, true, webhookArticle.subject).content;
   } else {
     const body = stripHtml(webhookArticle.body);
     content = `**${senderLabel}:** ${prefix}${body || "_(empty message)_"}`;
   }
+  content = `${articleHeader(webhookArticle)}\n${content}`;
 
   // Collect real attachments + inline images (see collectArticleMedia).
   const { files: attachments, largeFileLinks, mediaHashes } = await collectArticleMedia({
@@ -782,9 +789,18 @@ export function renderEmailArticle(
   senderLabel: string,
   prefix: string,
   stripQuotes: boolean,
+  subject?: string | null,
 ): { content: string; replyHtml: string } {
   if (!bodyHtml) {
     return { content: `**${senderLabel}:** ${prefix}_(empty message)_`, replyHtml: "" };
+  }
+
+  // Forwards: everything below the forward header is new content for this
+  // thread. Splitting it off as "context" put it behind an 800-char spoiler
+  // (cut mid-word), and stripQuotedEmail would delete it outright. Post the
+  // whole body; sendToThread chunks it to Discord's 2000-char limit.
+  if (isForwardedEmail(subject, bodyHtml)) {
+    return { content: `**${senderLabel}:** ${prefix}${stripHtml(bodyHtml) || "_(empty message)_"}`, replyHtml: bodyHtml };
   }
   const { reply: splitReplyHtml, context: contextHtml } = splitEmailHtml(bodyHtml);
 
