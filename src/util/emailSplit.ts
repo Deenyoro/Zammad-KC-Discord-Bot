@@ -56,6 +56,32 @@ const SPLIT_PATTERNS: RegExp[] = [
 ];
 
 /**
+ * Length of the text a reader would actually see: tags dropped, &nbsp; and
+ * other whitespace entities treated as whitespace. Without this a bare
+ * "<div>&nbsp;</div>" (Outlook's empty line above a forward) counted as 6
+ * characters of "reply".
+ */
+function visibleTextLength(html: string): number {
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&(?:nbsp|#160|#xa0|ensp|emsp|thinsp|#8203|zwnj|zwj);/gi, " ")
+    .replace(/&[a-z0-9#]+;/gi, "x")
+    .replace(/[\s\u00a0\u200b]+/g, " ")
+    .trim().length;
+}
+
+/**
+ * A forwarded email: the content below the forward header is NEW to the
+ * thread, not a quoted chain, so it must not be collapsed/truncated or
+ * stripped. Detected from the subject (Fw:/Fwd:/WG:/TR:/RV:, ignoring any
+ * leading Re:) or a client "forwarded message" banner in the body.
+ */
+export function isForwardedEmail(subject: string | null | undefined, html: string): boolean {
+  if (subject && /^\s*(?:(?:re|aw|sv)\s*:\s*)*(?:fwd?|fw|wg|tr|rv|enc)\s*:/i.test(subject)) return true;
+  return /-{2,}\s*Forwarded message\s*-{2,}|Begin forwarded message:|-{2,}\s*Original Message\s*-{2,}/i.test(html);
+}
+
+/**
  * Split email HTML into reply + context.
  *
  * Returns the earliest split point found.  If no recognizable context
@@ -82,7 +108,7 @@ export function splitEmailHtml(html: string): EmailParts {
 
   // Only accept the split if the reply portion has meaningful text content
   // (at least a few real characters after stripping tags)
-  const replyTextLength = reply.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim().length;
+  const replyTextLength = visibleTextLength(reply);
   if (replyTextLength < 5) {
     // The "reply" part is too short — the entire message might BE the quote
     // (e.g. a forwarded email with no added commentary).  Don't split.

@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.9] - 2026-10-29
+
+### Added
+- Every Zammad message posted to a ticket thread starts with a small line saying how it was sent and to whom:
+  - Email: sender address, To, Cc (and Bcc on agent emails).
+  - SMS (RingCentral, FreePBX): contact name and number of each recipient.
+  - Teams: the person, our Teams account, or the group chat and its members.
+  - Messages sent directly in Teams or RingCentral (captured as notes), missed calls, and internal notes ("not sent to anyone") are labelled too.
+  - Zammad fills these recipients from zammad-kc 0.0.8 on; older articles fall back to the numbers stored on them.
+
+### Fixed
+- Forwarded emails lost their forwarded content in Discord. Outlook's forward header (an empty line, a rule, then bold From/Sent) was read as a quoted reply chain, so the whole forward went behind a spoiler cut at 800 characters, or was dropped entirely on later articles and the webhook fallback path. Forwards (Fw:/Fwd: subjects or a "forwarded message" banner) are now posted in full, and an `&nbsp;`-only line no longer counts as a reply.
+- `/reply` on a FreePBX SMS ticket sent an email to the customer instead of a text. It now replies by SMS like RingCentral tickets.
+
 ## [1.0.8] - 2026-10-28
 
 ### Security
