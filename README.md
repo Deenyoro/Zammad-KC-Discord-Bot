@@ -312,6 +312,7 @@ To run the same checks locally with Node 24: `sh ci/check.sh`.
 | `/tags list\|add\|remove` | Manage ticket tags |
 | `/merge <target>` | Merge this ticket into another by ticket number |
 | `/history` | Show last 15 history entries |
+| `/related` | List merged and linked tickets, each with its Zammad link and Discord thread |
 | `/md` | Export the whole ticket to Markdown (`ticket-<number>.md`): a header (number, title, state, priority, group, owner, customer, organization, created/updated, tags) and every article in order with time, from/to/cc, type, sender, internal flag, the body converted from HTML, and attachment links. The file is posted in the thread (split into parts if it exceeds Discord's upload limit) and added to the Zammad ticket as an internal note attachment |
 
 ### Reminders (any channel or thread)

@@ -41,6 +41,8 @@ import {
 } from "../services/zammad.js";
 import { ticketUrl, closeTicketThread, removeRoleMembersFromThread, renameTicketThread, formatOwnerLabel, sendToThread } from "../services/threads.js";
 import { discordQueue } from "../queue/index.js";
+import { announceMerges, formatRelatedLines, getRelatedTickets } from "../services/related.js";
+import { refreshTicketStatus } from "../services/keepalive.js";
 import { isClosedState, isHiddenState, isDashboardState } from "../util/states.js";
 import { parseTime } from "../util/parseTime.js";
 import { formatInBotTz, getBotTimezone } from "../util/timezone.js";
@@ -1389,18 +1391,17 @@ export async function handleMerge(interaction: ChatInputCommandInteraction) {
   updateThreadState(mapping.ticket_id, mergedState);
   await closeTicketThread(interaction.client, mapping.thread_id);
 
-  // Leave a pointer in the target's thread so the team knows where the
-  // correspondence went — only while the target is open. A closed target
-  // stays closed: no thread is created, and its archived thread is not
-  // touched (sendToThread would briefly unarchive it).
   const targetClosed = isClosedState(targetTicket.state);
-  const targetMapping = getThreadByTicketId(targetTicket.id);
-  if (targetMapping && !targetClosed && !isClosedState(targetMapping.state)) {
-    await sendToThread(
-      interaction.client,
-      targetMapping.thread_id,
-      `🔀 Ticket #${mapping.ticket_number} (**${mapping.title ?? "Untitled"}**) was merged into this ticket. Its correspondence now lands here.`
-    );
+
+  // Notes on both tickets in Zammad, pointer messages in the threads (a
+  // closed target's archived thread is left alone), and a fresh
+  // related-tickets list on the target. Same path as merges done in
+  // Zammad, so each merge is announced exactly once.
+  try {
+    const parents = await announceMerges(interaction.client, targetTicket.id);
+    for (const parentId of parents) await refreshTicketStatus(interaction.client, parentId);
+  } catch (err) {
+    logger.warn({ ticketId: mapping.ticket_id, err }, "Merge announcement failed");
   }
 
   await interaction.editReply(
@@ -1408,6 +1409,33 @@ export async function handleMerge(interaction: ChatInputCommandInteraction) {
       (targetClosed ? ` (target stays ${targetTicket.state.toLowerCase()})` : "") +
       ". Thread closed."
   );
+}
+
+// ---------------------------------------------------------------
+// /related
+// ---------------------------------------------------------------
+
+export async function handleRelated(interaction: ChatInputCommandInteraction) {
+  const mapping = getThreadByThreadId(interaction.channelId);
+  if (!mapping) {
+    await interaction.reply({ content: "This command must be used inside a ticket thread.", ephemeral: true });
+    return;
+  }
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const { related } = await getRelatedTickets(mapping.ticket_id);
+    if (related.length === 0) {
+      await interaction.editReply(`Ticket #${mapping.ticket_number} has no merged or linked tickets.`);
+      return;
+    }
+    const lines = formatRelatedLines(related, 25);
+    await interaction.editReply(
+      truncate(`**Related to #${mapping.ticket_number} (${related.length}):**\n` + lines.join("\n"), 2000)
+    );
+  } catch (err) {
+    logger.warn({ ticketId: mapping.ticket_id, err }, "/related failed");
+    await interaction.editReply("Could not load related tickets from Zammad. Try again in a minute.");
+  }
 }
 
 // ---------------------------------------------------------------

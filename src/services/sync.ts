@@ -38,6 +38,8 @@ import { getAttachmentLimits } from "../util/attachmentLimits.js";
 import { updateDashboards } from "./dashboards.js";
 import { splitEmailHtml, isForwardedEmail } from "../util/emailSplit.js";
 import { articleHeader } from "../util/articleHeader.js";
+import { announceMerges } from "./related.js";
+import { refreshTicketStatus } from "./keepalive.js";
 import { createHash } from "node:crypto";
 import {
   extractInlineImages,
@@ -375,6 +377,15 @@ async function processWebhook(
       "Webhook article missing from API response — using webhook payload as fallback"
     );
     await syncWebhookArticleFallback(client, mapping.thread_id, ticketId, sanitizedArticle);
+  }
+
+  // Merges done in Zammad: note them on both tickets and in Discord, then
+  // refresh the receiving ticket's status so its related list is current.
+  try {
+    const parents = await announceMerges(client, ticketId);
+    for (const parentId of parents) await refreshTicketStatus(client, parentId);
+  } catch (err) {
+    logger.warn({ ticketId, err }, "Merge check failed");
   }
 
   // Update the Other Tickets dashboard (state may have changed)

@@ -241,6 +241,10 @@ export const mergeCommand = new SlashCommandBuilder()
     o.setName("target").setDescription("Target ticket (search by number or title)").setRequired(true).setAutocomplete(true)
   );
 
+export const relatedCommand = new SlashCommandBuilder()
+  .setName("related")
+  .setDescription("List merged and linked tickets, with Zammad and Discord links");
+
 export const historyCommand = new SlashCommandBuilder()
   .setName("history")
   .setDescription("Show recent ticket history");

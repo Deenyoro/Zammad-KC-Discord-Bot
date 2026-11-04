@@ -23,12 +23,13 @@ import {
   ThreadChannel,
 } from "discord.js";
 import { logger } from "../util/logger.js";
-import { getAllTicketThreads, getSetting, getSettingOrEnv, setSetting } from "../db/index.js";
+import { getAllTicketThreads, getThreadByTicketId, getSetting, getSettingOrEnv, setSetting } from "../db/index.js";
 import { getCurrentHourInTz } from "../util/timezone.js";
 import { getTicket, getArticles, getUser } from "./zammad.js";
 import { ticketUrl } from "./threads.js";
 import { discordQueue } from "../queue/index.js";
 import { isClosedState, isHiddenState } from "../util/states.js";
+import { announceMerges, formatRelatedLines, getRelatedTickets, type RelatedTicket } from "./related.js";
 
 const STATUS_EMBED_FOOTER = "Daily status update — no action needed";
 
@@ -115,6 +116,45 @@ async function ensureStatusAtBottom(
 }
 
 /**
+ * Build and place the status embed for one thread. Also announces merges the
+ * ticket took part in that were not announced yet (merges done in Zammad).
+ */
+async function updateThreadStatus(
+  client: Client,
+  thread: ThreadChannel,
+  ticketId: number,
+  ticketNumber: string,
+  title: string | null,
+): Promise<void> {
+  let related: RelatedTicket[] | undefined;
+  try {
+    const r = await getRelatedTickets(ticketId);
+    related = r.related;
+    await announceMerges(client, ticketId, r.merges, r.users);
+  } catch (err) {
+    logger.debug({ ticketId, err }, "Status: related tickets unavailable");
+  }
+  const embed = await buildStatusEmbed(ticketId, ticketNumber, title, related);
+  await ensureStatusAtBottom(client, thread, embed, thread.id);
+}
+
+/**
+ * Refresh one ticket's status embed now (after a merge, for example).
+ * Closed and hidden tickets keep whatever they show.
+ */
+export async function refreshTicketStatus(client: Client, ticketId: number): Promise<void> {
+  const mapping = getThreadByTicketId(ticketId);
+  if (!mapping || isClosedState(mapping.state) || isHiddenState(mapping.state)) return;
+  try {
+    const thread = (await client.channels.fetch(mapping.thread_id, { force: true })) as ThreadChannel | null;
+    if (!thread?.isThread()) return;
+    await updateThreadStatus(client, thread, mapping.ticket_id, mapping.ticket_number, mapping.title);
+  } catch (err) {
+    logger.debug({ ticketId, err }, "Status: refresh after change failed");
+  }
+}
+
+/**
  * Run the keepalive sweep for all non-closed, non-hidden ticket threads.
  */
 export async function runKeepaliveSweep(client: Client): Promise<void> {
@@ -139,8 +179,7 @@ export async function runKeepaliveSweep(client: Client): Promise<void> {
         continue;
       }
 
-      const embed = await buildStatusEmbed(mapping.ticket_id, mapping.ticket_number, mapping.title);
-      await ensureStatusAtBottom(client, thread, embed, mapping.thread_id);
+      await updateThreadStatus(client, thread, mapping.ticket_id, mapping.ticket_number, mapping.title);
       updated++;
     } catch (err) {
       failed++;
@@ -171,8 +210,7 @@ async function runRefreshSweep(client: Client): Promise<void> {
 
       if (!thread?.isThread()) continue;
 
-      const embed = await buildStatusEmbed(mapping.ticket_id, mapping.ticket_number, mapping.title);
-      await ensureStatusAtBottom(client, thread, embed, mapping.thread_id);
+      await updateThreadStatus(client, thread, mapping.ticket_id, mapping.ticket_number, mapping.title);
       refreshed++;
     } catch (err) {
       failed++;
@@ -189,6 +227,7 @@ async function buildStatusEmbed(
   ticketId: number,
   ticketNumber: string,
   title: string | null,
+  related?: RelatedTicket[],
 ): Promise<EmbedBuilder> {
   const url = ticketUrl(ticketId);
   let state = "Unknown";
@@ -325,6 +364,11 @@ async function buildStatusEmbed(
     }
   }
 
+  let relatedSection = "";
+  if (related && related.length > 0) {
+    relatedSection = `\n\n**Related tickets (${related.length}):**\n` + formatRelatedLines(related).join("\n");
+  }
+
   return new EmbedBuilder()
     .setTitle("Ticket Status Update")
     .setDescription(
@@ -335,7 +379,8 @@ async function buildStatusEmbed(
       `**Customer:** ${customer}\n` +
       `**Created:** ${createdAt}\n` +
       `**Last Activity:** ${lastActivityDesc}` +
-      contactSection
+      contactSection +
+      relatedSection
     )
     .setColor(0x3498db)
     .setFooter({ text: STATUS_EMBED_FOOTER })

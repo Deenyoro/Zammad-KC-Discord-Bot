@@ -40,6 +40,7 @@ export async function handleHelpCommand(
           "`/tags list|add|remove` -Manage ticket tags",
           "`/merge <target>` -Merge this ticket into another (closed targets: search by number/title)",
           "`/history` -Show recent ticket history",
+          "`/related` -List merged and linked tickets with Zammad and Discord links",
           "`/md` -Export the whole ticket to a Markdown file (posted here and added to Zammad as an internal note)",
         ].join("\n"),
         inline: false,

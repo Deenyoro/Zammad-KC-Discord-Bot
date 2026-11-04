@@ -591,13 +591,65 @@ export interface ZammadHistoryEntry {
   attribute?: string;
   value_from?: string;
   value_to?: string;
+  /** Merge entries: id_from is the merged-away ticket, id_to the ticket it went into. */
+  id_from?: number | null;
+  id_to?: number | null;
+  o_id?: number;
   created_by_id: number;
 }
 
 export async function getTicketHistory(ticketId: number): Promise<ZammadHistoryEntry[]> {
+  return (await getTicketHistoryWithUsers(ticketId)).history;
+}
+
+/** History plus the users it references (id -> "Firstname Lastname"). */
+export async function getTicketHistoryWithUsers(
+  ticketId: number
+): Promise<{ history: ZammadHistoryEntry[]; users: Map<number, string> }> {
   const res = await zammadFetch(`/ticket_history/${ticketId}`);
-  const data = (await res.json()) as { history: ZammadHistoryEntry[] };
-  return data.history ?? [];
+  const data = (await res.json()) as {
+    history?: ZammadHistoryEntry[];
+    assets?: { User?: Record<string, { id: number; firstname?: string; lastname?: string; login?: string }> };
+  };
+  const users = new Map<number, string>();
+  for (const u of Object.values(data.assets?.User ?? {})) {
+    const name = `${u.firstname ?? ""} ${u.lastname ?? ""}`.trim() || u.login || "";
+    if (name) users.set(u.id, name);
+  }
+  return { history: data.history ?? [], users };
+}
+
+// ---------------------------------------------------------------
+// Links (parent / child / related tickets)
+// ---------------------------------------------------------------
+
+export interface ZammadLink {
+  /** Relation of the OTHER ticket to this one: "parent", "child" or "normal". */
+  link_type: string;
+  link_object: string;
+  link_object_value: number;
+}
+
+export interface LinkedTicketInfo {
+  id: number;
+  number: string;
+  title: string;
+  state_id: number;
+}
+
+export async function getTicketLinks(
+  ticketId: number
+): Promise<{ links: ZammadLink[]; tickets: Map<number, LinkedTicketInfo> }> {
+  const res = await zammadFetch(`/links?link_object=Ticket&link_object_value=${ticketId}`);
+  const data = (await res.json()) as {
+    links?: ZammadLink[];
+    assets?: { Ticket?: Record<string, LinkedTicketInfo> };
+  };
+  const tickets = new Map<number, LinkedTicketInfo>();
+  for (const t of Object.values(data.assets?.Ticket ?? {})) {
+    tickets.set(t.id, { id: t.id, number: String(t.number), title: t.title, state_id: t.state_id });
+  }
+  return { links: data.links ?? [], tickets };
 }
 
 // ---------------------------------------------------------------

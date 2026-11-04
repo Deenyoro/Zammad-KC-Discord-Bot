@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.11] - 2026-11-04
+
+### Added
+- Ticket status updates list every related ticket: tickets merged in, the
+  ticket it was merged into, parent/child links and related links. Each line
+  links to the ticket in Zammad and to its Discord thread when the bot tracks
+  it. Up to 10 are shown; `/related` lists them all.
+- Merges are announced on both sides, whether done with `/merge` or in Zammad:
+  an internal note on the ticket that received the merge and on the ticket
+  that was merged away (who merged, when, Zammad and Discord links), and a
+  message in the Discord threads (a closed target's archived thread is left
+  alone). Each merge is announced once; merges from before this release are
+  listed but not announced.
+
 ## [1.0.10] - 2026-10-29
 
 ### Changed

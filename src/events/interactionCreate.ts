@@ -17,6 +17,7 @@ import {
   handleTags,
   handleMerge,
   handleHistory,
+  handleRelated,
   handleSchedule,
   handleSchedules,
   handleUnschedule,
@@ -111,6 +112,9 @@ export function onInteractionCreate(client: Client): void {
           break;
         case "merge":
           await handleMerge(interaction);
+          break;
+        case "related":
+          await handleRelated(interaction);
           break;
         case "history":
           await handleHistory(interaction);
