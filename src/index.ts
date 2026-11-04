@@ -10,6 +10,7 @@ import { syncAllTickets } from "./services/backfill.js";
 import { startHealthCheck, stopHealthCheck } from "./services/health.js";
 import { startDailySummary, stopDailySummary } from "./services/dailySummary.js";
 import { startKeepalive, stopKeepalive } from "./services/keepalive.js";
+import { initMergeAnnouncements } from "./services/related.js";
 import { setupCommand } from "./commands/setup.js";
 import { helpCommand } from "./commands/help.js";
 import {
@@ -29,6 +30,7 @@ import {
   tagsCommand,
   mergeCommand,
   historyCommand,
+  relatedCommand,
   scheduleCommand,
   schedulesCommand,
   unscheduleCommand,
@@ -75,6 +77,7 @@ async function deployCommands() {
     tagsCommand.toJSON(),
     mergeCommand.toJSON(),
     historyCommand.toJSON(),
+    relatedCommand.toJSON(),
     scheduleCommand.toJSON(),
     schedulesCommand.toJSON(),
     unscheduleCommand.toJSON(),
@@ -123,6 +126,8 @@ async function main() {
   // 2. Initialize SQLite (initDb creates the data/ dir if missing)
   const dbPath = join(process.cwd(), "data", "bot.db");
   initDb(dbPath);
+  // Merges made before this release are listed, never announced.
+  initMergeAnnouncements();
 
   // 3. Create Discord client and login
   const client = createClient();

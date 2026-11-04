@@ -74,6 +74,15 @@ CREATE TABLE IF NOT EXISTS reminders (
   next_attempt_at TEXT,
   last_error    TEXT
 );
+-- Merges already announced (Zammad notes + Discord message), one row per
+-- merged-away ticket and the ticket it went into.
+CREATE TABLE IF NOT EXISTS merge_notes (
+  child_id   INTEGER NOT NULL,
+  parent_id  INTEGER NOT NULL,
+  noted_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (child_id, parent_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_reminders_pending ON reminders(delivered_at, due_at);
 
 CREATE INDEX IF NOT EXISTS idx_synced_articles_ticket ON synced_articles(ticket_id);
@@ -215,6 +224,23 @@ export function markArticleSynced(
        VALUES (?, ?, ?, ?, ?)`
     )
     .run(articleId, ticketId, threadId, discordMsgId, direction);
+}
+
+// ---------------------------------------------------------------
+// merge_notes
+// ---------------------------------------------------------------
+
+/** Claim a merge for announcing. True only for the first caller. */
+export function claimMergeNote(childId: number, parentId: number): boolean {
+  const r = db()
+    .prepare("INSERT OR IGNORE INTO merge_notes (child_id, parent_id) VALUES (?, ?)")
+    .run(childId, parentId);
+  return r.changes > 0;
+}
+
+/** Give a claim back (announcing failed) so the next check retries. */
+export function releaseMergeNote(childId: number, parentId: number): void {
+  db().prepare("DELETE FROM merge_notes WHERE child_id = ? AND parent_id = ?").run(childId, parentId);
 }
 
 // ---------------------------------------------------------------
