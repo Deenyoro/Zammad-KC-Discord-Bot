@@ -515,6 +515,5 @@ MIT
 When `KCOPS_GATE_URL` (the kc-ops gate's internal API, e.g. `http://kc-gate.kc-ops.svc:8081`) and
 `KCOPS_GATE_TOKEN` are set, the bot adds `/access` and `/kc` for KawaConnect's ops platform
 (GitLab `dean/kc-ops`). The gate decides who gets a link, for how long, and whether a button press came
-from the owner; the bot only relays Discord events and delivers messages. `KCOPS_OWNER_CHANNEL_ID` is the owner's private channel for approvals and the audit log
-(`KCOPS_AUDIT_CHANNEL_ID` optionally moves the audit log elsewhere). Sign-in links are sent only by DM,
+from the owner; the bot only relays Discord events and delivers messages. `KCOPS_OWNER_USER_ID` is the owner: approval buttons and the audit log arrive as DMs to them. Sign-in links are sent only by DM,
 never logged, with link previews suppressed.

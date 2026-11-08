@@ -31,7 +31,7 @@ export const accessCommand = new SlashCommandBuilder()
 
 export const kcCommand = new SlashCommandBuilder()
   .setName("kc")
-  .setDescription("kc-ops owner commands (Dean only, owner channel)")
+  .setDescription("kc-ops owner commands (Dean only; replies only you can see)")
   .addSubcommand((s) => s.setName("lockdown").setDescription("End every kc-ops session and refuse new links"))
   .addSubcommand((s) => s.setName("unlock").setDescription("Allow kc-ops access again"))
   .addSubcommand((s) => s.setName("sessions").setDescription("List live kc-ops sessions"))
@@ -111,16 +111,10 @@ export async function handleAccess(interaction: ChatInputCommandInteraction): Pr
     return;
   }
   if (r.kind === "pending_owner") {
-    const owner = env().KCOPS_OWNER_CHANNEL_ID;
-    const ch = owner ? await interaction.client.channels.fetch(owner) : null;
-    if (ch?.isSendable()) {
-      await ch.send({
-        content: `<@${interaction.user.id}> asks for a ${fmt(r.minutes)} kc-ops session.`,
-        components: [extensionButtons(r.request_id, r.minutes)],
-        flags: MessageFlags.SuppressEmbeds,
-        allowedMentions: { parse: [] },
-      });
-    }
+    await dmOwner(interaction.client, {
+      content: `<@${interaction.user.id}> asks for a ${fmt(r.minutes)} kc-ops session.`,
+      components: [extensionButtons(r.request_id, r.minutes)],
+    });
     await interaction.editReply(`Asked Dean for ${fmt(r.minutes)}. You'll get a DM with the link if he approves (or the standard 15 minutes if not).`);
     return;
   }
@@ -169,6 +163,17 @@ export async function handleKcopsButton(interaction: ButtonInteraction): Promise
   }
 }
 
+async function dmOwner(client: Client, msg: { content: string; components?: ActionRowBuilder<ButtonBuilder>[] }): Promise<boolean> {
+  try {
+    const owner = await client.users.fetch(env().KCOPS_OWNER_USER_ID!);
+    await owner.send({ content: msg.content, components: msg.components ?? [], ...QUIET });
+    return true;
+  } catch (err) {
+    logger.warn({ err: String(err) }, "kc-ops owner DM failed");
+    return false;
+  }
+}
+
 async function dmText(client: Client, userId: string, text: string): Promise<boolean> {
   try {
     await (await client.users.fetch(userId)).send({ content: text, ...QUIET });
@@ -182,7 +187,6 @@ async function dmText(client: Client, userId: string, text: string): Promise<boo
 export async function deliverOutbox(client: Client): Promise<number> {
   const { items } = await gate.outbox();
   const done: number[] = [];
-  const e = env();
   for (const it of items) {
     try {
       if (it.target === "user" && it.discord_id) {
@@ -190,16 +194,12 @@ export async function deliverOutbox(client: Client): Promise<number> {
         else done.push(it.id); // closed DMs: don't retry forever
         continue;
       }
-      const chId = it.target === "owner" ? e.KCOPS_OWNER_CHANNEL_ID : (e.KCOPS_AUDIT_CHANNEL_ID ?? e.KCOPS_OWNER_CHANNEL_ID);
-      const ch = chId ? await client.channels.fetch(chId) : null;
-      if (!ch?.isSendable()) continue;
       const pid = typeof it.payload?.discord_id === "string" ? it.payload.discord_id : null;
-      await ch.send({
-        content: it.text,
+      const ok = await dmOwner(client, {
+        content: it.target === "audit" ? `log: ${it.text}` : it.text,
         components: it.kind === "approve_person" && pid ? [personButtons(pid)] : [],
-        flags: MessageFlags.SuppressEmbeds,
-        allowedMentions: { parse: [] },
       });
+      if (!ok) continue;
       done.push(it.id);
     } catch (err) {
       logger.warn({ id: it.id, err: String(err) }, "kc-ops outbox delivery failed");

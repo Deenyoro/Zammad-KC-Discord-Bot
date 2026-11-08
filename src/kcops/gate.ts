@@ -27,7 +27,7 @@ export interface OutboxItem {
 
 export function kcopsEnabled(): boolean {
   const e = env();
-  return Boolean(e.KCOPS_GATE_URL && e.KCOPS_GATE_TOKEN);
+  return Boolean(e.KCOPS_GATE_URL && e.KCOPS_GATE_TOKEN && e.KCOPS_OWNER_USER_ID);
 }
 
 type Fetch = typeof fetch;

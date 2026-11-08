@@ -2,7 +2,7 @@
 Object.assign(process.env, {
   KCOPS_GATE_URL: "http://kc-gate.kc-ops.svc:8081",
   KCOPS_GATE_TOKEN: "x".repeat(40),
-  KCOPS_OWNER_CHANNEL_ID: "11",
+  KCOPS_OWNER_USER_ID: "100000",
 });
 await import("./helpers.js");
 import { test } from "node:test";
@@ -64,17 +64,15 @@ test("outbox delivery: embeds suppressed, buttons for new people, only delivered
     return new Response(JSON.stringify({ ok: true }));
   }) as any);
   const sent: any[] = [];
-  const channel = (id: string) => ({ isSendable: () => true, send: async (m: any) => sent.push({ ch: id, m }) });
-  const client: any = {
-    channels: { fetch: async (id: string) => channel(id) },
-    users: { fetch: async (id: string) => ({ send: async (m: any) => sent.push({ dm: id, m }) }) },
-  };
+  const client: any = { users: { fetch: async (id: string) => ({ send: async (m: any) => sent.push({ dm: id, m }) }) } };
   const n = await deliverOutbox(client);
   assert.equal(n, 3);
   assert.deepEqual(acked, [[1, 2, 3]]);
-  assert.equal(sent.find((s) => s.m.content === "session ended").ch, "11"); // audit goes to the owner channel by default
   for (const s of sent) assert.equal(s.m.flags, MessageFlags.SuppressEmbeds);
-  const owner = sent.find((s) => s.ch === "11");
-  assert.equal(owner.m.components[0].toJSON().components[0].custom_id, "kcops:person:555555:approve");
-  assert.deepEqual(owner.m.allowedMentions, { parse: [] });
+  const toOwner = sent.filter((s) => s.dm === "100000");
+  assert.equal(toOwner.length, 2); // approval + audit log line, both by DM
+  assert.equal(toOwner[0].m.components[0].toJSON().components[0].custom_id, "kcops:person:555555:approve");
+  assert.match(toOwner[1].m.content, /^log: session ended/);
+  assert.deepEqual(toOwner[0].m.allowedMentions, { parse: [] });
+  assert.equal(sent.find((s) => s.dm === "2001").m.content, "Your session was ended");
 });

@@ -38,8 +38,8 @@ const envSchema = z.object({
   // the bot only relays Discord events and delivers messages.
   KCOPS_GATE_URL: z.string().url().optional(),
   KCOPS_GATE_TOKEN: z.string().min(32).optional(),
-  KCOPS_OWNER_CHANNEL_ID: z.string().min(1).optional(),
-  KCOPS_AUDIT_CHANNEL_ID: z.string().min(1).optional(),
+  // Owner's Discord user ID: approvals and the audit log arrive as DMs to this person.
+  KCOPS_OWNER_USER_ID: z.string().regex(/^\d{5,20}$/).optional(),
 
   // Daily summary (disabled if unset)
   DAILY_SUMMARY_HOUR: z.coerce.number().min(0).max(23).optional(),
