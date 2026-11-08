@@ -26,7 +26,7 @@ export const accessCommand = new SlashCommandBuilder()
   .setName("access")
   .setDescription("Get a one-time kc-ops sign-in link (default length; ask for more and Dean decides)")
   .addIntegerOption((o) =>
-    o.setName("minutes").setDescription("Session length you need (over the default needs Dean's approval)").setMinValue(1).setMaxValue(720)
+    o.setName("minutes").setDescription("Session length you need (over the default needs Dean's approval; staff max 720)").setMinValue(1).setMaxValue(2880)
   );
 
 export const kcCommand = new SlashCommandBuilder()
