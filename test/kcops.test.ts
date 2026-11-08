@@ -29,9 +29,9 @@ test("button ids parse strictly", () => {
   }
 });
 
-test("extension buttons offer asked time, 1 h, deny", () => {
-  const row: any = extensionButtons(7, 120).toJSON();
-  assert.deepEqual(row.components.map((c: any) => c.custom_id), ["kcops:ext:7:120", "kcops:ext:7:60", "kcops:ext:7:deny"]);
+test("extension buttons offer asked time, 2 h, deny", () => {
+  const row: any = extensionButtons(7, 240).toJSON();
+  assert.deepEqual(row.components.map((c: any) => c.custom_id), ["kcops:ext:7:240", "kcops:ext:7:120", "kcops:ext:7:deny"]);
   assert.equal(fmt(90), "90 min");
   assert.equal(fmt(240), "4 h");
 });

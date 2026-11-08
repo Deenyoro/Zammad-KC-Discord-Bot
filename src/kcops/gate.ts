@@ -54,7 +54,7 @@ export const gate = {
     call<AccessResult>("POST", "/internal/access", b),
   decision: (b: { request_id: number; actor_id: string; channel_id: string; minutes: number | null }) =>
     call<DecisionResult>("POST", "/internal/decision", b),
-  owner: (b: { command: string; actor_id: string; channel_id: string; target_id?: string; days?: number | null }) =>
+  owner: (b: { command: string; actor_id: string; channel_id: string; target_id?: string; days?: number | null; minutes?: number | null }) =>
     call<OwnerResult>("POST", "/internal/owner", b),
   loginConfirm: (b: { login_id: number; actor_id: string; answer: "yes" | "no" }) =>
     call<OwnerResult>("POST", "/internal/login-confirm", b),

@@ -3,6 +3,11 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.2.0] - 2026-11-08
+
+### Added
+- kc-ops: `/kc default minutes:<n>` sets the default session length (owner); defaults to 1 hour.
+
 ## [1.1.0] - 2026-11-08
 
 ### Added

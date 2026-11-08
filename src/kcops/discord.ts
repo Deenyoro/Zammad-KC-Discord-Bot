@@ -24,9 +24,9 @@ const QUIET = { flags: MessageFlags.SuppressEmbeds as MessageFlags.SuppressEmbed
 
 export const accessCommand = new SlashCommandBuilder()
   .setName("access")
-  .setDescription("Get a one-time kc-ops sign-in link (15 minutes; ask for more and Dean decides)")
+  .setDescription("Get a one-time kc-ops sign-in link (default length; ask for more and Dean decides)")
   .addIntegerOption((o) =>
-    o.setName("minutes").setDescription("Session length you need (over 15 needs Dean's approval)").setMinValue(1).setMaxValue(720)
+    o.setName("minutes").setDescription("Session length you need (over the default needs Dean's approval)").setMinValue(1).setMaxValue(720)
   );
 
 export const kcCommand = new SlashCommandBuilder()
@@ -35,6 +35,10 @@ export const kcCommand = new SlashCommandBuilder()
   .addSubcommand((s) => s.setName("lockdown").setDescription("End every kc-ops session and refuse new links"))
   .addSubcommand((s) => s.setName("unlock").setDescription("Allow kc-ops access again"))
   .addSubcommand((s) => s.setName("sessions").setDescription("List live kc-ops sessions"))
+  .addSubcommand((s) =>
+    s.setName("default").setDescription("Set the default session length")
+      .addIntegerOption((o) => o.setName("minutes").setDescription("Minutes (5-720)").setRequired(true).setMinValue(5).setMaxValue(720))
+  )
   .addSubcommand((s) => s.setName("revoke").setDescription("End a person's session").addUserOption((o) => o.setName("user").setDescription("Person").setRequired(true)))
   .addSubcommand((s) => s.setName("approve").setDescription("Approve a person").addUserOption((o) => o.setName("user").setDescription("Person").setRequired(true)))
   .addSubcommand((s) => s.setName("block").setDescription("Block a person").addUserOption((o) => o.setName("user").setDescription("Person").setRequired(true)))
@@ -51,7 +55,7 @@ export function kcopsCommands() {
 
 /** Button ids: kcops:ext:<requestId>:<minutes|deny>, kcops:person:<discordId>:<approve|block> */
 export function extensionButtons(requestId: number, asked: number) {
-  const opts = Array.from(new Set([asked, 60, 240].filter((m) => m > 15 && m <= asked))).sort((a, b) => b - a);
+  const opts = Array.from(new Set([asked, 120, 240].filter((m) => m > 60 && m <= asked))).sort((a, b) => b - a);
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     ...opts.map((m, i) =>
       new ButtonBuilder().setCustomId(`kcops:ext:${requestId}:${m}`).setLabel(`Grant ${fmt(m)}`).setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
@@ -138,7 +142,7 @@ export async function handleAccess(interaction: ChatInputCommandInteraction): Pr
       content: `<@${interaction.user.id}> asks for a ${fmt(r.minutes)} kc-ops session.`,
       components: [extensionButtons(r.request_id, r.minutes)],
     });
-    await interaction.editReply(`Asked Dean for ${fmt(r.minutes)}. You'll get a DM with the link if he approves (or the standard 15 minutes if not).`);
+    await interaction.editReply(`Asked Dean for ${fmt(r.minutes)}. You'll get a DM with the link if he approves (or run /access for the standard length).`);
     return;
   }
   const ok = await dmLink(interaction.client, interaction.user.id, r.url, r.minutes);
@@ -155,6 +159,7 @@ export async function handleKc(interaction: ChatInputCommandInteraction): Promis
     channel_id: interaction.channelId,
     target_id: target,
     days: sub === "expiry" ? interaction.options.getInteger("days") : undefined,
+    minutes: sub === "default" ? interaction.options.getInteger("minutes") : undefined,
   });
   await interaction.editReply("ok" in r ? r.text : r.reason);
 }
@@ -177,7 +182,7 @@ export async function handleKcopsButton(interaction: ButtonInteraction): Promise
       return;
     }
     if (r.kind === "denied") {
-      await dmText(interaction.client, r.discord_id, "Dean declined the extra time. Run /access for a standard 15-minute session.");
+      await dmText(interaction.client, r.discord_id, "Dean declined the extra time. Run /access for a standard session.");
       await interaction.editReply({ content: `${interaction.message.content}\nDenied.`, components: [] });
       return;
     }
