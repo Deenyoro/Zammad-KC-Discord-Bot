@@ -3,6 +3,13 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.4.0] - 2026-11-08
+
+### Added
+- kc-ops elevation: gate-queued elevation prompts with Approve 30 min / 1 h / 2 h and Deny buttons (owner chats by
+  DM, staff chats in the access channel with DM fallback); presses go to the gate (`/internal/elevation`), which
+  accepts only the owner; refusals are ephemeral and keep the buttons. `/kc elevation list|revoke [chat]`.
+
 ## [1.2.0] - 2026-11-08
 
 ### Added

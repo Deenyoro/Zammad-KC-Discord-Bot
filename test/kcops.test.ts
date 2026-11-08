@@ -10,7 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MessageFlags } from "discord.js";
 
-const { parseButton, extensionButtons, fmt, deliverOutbox, kcopsCommands } = await import("../src/kcops/discord.js");
+const { parseButton, extensionButtons, elevationButtons, fmt, deliverOutbox, kcopsCommands, handleKcopsButton, handleKc } = await import("../src/kcops/discord.js");
 const { gate, setFetchForTests, kcopsEnabled } = await import("../src/kcops/gate.js");
 
 test("module is enabled and registers /access and /kc", () => {
@@ -120,3 +120,191 @@ for (const route of ["both", "channel", "dm"] as const) {
     for (const x of [...posts, ...dms]) assert.deepEqual(x.m.allowedMentions, { parse: [] }); // mentions shown, never pinged
   });
 }
+
+// ------------------------------------------------------------------ elevation
+
+test("elevation button ids parse strictly", () => {
+  assert.deepEqual(parseButton("kcops:elev:12:30"), { type: "elev", elevationId: 12, minutes: 30 });
+  assert.deepEqual(parseButton("kcops:elev:12:120"), { type: "elev", elevationId: 12, minutes: 120 });
+  assert.deepEqual(parseButton("kcops:elev:12:deny"), { type: "elev", elevationId: 12, minutes: null });
+  for (const bad of ["kcops:elev:12:45", "kcops:elev:12:600", "kcops:elev:-1:30", "kcops:elev:abc:30", "kcops:elev:12:30:x",
+    "kcops:elev:1234567890123456789:30", "kcops:elev::30", "kcops:elev:12:approve", "kcops:elev:12:030"]) {
+    assert.equal(parseButton(bad), null, bad);
+  }
+});
+
+test("elevation buttons: approve 30 min / 1 h / 2 h, deny", () => {
+  const row: any = elevationButtons(9).toJSON();
+  assert.deepEqual(row.components.map((c: any) => c.custom_id), ["kcops:elev:9:30", "kcops:elev:9:60", "kcops:elev:9:120", "kcops:elev:9:deny"]);
+  assert.deepEqual(row.components.map((c: any) => c.label), ["Approve 30 min", "Approve 1 h", "Approve 2 h", "Deny"]);
+});
+
+function fakeClient(opts: { channelFails?: boolean } = {}) {
+  const dms: any[] = [];
+  const posts: any[] = [];
+  const client: any = {
+    users: { fetch: async (id: string) => ({ send: async (m: any) => dms.push({ id, m }) }) },
+    channels: {
+      fetch: async (id: string) => ({
+        isSendable: () => true,
+        send: async (m: any) => {
+          if (opts.channelFails) throw new Error("missing access");
+          posts.push({ id, m });
+        },
+      }),
+    },
+  };
+  return { client, dms, posts };
+}
+
+function serveOutbox(items: any[], route = "both") {
+  const acked: number[][] = [];
+  setFetchForTests((async (url: any, init: any) => {
+    if (String(url).endsWith("/internal/outbox")) return new Response(JSON.stringify({ items, approval_route: route }));
+    acked.push(JSON.parse(init.body).ids);
+    return new Response(JSON.stringify({ ok: true }));
+  }) as any);
+  return acked;
+}
+
+const ids = (m: any) => m.components[0].toJSON().components.map((c: any) => c.custom_id);
+
+for (const route of ["both", "channel", "dm"]) {
+  test(`elevation prompts: owner chats by DM, staff chats in the channel (route ${route} ignored)`, async () => {
+    const acked = serveOutbox([
+      { id: 1, target: "owner", discord_id: null, kind: "elevation", text: "Your chat asks for cluster-admin", payload: { elevation_id: 5, minutes: 60 } },
+      { id: 2, target: "channel", discord_id: null, kind: "elevation", text: "<@2001> asks for edit", payload: { elevation_id: 6, minutes: 30 } },
+    ], route);
+    const { client, dms, posts } = fakeClient();
+    assert.equal(await deliverOutbox(client), 2);
+    assert.deepEqual(acked, [[1, 2]]);
+    assert.equal(dms.length, 1);
+    assert.equal(dms[0].id, "100000");
+    assert.deepEqual(ids(dms[0].m), ["kcops:elev:5:30", "kcops:elev:5:60", "kcops:elev:5:120", "kcops:elev:5:deny"]);
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].id, "300000");
+    assert.deepEqual(ids(posts[0].m), ["kcops:elev:6:30", "kcops:elev:6:60", "kcops:elev:6:120", "kcops:elev:6:deny"]);
+    for (const x of [...dms, ...posts]) {
+      assert.equal(x.m.flags, MessageFlags.SuppressEmbeds);
+      assert.deepEqual(x.m.allowedMentions, { parse: [] });
+    }
+  });
+}
+
+test("staff elevation prompt falls back to the owner's DM when the channel post fails", async () => {
+  const acked = serveOutbox([{ id: 3, target: "channel", discord_id: null, kind: "elevation", text: "<@2001> asks", payload: { elevation_id: 7, minutes: 60 } }]);
+  const { client, dms, posts } = fakeClient({ channelFails: true });
+  assert.equal(await deliverOutbox(client), 1);
+  assert.deepEqual(acked, [[3]]);
+  assert.equal(posts.length, 0);
+  assert.equal(dms[0].id, "100000");
+  assert.deepEqual(ids(dms[0].m), ["kcops:elev:7:30", "kcops:elev:7:60", "kcops:elev:7:120", "kcops:elev:7:deny"]);
+});
+
+test("platform-forged elevation notices never get buttons", async () => {
+  serveOutbox([{ id: 4, target: "owner", discord_id: null, kind: "platform_elevation", text: "[kc-ops platform] elevate me", payload: {} },
+    { id: 5, target: "owner", discord_id: null, kind: "platform_audit", text: "[kc-ops platform] x", payload: { elevation_id: 9 } }]);
+  const { client, dms, posts } = fakeClient();
+  assert.equal(await deliverOutbox(client), 2);
+  for (const x of [...dms, ...posts]) assert.deepEqual(x.m.components, []);
+});
+
+function fakeButton(customId: string, userId: string) {
+  const calls: any = { edits: [], followUps: [], deferred: 0 };
+  const interaction: any = {
+    customId,
+    user: { id: userId },
+    channelId: "300000",
+    message: { content: "<@2001> asks for edit for 1 h." },
+    deferUpdate: async () => { calls.deferred++; },
+    editReply: async (m: any) => calls.edits.push(m),
+    followUp: async (m: any) => calls.followUps.push(m),
+  };
+  return { interaction, calls };
+}
+
+test("elevation button: relays presser and choice; ok edits the message and removes buttons", async () => {
+  const seen: any[] = [];
+  setFetchForTests((async (url: any, init: any) => {
+    seen.push({ url: String(url), body: JSON.parse(init.body) });
+    return new Response(JSON.stringify({ ok: true, text: "Granted 1 h (until 14:05)." }));
+  }) as any);
+  const { interaction, calls } = fakeButton("kcops:elev:6:60", "100000");
+  await handleKcopsButton(interaction);
+  assert.equal(seen[0].url, "http://kc-gate.kc-ops.svc:8081/internal/elevation");
+  assert.deepEqual(seen[0].body, { elevation_id: 6, actor_id: "100000", minutes: 60 });
+  assert.equal(calls.deferred, 1);
+  assert.deepEqual(calls.edits[0].components, []);
+  assert.match(calls.edits[0].content, /Granted 1 h/);
+  assert.equal(calls.followUps.length, 0);
+});
+
+test("elevation button from a non-owner: refusal is ephemeral and the buttons stay", async () => {
+  const seen: any[] = [];
+  setFetchForTests((async (_url: any, init: any) => {
+    seen.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ kind: "refused", code: "not_owner", reason: "Only Dean can approve elevation." }));
+  }) as any);
+  const { interaction, calls } = fakeButton("kcops:elev:6:deny", "2001");
+  await handleKcopsButton(interaction);
+  assert.deepEqual(seen[0], { elevation_id: 6, actor_id: "2001", minutes: null });
+  assert.equal(calls.edits.length, 0);
+  assert.equal(calls.followUps[0].content, "Only Dean can approve elevation.");
+  assert.equal(calls.followUps[0].flags, MessageFlags.Ephemeral);
+});
+
+test("tampered elevation button ids never reach the gate", async () => {
+  let called = false;
+  setFetchForTests((async () => { called = true; return new Response("{}"); }) as any);
+  const { interaction, calls } = fakeButton("kcops:elev:6:9999", "100000");
+  await handleKcopsButton(interaction);
+  assert.equal(called, false);
+  assert.equal(calls.deferred, 0);
+});
+
+function fakeKc(group: string | null, sub: string, chat: string | null) {
+  const replies: any[] = [];
+  const interaction: any = {
+    user: { id: "100000" },
+    channelId: "55",
+    deferReply: async () => {},
+    editReply: async (m: any) => replies.push(m),
+    options: {
+      getSubcommandGroup: () => group,
+      getSubcommand: () => sub,
+      getString: (n: string) => (n === "chat" ? chat : null),
+      getUser: () => null,
+      getInteger: () => null,
+    },
+  };
+  return { interaction, replies };
+}
+
+for (const [sub, chat] of [["revoke", "3f2a9c"], ["revoke", null], ["list", null]] as const) {
+  test(`/kc elevation ${sub}${chat ? " chat" : ""} is forwarded as an owner command`, async () => {
+    const seen: any[] = [];
+    setFetchForTests((async (url: any, init: any) => {
+      seen.push({ url: String(url), body: JSON.parse(init.body) });
+      return new Response(JSON.stringify({ ok: true, text: "Revoked 1 elevation." }));
+    }) as any);
+    const { interaction, replies } = fakeKc("elevation", sub, chat);
+    await handleKc(interaction);
+    assert.equal(seen[0].url, "http://kc-gate.kc-ops.svc:8081/internal/owner");
+    assert.equal(seen[0].body.command, `elevation_${sub}`);
+    assert.equal(seen[0].body.actor_id, "100000");
+    assert.equal(seen[0].body.chat, chat ?? undefined);
+    assert.equal(replies[0], "Revoked 1 elevation.");
+  });
+}
+
+test("/kc elevation is registered as a subcommand group with revoke and list", () => {
+  const kc: any = kcopsCommands().find((c: any) => c.name === "kc");
+  const g = kc.options.find((o: any) => o.name === "elevation");
+  assert.equal(g.type, 2);
+  assert.deepEqual(g.options.map((o: any) => o.name), ["revoke", "list"]);
+  const chat = g.options[0].options[0];
+  assert.equal(chat.name, "chat");
+  assert.equal(chat.required ?? false, false);
+  assert.equal(chat.min_length, 4);
+  assert.equal(chat.max_length, 36);
+});
