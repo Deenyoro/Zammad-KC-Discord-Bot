@@ -508,3 +508,5 @@ For standard Zammad, you may need to create the "waiting for reply" and "closed 
 ## License
 
 MIT
+
+
