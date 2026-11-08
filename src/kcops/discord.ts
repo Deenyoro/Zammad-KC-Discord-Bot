@@ -13,6 +13,7 @@ import {
   Events,
   MessageFlags,
   SlashCommandBuilder,
+  escapeMarkdown,
   type GuildMember,
   type PartialGuildMember,
 } from "discord.js";
@@ -99,6 +100,20 @@ export function sessionExtensionButtons(extensionId: number, asked: number) {
     ),
     new ButtonBuilder().setCustomId(`kcops:sext:${extensionId}:deny`).setLabel("Deny").setStyle(ButtonStyle.Danger)
   );
+}
+
+/** Reason text (from the agent or a person) made inert: one line, no backticks, mentions, channel or masked links. */
+export function inertReason(reason: unknown): string {
+  const t = String(reason ?? "")
+    .replace(/[`\r\n\t]+/g, " ")
+    .replace(/</g, "‹").replace(/>/g, "›").replace(/\]\(/g, "] (").replace(/@/g, "(at)")
+    .replace(/\s+/g, " ").trim();
+  return t.slice(0, 300) || "(none)";
+}
+
+/** Elevation prompt text: the gate's text with markdown escaped, then the reason as a code block. */
+export function elevationText(text: string, reason: unknown): string {
+  return `${escapeMarkdown(text)}\nReason:\n\`\`\`text\n${inertReason(reason)}\n\`\`\``;
 }
 
 /** Elevation prompt buttons: kcops:elev:<elevationId>:<30|60|120|deny>. Only the owner's press is accepted (gate checks). */
@@ -326,8 +341,9 @@ export async function deliverOutbox(client: Client): Promise<number> {
         // Gate-queued elevation prompt: owner chats by DM, staff chats in the access channel (fallback: owner DM).
         const rows = [elevationButtons(eid)];
         const ch = env().KCOPS_ACCESS_CHANNEL_ID;
-        let ok = it.target === "channel" && Boolean(ch) && (await postChannel(client, ch!, it.text, rows));
-        if (!ok) ok = await dmOwner(client, { content: it.text, components: rows });
+        const content = elevationText(it.text, it.payload?.reason);
+        let ok = it.target === "channel" && Boolean(ch) && (await postChannel(client, ch!, content, rows));
+        if (!ok) ok = await dmOwner(client, { content, components: rows });
         if (ok) done.push(it.id);
         continue;
       }

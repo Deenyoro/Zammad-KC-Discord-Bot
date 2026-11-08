@@ -10,7 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MessageFlags } from "discord.js";
 
-const { parseButton, extensionButtons, elevationButtons, fmt, deliverOutbox, kcopsCommands, handleKcopsButton, handleKc } = await import("../src/kcops/discord.js");
+const { parseButton, extensionButtons, elevationButtons, fmt, deliverOutbox, kcopsCommands, handleKcopsButton, handleKc, elevationText, inertReason } = await import("../src/kcops/discord.js");
 const { gate, setFetchForTests, kcopsEnabled } = await import("../src/kcops/gate.js");
 
 test("module is enabled and registers /access and /kc", () => {
@@ -307,4 +307,13 @@ test("/kc elevation is registered as a subcommand group with revoke and list", (
   assert.equal(chat.required ?? false, false);
   assert.equal(chat.min_length, 4);
   assert.equal(chat.max_length, 36);
+});
+
+test("elevation reason is inert: escaped, fenced, no mentions or links (review M1)", () => {
+  const r = inertReason("ok <@1000> <#55> <@&9> [click](https://evil.test) ```x``` @everyone\nnext");
+  for (const bad of ["<@", "<#", "](", "`", "@everyone", "\n"]) assert.ok(!r.includes(bad), bad);
+  const t = elevationText("WARNING: chat read *untrusted* content", "drop `tables`");
+  assert.ok(t.startsWith("WARNING: chat read \\*untrusted\\* content"));
+  assert.ok(t.endsWith("```text\ndrop tables\n```"));
+  assert.equal(inertReason(undefined), "(none)");
 });
