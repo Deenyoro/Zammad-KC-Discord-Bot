@@ -18,7 +18,7 @@ export type OwnerResult = { ok: true; text: string } | { kind: "refused"; code: 
 
 export interface OutboxItem {
   id: number;
-  target: "owner" | "user" | "audit";
+  target: "owner" | "user" | "audit" | "channel";
   discord_id: string | null;
   kind: string;
   text: string;
@@ -54,13 +54,16 @@ export const gate = {
     call<AccessResult>("POST", "/internal/access", b),
   decision: (b: { request_id: number; actor_id: string; channel_id: string; minutes: number | null }) =>
     call<DecisionResult>("POST", "/internal/decision", b),
-  owner: (b: { command: string; actor_id: string; channel_id: string; target_id?: string; days?: number | null; minutes?: number | null }) =>
+  owner: (b: { command: string; actor_id: string; channel_id: string; target_id?: string; days?: number | null; minutes?: number | null; route?: string | null }) =>
     call<OwnerResult>("POST", "/internal/owner", b),
   loginConfirm: (b: { login_id: number; actor_id: string; answer: "yes" | "no" }) =>
     call<OwnerResult>("POST", "/internal/login-confirm", b),
   sessionExtension: (b: { extension_id: number; actor_id: string; minutes: number | null }) =>
     call<OwnerResult>("POST", "/internal/session-extension", b),
   memberLeft: (discord_id: string) => call<{ ok: boolean }>("POST", "/internal/member-left", { discord_id }),
-  outbox: () => call<{ items: OutboxItem[] }>("GET", "/internal/outbox"),
+  outbox: () => call<{ items: OutboxItem[]; approval_route?: ApprovalRoute }>("GET", "/internal/outbox"),
   ack: (ids: number[]) => call<{ ok: boolean }>("POST", "/internal/outbox/ack", { ids }),
 };
+
+/** Where owner approval prompts go (set by the owner with /kc notify; stored in the gate). */
+export type ApprovalRoute = "both" | "channel" | "dm";

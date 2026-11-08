@@ -3,6 +3,7 @@ Object.assign(process.env, {
   KCOPS_GATE_URL: "http://kc-gate.kc-ops.svc:8081",
   KCOPS_GATE_TOKEN: "x".repeat(40),
   KCOPS_OWNER_USER_ID: "100000",
+  KCOPS_ACCESS_CHANNEL_ID: "300000",
 });
 await import("./helpers.js");
 import { test } from "node:test";
@@ -85,3 +86,37 @@ test("outbox delivery: embeds suppressed, buttons for new people, only delivered
   assert.deepEqual(toOwner[0].m.allowedMentions, { parse: [] });
   assert.equal(sent.find((s) => s.dm === "2001").m.content, "Your session was ended");
 });
+
+for (const route of ["both", "channel", "dm"] as const) {
+  test(`approval route ${route}: approvals follow it, sign-in announcements go to the channel, alerts stay in DMs`, async () => {
+    const items = [
+      { id: 1, target: "owner", discord_id: null, kind: "approve_person", text: "New person <@555555>", payload: { discord_id: "555555" } },
+      { id: 2, target: "owner", discord_id: null, kind: "security", text: "Someone pressed Not me", payload: {} },
+      { id: 3, target: "channel", discord_id: null, kind: "announce", text: "<@2001> signed in to kc-ops until <t:1:t>.", payload: {} },
+      { id: 4, target: "owner", discord_id: null, kind: "platform_approval", text: "[kc-ops platform] approve k8s change", payload: {} },
+    ];
+    setFetchForTests((async (url: any) => {
+      if (String(url).endsWith("/internal/outbox")) return new Response(JSON.stringify({ items, approval_route: route }));
+      return new Response(JSON.stringify({ ok: true }));
+    }) as any);
+    const dms: any[] = [];
+    const posts: any[] = [];
+    const client: any = {
+      users: { fetch: async (id: string) => ({ send: async (m: any) => dms.push({ id, m }) }) },
+      channels: { fetch: async (id: string) => ({ isSendable: () => true, send: async (m: any) => posts.push({ id, m }) }) },
+    };
+    assert.equal(await deliverOutbox(client), 4);
+    const inChannel = posts.map((p) => p.m.content);
+    const inDm = dms.map((d) => d.m.content);
+    assert.ok(posts.every((p) => p.id === "300000"));
+    assert.ok(inChannel.includes("<@2001> signed in to kc-ops until <t:1:t>."));
+    assert.ok(inDm.includes("Someone pressed Not me") && !inChannel.includes("Someone pressed Not me"));
+    for (const t of ["New person <@555555>", "[kc-ops platform] approve k8s change"]) {
+      assert.equal(inChannel.includes(t), route !== "dm", `${t} in channel`);
+      assert.equal(inDm.includes(t), route !== "channel", `${t} in DM`);
+    }
+    const person = [...posts, ...dms].find((x) => x.m.content.startsWith("New person"));
+    assert.equal(person.m.components[0].toJSON().components[0].custom_id, "kcops:person:555555:approve");
+    for (const x of [...posts, ...dms]) assert.deepEqual(x.m.allowedMentions, { parse: [] }); // mentions shown, never pinged
+  });
+}

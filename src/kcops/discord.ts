@@ -18,7 +18,7 @@ import {
 } from "discord.js";
 import { env } from "../util/env.js";
 import { logger } from "../util/logger.js";
-import { gate, kcopsEnabled, type OutboxItem } from "./gate.js";
+import { gate, kcopsEnabled, type ApprovalRoute, type OutboxItem } from "./gate.js";
 
 const QUIET = { flags: MessageFlags.SuppressEmbeds as MessageFlags.SuppressEmbeds, allowedMentions: { parse: [] as never[] } };
 
@@ -35,6 +35,11 @@ export const kcCommand = new SlashCommandBuilder()
   .addSubcommand((s) => s.setName("lockdown").setDescription("End every kc-ops session and refuse new links"))
   .addSubcommand((s) => s.setName("unlock").setDescription("Allow kc-ops access again"))
   .addSubcommand((s) => s.setName("sessions").setDescription("List live kc-ops sessions"))
+  .addSubcommand((s) =>
+    s.setName("notify").setDescription("Where approval requests go")
+      .addStringOption((o) => o.setName("where").setDescription("Access channel, your DMs, or both").setRequired(true)
+        .addChoices({ name: "Access channel and DMs", value: "both" }, { name: "Access channel only", value: "channel" }, { name: "DMs only", value: "dm" }))
+  )
   .addSubcommand((s) =>
     s.setName("default").setDescription("Set the default session length")
       .addIntegerOption((o) => o.setName("minutes").setDescription("Minutes (5-720)").setRequired(true).setMinValue(5).setMaxValue(720))
@@ -138,7 +143,7 @@ export async function handleAccess(interaction: ChatInputCommandInteraction): Pr
     return;
   }
   if (r.kind === "pending_owner") {
-    await dmOwner(interaction.client, {
+    await ownerPrompt(interaction.client, {
       content: `<@${interaction.user.id}> asks for a ${fmt(r.minutes)} kc-ops session.`,
       components: [extensionButtons(r.request_id, r.minutes)],
     });
@@ -160,6 +165,7 @@ export async function handleKc(interaction: ChatInputCommandInteraction): Promis
     target_id: target,
     days: sub === "expiry" ? interaction.options.getInteger("days") : undefined,
     minutes: sub === "default" ? interaction.options.getInteger("minutes") : undefined,
+    route: sub === "notify" ? interaction.options.getString("where") : undefined,
   });
   await interaction.editReply("ok" in r ? r.text : r.reason);
 }
@@ -209,6 +215,30 @@ async function dmOwner(client: Client, msg: { content: string; components?: Acti
   }
 }
 
+// Last approval route the gate reported (refreshed on every outbox poll).
+let approvalRoute: ApprovalRoute = "both";
+
+/** Owner approval prompt: to the access channel and/or the owner's DMs. Buttons only act for the owner (the gate checks). */
+async function ownerPrompt(client: Client, msg: { content: string; components?: ActionRowBuilder<ButtonBuilder>[] }): Promise<boolean> {
+  const ch = env().KCOPS_ACCESS_CHANNEL_ID;
+  const toChannel = Boolean(ch) && approvalRoute !== "dm";
+  const toDm = approvalRoute !== "channel" || !ch;
+  let ok = false;
+  if (toChannel) {
+    try {
+      const c = await client.channels.fetch(ch!);
+      if (c && c.isSendable()) {
+        await c.send({ content: msg.content, components: msg.components ?? [], ...QUIET });
+        ok = true;
+      }
+    } catch (err) {
+      logger.warn({ err: String(err) }, "kc-ops access channel post failed");
+    }
+  }
+  if (toDm || !ok) ok = (await dmOwner(client, msg)) || ok;
+  return ok;
+}
+
 async function dmWithButtons(client: Client, userId: string, text: string, rows: ActionRowBuilder<ButtonBuilder>[]): Promise<boolean> {
   try {
     await (await client.users.fetch(userId)).send({ content: text, components: rows, ...QUIET });
@@ -227,12 +257,32 @@ async function dmText(client: Client, userId: string, text: string): Promise<boo
   }
 }
 
+async function postChannel(client: Client, channelId: string, text: string): Promise<boolean> {
+  try {
+    const ch = await client.channels.fetch(channelId);
+    if (!ch || !ch.isSendable()) return false;
+    await ch.send({ content: text, ...QUIET });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const APPROVAL_KINDS = new Set(["approve_person", "session_extension", "platform_approval"]);
+
 /** Deliver queued gate messages, then acknowledge the delivered ones. */
 export async function deliverOutbox(client: Client): Promise<number> {
-  const { items } = await gate.outbox();
+  const { items, approval_route } = await gate.outbox();
+  if (approval_route) approvalRoute = approval_route;
   const done: number[] = [];
   for (const it of items) {
     try {
+      if (it.target === "channel") {
+        const ch = env().KCOPS_ACCESS_CHANNEL_ID;
+        if (ch) await postChannel(client, ch, it.text);
+        done.push(it.id); // announcements are best effort
+        continue;
+      }
       if (it.target === "user" && it.discord_id) {
         const lid = typeof it.payload?.login_id === "number" ? it.payload.login_id : null;
         if (it.kind === "login_confirm" && lid !== null) await dmWithButtons(client, it.discord_id, it.text, [loginButtons(lid)]);
@@ -241,12 +291,15 @@ export async function deliverOutbox(client: Client): Promise<number> {
         continue;
       }
       const pid = typeof it.payload?.discord_id === "string" ? it.payload.discord_id : null;
-      const ok = await dmOwner(client, {
+      const msg = {
         content: it.target === "audit" ? `log: ${it.text}` : it.text,
         components: it.kind === "approve_person" && pid ? [personButtons(pid)]
           : it.kind === "session_extension" && typeof it.payload?.extension_id === "number"
             ? [sessionExtensionButtons(it.payload.extension_id, Number(it.payload.minutes) || 60)] : [],
-      });
+      };
+      // Approval requests follow the owner's route; security alerts and the audit log stay in DMs.
+      const isApproval = it.target === "owner" && APPROVAL_KINDS.has(it.kind);
+      const ok = isApproval ? await ownerPrompt(client, msg) : await dmOwner(client, msg);
       if (!ok) continue;
       done.push(it.id);
     } catch (err) {
