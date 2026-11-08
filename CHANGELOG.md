@@ -3,7 +3,9 @@
 All notable changes to this project are documented in this file.
 
 
-## Unreleased
+## [1.1.0] - 2026-11-08
+
+### Added
 
 - kc-ops access module (off unless `KCOPS_GATE_URL` and `KCOPS_GATE_TOKEN` are set): `/access [minutes]`
   sends a one-time kc-ops sign-in link by DM (embeds suppressed); requests over 15 minutes reach the owner by DM
