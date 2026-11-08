@@ -190,7 +190,7 @@ export async function deliverOutbox(client: Client): Promise<number> {
         else done.push(it.id); // closed DMs: don't retry forever
         continue;
       }
-      const chId = it.target === "owner" ? e.KCOPS_OWNER_CHANNEL_ID : e.KCOPS_AUDIT_CHANNEL_ID;
+      const chId = it.target === "owner" ? e.KCOPS_OWNER_CHANNEL_ID : (e.KCOPS_AUDIT_CHANNEL_ID ?? e.KCOPS_OWNER_CHANNEL_ID);
       const ch = chId ? await client.channels.fetch(chId) : null;
       if (!ch?.isSendable()) continue;
       const pid = typeof it.payload?.discord_id === "string" ? it.payload.discord_id : null;
