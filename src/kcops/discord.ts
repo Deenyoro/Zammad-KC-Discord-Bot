@@ -13,6 +13,7 @@ import {
   Events,
   MessageFlags,
   SlashCommandBuilder,
+  escapeMarkdown,
   type GuildMember,
   type PartialGuildMember,
 } from "discord.js";
@@ -48,6 +49,14 @@ export const kcCommand = new SlashCommandBuilder()
   .addSubcommand((s) => s.setName("approve").setDescription("Approve a person").addUserOption((o) => o.setName("user").setDescription("Person").setRequired(true)))
   .addSubcommand((s) => s.setName("block").setDescription("Block a person").addUserOption((o) => o.setName("user").setDescription("Person").setRequired(true)))
   .addSubcommand((s) => s.setName("relink").setDescription("Let a person link a different Microsoft account").addUserOption((o) => o.setName("user").setDescription("Person").setRequired(true)))
+  .addSubcommandGroup((g) =>
+    g.setName("elevation").setDescription("Elevated kc-ops chats")
+      .addSubcommand((s) =>
+        s.setName("revoke").setDescription("Revoke open elevations (all, or one chat)")
+          .addStringOption((o) => o.setName("chat").setDescription("Chat id or prefix (empty = all)").setMinLength(4).setMaxLength(36))
+      )
+      .addSubcommand((s) => s.setName("list").setDescription("List open elevations"))
+  )
   .addSubcommand((s) =>
     s.setName("expiry").setDescription("Set when a person's access ends (empty = never)")
       .addUserOption((o) => o.setName("user").setDescription("Person").setRequired(true))
@@ -93,12 +102,41 @@ export function sessionExtensionButtons(extensionId: number, asked: number) {
   );
 }
 
+/** Reason text (from the agent or a person) made inert: one line, no backticks, mentions, channel or masked links. */
+export function inertReason(reason: unknown): string {
+  const t = String(reason ?? "")
+    .replace(/[`\r\n\t]+/g, " ")
+    .replace(/</g, "‹").replace(/>/g, "›").replace(/\]\(/g, "] (").replace(/@/g, "(at)")
+    .replace(/\s+/g, " ").trim();
+  return t.slice(0, 300) || "(none)";
+}
+
+/** Elevation prompt text: the gate's text with markdown escaped, then the reason as a code block. */
+export function elevationText(text: string, reason: unknown): string {
+  return `${escapeMarkdown(text)}\nReason:\n\`\`\`text\n${inertReason(reason)}\n\`\`\``;
+}
+
+/** Elevation prompt buttons: kcops:elev:<elevationId>:<30|60|120|deny>. Only the owner's press is accepted (gate checks). */
+export const ELEVATION_MINUTES = [30, 60, 120] as const;
+
+export function elevationButtons(elevationId: number) {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    ...ELEVATION_MINUTES.map((m, i) =>
+      new ButtonBuilder().setCustomId(`kcops:elev:${elevationId}:${m}`).setLabel(`Approve ${fmt(m)}`).setStyle(i === 1 ? ButtonStyle.Success : ButtonStyle.Primary)
+    ),
+    new ButtonBuilder().setCustomId(`kcops:elev:${elevationId}:deny`).setLabel("Deny").setStyle(ButtonStyle.Danger)
+  );
+}
+
 export function parseButton(id: string):
+  | { type: "elev"; elevationId: number; minutes: number | null }
   | { type: "login"; loginId: number; answer: "yes" | "no" }
   | { type: "sext"; extensionId: number; minutes: number | null }
   | { type: "ext"; requestId: number; minutes: number | null }
   | { type: "person"; discordId: string; action: "approve" | "block" }
   | null {
+  const e = /^kcops:elev:(\d{1,18}):(30|60|120|deny)$/.exec(id);
+  if (e) return { type: "elev", elevationId: Number(e[1]), minutes: e[2] === "deny" ? null : Number(e[2]) };
   const l = /^kcops:login:(\d{1,18}):(yes|no)$/.exec(id);
   if (l) return { type: "login", loginId: Number(l[1]), answer: l[2] as "yes" | "no" };
   const x = /^kcops:sext:(\d{1,18}):(\d{1,4}|deny)$/.exec(id);
@@ -156,7 +194,18 @@ export async function handleAccess(interaction: ChatInputCommandInteraction): Pr
 
 export async function handleKc(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const group = interaction.options.getSubcommandGroup(false);
   const sub = interaction.options.getSubcommand();
+  if (group === "elevation") {
+    const r = await gate.owner({
+      command: `elevation_${sub}`,
+      actor_id: interaction.user.id,
+      channel_id: interaction.channelId,
+      chat: interaction.options.getString("chat") ?? undefined,
+    });
+    await interaction.editReply("ok" in r ? r.text : r.reason);
+    return;
+  }
   const target = interaction.options.getUser("user")?.id;
   const r = await gate.owner({
     command: sub,
@@ -174,6 +223,16 @@ export async function handleKcopsButton(interaction: ButtonInteraction): Promise
   const b = parseButton(interaction.customId);
   if (!b) return;
   await interaction.deferUpdate();
+  if (b.type === "elev") {
+    const r = await gate.elevation({ elevation_id: b.elevationId, actor_id: interaction.user.id, minutes: b.minutes });
+    if ("ok" in r) {
+      await interaction.editReply({ content: `${interaction.message.content}\n${r.text}`, components: [], allowedMentions: { parse: [] } });
+    } else {
+      // Refused (e.g. not the owner): buttons stay so the owner can still decide.
+      await interaction.followUp({ content: r.reason, flags: MessageFlags.Ephemeral });
+    }
+    return;
+  }
   if (b.type === "login" || b.type === "sext") {
     const r = b.type === "login"
       ? await gate.loginConfirm({ login_id: b.loginId, actor_id: interaction.user.id, answer: b.answer })
@@ -257,11 +316,11 @@ async function dmText(client: Client, userId: string, text: string): Promise<boo
   }
 }
 
-async function postChannel(client: Client, channelId: string, text: string): Promise<boolean> {
+async function postChannel(client: Client, channelId: string, text: string, components: ActionRowBuilder<ButtonBuilder>[] = []): Promise<boolean> {
   try {
     const ch = await client.channels.fetch(channelId);
     if (!ch || !ch.isSendable()) return false;
-    await ch.send({ content: text, ...QUIET });
+    await ch.send({ content: text, components, ...QUIET });
     return true;
   } catch {
     return false;
@@ -277,6 +336,17 @@ export async function deliverOutbox(client: Client): Promise<number> {
   const done: number[] = [];
   for (const it of items) {
     try {
+      const eid = typeof it.payload?.elevation_id === "number" ? it.payload.elevation_id : null;
+      if (it.kind === "elevation" && eid !== null && (it.target === "owner" || it.target === "channel")) {
+        // Gate-queued elevation prompt: owner chats by DM, staff chats in the access channel (fallback: owner DM).
+        const rows = [elevationButtons(eid)];
+        const ch = env().KCOPS_ACCESS_CHANNEL_ID;
+        const content = elevationText(it.text, it.payload?.reason);
+        let ok = it.target === "channel" && Boolean(ch) && (await postChannel(client, ch!, content, rows));
+        if (!ok) ok = await dmOwner(client, { content, components: rows });
+        if (ok) done.push(it.id);
+        continue;
+      }
       if (it.target === "channel") {
         const ch = env().KCOPS_ACCESS_CHANNEL_ID;
         if (ch) await postChannel(client, ch, it.text);

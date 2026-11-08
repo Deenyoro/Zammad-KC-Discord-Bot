@@ -519,3 +519,9 @@ buttons; the session starts only after It's me. Staff extension requests from th
 as DMs with Grant / Deny. The gate decides who gets a link, for how long, and whether a button press came
 from the owner; the bot only relays Discord events and delivers messages. `KCOPS_OWNER_USER_ID` is the owner: approval buttons and the audit log arrive as DMs to them. Sign-in links are sent only by DM,
 never logged, with link previews suppressed.
+
+Elevation (kc-ops chats asking for time-limited cluster administration): the gate queues the prompt; the owner's own
+chats arrive as a DM, staff chats are posted in the access channel (owner DM if that fails), both with Approve 30 min
+/ 1 h / 2 h and Deny (`kcops:elev:<id>:<choice>`). The gate accepts a press only from the owner; anyone else gets an
+ephemeral refusal and the buttons stay. `/kc elevation list` and `/kc elevation revoke [chat]` (owner) list and revoke
+open elevations. Register the new subcommands with `npm run deploy-commands`.
