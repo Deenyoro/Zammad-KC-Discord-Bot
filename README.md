@@ -508,3 +508,13 @@ For standard Zammad, you may need to create the "waiting for reply" and "closed 
 ## License
 
 MIT
+
+
+## kc-ops access (optional)
+
+When `KCOPS_GATE_URL` (the kc-ops gate's internal API, e.g. `http://kc-gate.kc-ops.svc:8081`) and
+`KCOPS_GATE_TOKEN` are set, the bot adds `/access` and `/kc` for KawaConnect's ops platform
+(GitLab `dean/kc-ops`). The gate decides who gets a link, for how long, and whether a button press came
+from the owner; the bot only relays Discord events and delivers messages. `KCOPS_OWNER_CHANNEL_ID` and
+`KCOPS_AUDIT_CHANNEL_ID` name the owner-approval and audit channels. Sign-in links are sent only by DM,
+never logged, with link previews suppressed.

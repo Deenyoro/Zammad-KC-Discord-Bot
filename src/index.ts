@@ -48,6 +48,7 @@ import {
 } from "./commands/shortcuts.js";
 import { mdCommand } from "./commands/md.js";
 import { remindMeCommand, remindersCommand } from "./commands/remind.js";
+import { kcopsCommands, startKcops } from "./kcops/discord.js";
 import { startReminders, stopReminders } from "./services/reminders.js";
 
 let discordClient: Client | null = null;
@@ -95,6 +96,7 @@ async function deployCommands() {
     mdCommand.toJSON(),
     remindMeCommand.toJSON(),
     remindersCommand.toJSON(),
+    ...kcopsCommands(),
   ];
 
   const rest = new REST().setToken(config.DISCORD_TOKEN);
@@ -133,6 +135,7 @@ async function main() {
   const client = createClient();
   discordClient = client;
   await client.login(env().DISCORD_TOKEN);
+  startKcops(client);
 
   // 4. Deploy slash commands (ensures new commands/options are always registered)
   await deployCommands();

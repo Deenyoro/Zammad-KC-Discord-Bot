@@ -34,6 +34,13 @@ const envSchema = z.object({
   SEARCH_FALLBACK_API_KEY: z.string().min(1).optional(),
   SEARCH_FALLBACK_PROVIDER: z.enum(["tavily", "brave"]).optional(),
 
+  // kc-ops access module (disabled unless both URL and token are set). The gate makes every decision;
+  // the bot only relays Discord events and delivers messages.
+  KCOPS_GATE_URL: z.string().url().optional(),
+  KCOPS_GATE_TOKEN: z.string().min(32).optional(),
+  KCOPS_OWNER_CHANNEL_ID: z.string().min(1).optional(),
+  KCOPS_AUDIT_CHANNEL_ID: z.string().min(1).optional(),
+
   // Daily summary (disabled if unset)
   DAILY_SUMMARY_HOUR: z.coerce.number().min(0).max(23).optional(),
 });

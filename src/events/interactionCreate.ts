@@ -39,6 +39,8 @@ import { handleSetupCommand } from "../commands/setup.js";
 import { handleHelpCommand } from "../commands/help.js";
 import { handleMd } from "../commands/md.js";
 import { handleRemindMe, handleReminders } from "../commands/remind.js";
+import { handleAccess, handleKc, handleKcopsButton } from "../kcops/discord.js";
+import { kcopsEnabled } from "../kcops/gate.js";
 
 export function onInteractionCreate(client: Client): void {
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -56,9 +58,31 @@ export function onInteractionCreate(client: Client): void {
       return;
     }
 
+    if (interaction.isButton() && interaction.customId.startsWith("kcops:")) {
+      if (!kcopsEnabled()) return;
+      try {
+        await handleKcopsButton(interaction);
+      } catch (err) {
+        logger.error({ err: String(err) }, "kc-ops button error");
+      }
+      return;
+    }
+
     if (!interaction.isChatInputCommand()) return;
 
     const { commandName } = interaction;
+
+    if ((commandName === "access" || commandName === "kc") && kcopsEnabled()) {
+      try {
+        await (commandName === "access" ? handleAccess(interaction) : handleKc(interaction));
+      } catch (err) {
+        logger.error({ command: commandName, err: String(err) }, "kc-ops command error");
+        const msg = "kc-ops is not reachable right now. Try again in a minute.";
+        if (interaction.deferred || interaction.replied) await interaction.editReply(msg).catch(() => {});
+        else await interaction.reply({ content: msg, flags: 64 }).catch(() => {});
+      }
+      return;
+    }
 
     try {
       switch (commandName) {
