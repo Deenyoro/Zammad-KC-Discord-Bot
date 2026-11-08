@@ -56,6 +56,10 @@ export const gate = {
     call<DecisionResult>("POST", "/internal/decision", b),
   owner: (b: { command: string; actor_id: string; channel_id: string; target_id?: string; days?: number | null }) =>
     call<OwnerResult>("POST", "/internal/owner", b),
+  loginConfirm: (b: { login_id: number; actor_id: string; answer: "yes" | "no" }) =>
+    call<OwnerResult>("POST", "/internal/login-confirm", b),
+  sessionExtension: (b: { extension_id: number; actor_id: string; minutes: number | null }) =>
+    call<OwnerResult>("POST", "/internal/session-extension", b),
   memberLeft: (discord_id: string) => call<{ ok: boolean }>("POST", "/internal/member-left", { discord_id }),
   outbox: () => call<{ items: OutboxItem[] }>("GET", "/internal/outbox"),
   ack: (ids: number[]) => call<{ ok: boolean }>("POST", "/internal/outbox/ack", { ids }),

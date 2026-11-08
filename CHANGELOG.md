@@ -8,7 +8,8 @@ All notable changes to this project are documented in this file.
 - kc-ops access module (off unless `KCOPS_GATE_URL` and `KCOPS_GATE_TOKEN` are set): `/access [minutes]`
   sends a one-time kc-ops sign-in link by DM (embeds suppressed); requests over 15 minutes reach the owner by DM
   with Grant/Deny buttons, as do new-person approvals and the audit log; `/kc lockdown|unlock|sessions|revoke|approve|block|relink|expiry` for the
-  owner; members leaving the server lose kc-ops access; gate notices are delivered from its outbox. The
+  owner; sign-in confirmations (It's me / Not me) and staff
+  extension requests (Grant / Deny) arrive as DMs; members leaving the server lose kc-ops access; gate notices are delivered from its outbox. The
   kc-ops gate makes every decision; the bot only relays Discord events.
 
 ## [1.0.11] - 2026-11-04

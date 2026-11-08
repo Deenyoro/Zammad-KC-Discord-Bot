@@ -18,6 +18,9 @@ test("module is enabled and registers /access and /kc", () => {
 });
 
 test("button ids parse strictly", () => {
+  assert.deepEqual(parseButton("kcops:login:9:yes"), { type: "login", loginId: 9, answer: "yes" });
+  assert.deepEqual(parseButton("kcops:sext:5:deny"), { type: "sext", extensionId: 5, minutes: null });
+  assert.equal(parseButton("kcops:login:9:maybe"), null);
   assert.deepEqual(parseButton("kcops:ext:42:60"), { type: "ext", requestId: 42, minutes: 60 });
   assert.deepEqual(parseButton("kcops:ext:42:deny"), { type: "ext", requestId: 42, minutes: null });
   assert.deepEqual(parseButton("kcops:person:123456789012:approve"), { type: "person", discordId: "123456789012", action: "approve" });
@@ -57,6 +60,8 @@ test("outbox delivery: embeds suppressed, buttons for new people, only delivered
     { id: 1, target: "owner", discord_id: null, kind: "approve_person", text: "New person <@555555>", payload: { discord_id: "555555" } },
     { id: 2, target: "user", discord_id: "2001", kind: "notice", text: "Your session was ended", payload: {} },
     { id: 3, target: "audit", discord_id: null, kind: "audit", text: "session ended", payload: {} },
+    { id: 4, target: "user", discord_id: "2001", kind: "login_confirm", text: "Is this you signing in to kc-ops?", payload: { login_id: 77 } },
+    { id: 5, target: "owner", discord_id: null, kind: "session_extension", text: "<@2001> asks for 120 more minutes", payload: { extension_id: 8, minutes: 120 } },
   ];
   setFetchForTests((async (url: any, init: any) => {
     if (String(url).endsWith("/internal/outbox")) return new Response(JSON.stringify({ items }));
@@ -66,11 +71,15 @@ test("outbox delivery: embeds suppressed, buttons for new people, only delivered
   const sent: any[] = [];
   const client: any = { users: { fetch: async (id: string) => ({ send: async (m: any) => sent.push({ dm: id, m }) }) } };
   const n = await deliverOutbox(client);
-  assert.equal(n, 3);
-  assert.deepEqual(acked, [[1, 2, 3]]);
+  assert.equal(n, 5);
+  assert.deepEqual(acked, [[1, 2, 3, 4, 5]]);
+  const confirm = sent.find((s) => s.m.content.startsWith("Is this you"));
+  assert.deepEqual(confirm.m.components[0].toJSON().components.map((c: any) => c.custom_id), ["kcops:login:77:yes", "kcops:login:77:no"]);
+  const ext = sent.find((s) => s.m.content.includes("more minutes"));
+  assert.deepEqual(ext.m.components[0].toJSON().components.map((c: any) => c.custom_id), ["kcops:sext:8:120", "kcops:sext:8:60", "kcops:sext:8:deny"]);
   for (const s of sent) assert.equal(s.m.flags, MessageFlags.SuppressEmbeds);
   const toOwner = sent.filter((s) => s.dm === "100000");
-  assert.equal(toOwner.length, 2); // approval + audit log line, both by DM
+  assert.equal(toOwner.length, 3); // new-person approval, audit line, extension request: all by DM
   assert.equal(toOwner[0].m.components[0].toJSON().components[0].custom_id, "kcops:person:555555:approve");
   assert.match(toOwner[1].m.content, /^log: session ended/);
   assert.deepEqual(toOwner[0].m.allowedMentions, { parse: [] });

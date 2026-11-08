@@ -67,10 +67,33 @@ export function personButtons(discordId: string) {
   );
 }
 
+export function loginButtons(loginId: number) {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`kcops:login:${loginId}:yes`).setLabel("It's me").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`kcops:login:${loginId}:no`).setLabel("Not me").setStyle(ButtonStyle.Danger)
+  );
+}
+
+export function sessionExtensionButtons(extensionId: number, asked: number) {
+  const opts = Array.from(new Set([asked, 60].filter((m) => m > 0 && m <= asked))).sort((a, b) => b - a);
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    ...opts.map((m, i) =>
+      new ButtonBuilder().setCustomId(`kcops:sext:${extensionId}:${m}`).setLabel(`Grant ${fmt(m)}`).setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
+    ),
+    new ButtonBuilder().setCustomId(`kcops:sext:${extensionId}:deny`).setLabel("Deny").setStyle(ButtonStyle.Danger)
+  );
+}
+
 export function parseButton(id: string):
+  | { type: "login"; loginId: number; answer: "yes" | "no" }
+  | { type: "sext"; extensionId: number; minutes: number | null }
   | { type: "ext"; requestId: number; minutes: number | null }
   | { type: "person"; discordId: string; action: "approve" | "block" }
   | null {
+  const l = /^kcops:login:(\d{1,18}):(yes|no)$/.exec(id);
+  if (l) return { type: "login", loginId: Number(l[1]), answer: l[2] as "yes" | "no" };
+  const x = /^kcops:sext:(\d{1,18}):(\d{1,4}|deny)$/.exec(id);
+  if (x) return { type: "sext", extensionId: Number(x[1]), minutes: x[2] === "deny" ? null : Number(x[2]) };
   const m = /^kcops:ext:(\d{1,18}):(\d{1,4}|deny)$/.exec(id);
   if (m) return { type: "ext", requestId: Number(m[1]), minutes: m[2] === "deny" ? null : Number(m[2]) };
   const p = /^kcops:person:(\d{5,20}):(approve|block)$/.exec(id);
@@ -140,6 +163,13 @@ export async function handleKcopsButton(interaction: ButtonInteraction): Promise
   const b = parseButton(interaction.customId);
   if (!b) return;
   await interaction.deferUpdate();
+  if (b.type === "login" || b.type === "sext") {
+    const r = b.type === "login"
+      ? await gate.loginConfirm({ login_id: b.loginId, actor_id: interaction.user.id, answer: b.answer })
+      : await gate.sessionExtension({ extension_id: b.extensionId, actor_id: interaction.user.id, minutes: b.minutes });
+    await interaction.editReply({ content: `${interaction.message.content}\n${"ok" in r ? r.text : r.reason}`, components: [], allowedMentions: { parse: [] } });
+    return;
+  }
   if (b.type === "ext") {
     const r = await gate.decision({ request_id: b.requestId, actor_id: interaction.user.id, channel_id: interaction.channelId, minutes: b.minutes });
     if (r.kind === "refused") {
@@ -174,6 +204,15 @@ async function dmOwner(client: Client, msg: { content: string; components?: Acti
   }
 }
 
+async function dmWithButtons(client: Client, userId: string, text: string, rows: ActionRowBuilder<ButtonBuilder>[]): Promise<boolean> {
+  try {
+    await (await client.users.fetch(userId)).send({ content: text, components: rows, ...QUIET });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function dmText(client: Client, userId: string, text: string): Promise<boolean> {
   try {
     await (await client.users.fetch(userId)).send({ content: text, ...QUIET });
@@ -190,14 +229,18 @@ export async function deliverOutbox(client: Client): Promise<number> {
   for (const it of items) {
     try {
       if (it.target === "user" && it.discord_id) {
-        if (await dmText(client, it.discord_id, it.text)) done.push(it.id);
-        else done.push(it.id); // closed DMs: don't retry forever
+        const lid = typeof it.payload?.login_id === "number" ? it.payload.login_id : null;
+        if (it.kind === "login_confirm" && lid !== null) await dmWithButtons(client, it.discord_id, it.text, [loginButtons(lid)]);
+        else await dmText(client, it.discord_id, it.text);
+        done.push(it.id); // closed DMs: don't retry forever
         continue;
       }
       const pid = typeof it.payload?.discord_id === "string" ? it.payload.discord_id : null;
       const ok = await dmOwner(client, {
         content: it.target === "audit" ? `log: ${it.text}` : it.text,
-        components: it.kind === "approve_person" && pid ? [personButtons(pid)] : [],
+        components: it.kind === "approve_person" && pid ? [personButtons(pid)]
+          : it.kind === "session_extension" && typeof it.payload?.extension_id === "number"
+            ? [sessionExtensionButtons(it.payload.extension_id, Number(it.payload.minutes) || 60)] : [],
       });
       if (!ok) continue;
       done.push(it.id);
