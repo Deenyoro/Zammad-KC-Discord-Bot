@@ -37,6 +37,11 @@ export const kcCommand = new SlashCommandBuilder()
   .addSubcommand((s) => s.setName("unlock").setDescription("Allow kc-ops access again"))
   .addSubcommand((s) => s.setName("sessions").setDescription("List live kc-ops sessions"))
   .addSubcommand((s) =>
+    s.setName("approval").setDescription("Require your approval for every staff /access request")
+      .addStringOption((o) => o.setName("mode").setDescription("on = every request asks you; off = only extra time asks").setRequired(true)
+        .addChoices({ name: "on", value: "on" }, { name: "off", value: "off" }))
+  )
+  .addSubcommand((s) =>
     s.setName("notify").setDescription("Where approval requests go")
       .addStringOption((o) => o.setName("where").setDescription("Access channel, your DMs, or both").setRequired(true)
         .addChoices({ name: "Access channel and DMs", value: "both" }, { name: "Access channel only", value: "channel" }, { name: "DMs only", value: "dm" }))
@@ -185,7 +190,7 @@ export async function handleAccess(interaction: ChatInputCommandInteraction): Pr
       content: `<@${interaction.user.id}> asks for a ${fmt(r.minutes)} kc-ops session.`,
       components: [extensionButtons(r.request_id, r.minutes)],
     });
-    await interaction.editReply(`Asked Dean for ${fmt(r.minutes)}. You'll get a DM with the link if he approves (or run /access for the standard length).`);
+    await interaction.editReply(`Asked Dean to approve ${fmt(r.minutes)} of kc-ops access. You'll get a DM with your sign-in link as soon as he approves.`);
     return;
   }
   const ok = await dmLink(interaction.client, interaction.user.id, r.url, r.minutes);
@@ -214,7 +219,7 @@ export async function handleKc(interaction: ChatInputCommandInteraction): Promis
     target_id: target,
     days: sub === "expiry" ? interaction.options.getInteger("days") : undefined,
     minutes: sub === "default" ? interaction.options.getInteger("minutes") : undefined,
-    route: sub === "notify" ? interaction.options.getString("where") : undefined,
+    route: sub === "notify" ? interaction.options.getString("where") : sub === "approval" ? interaction.options.getString("mode") : undefined,
   });
   await interaction.editReply("ok" in r ? r.text : r.reason);
 }
