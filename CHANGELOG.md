@@ -3,7 +3,7 @@
 All notable changes to this project are documented in this file.
 
 
-## [Unreleased]
+## [1.6.0] - 2026-11-10
 
 ### Changed
 - kc-ops: the bot no longer sends direct messages to staff. Sign-in links, the "Is this you?" confirmation and every
