@@ -2,6 +2,13 @@
  * kc-ops access in Discord: /access, /kc owner commands, approval buttons, member-leave and message
  * delivery. Messages are sent with embeds suppressed (link previews would fetch URLs) and no mentions
  * parsed except the people named.
+ *
+ * Who sees what (owner 2026-11-10): the bot never sends a direct message to anyone but the owner. Everything
+ * for a staff member (sign-in link, "Is this you?" confirmation, results, notices) is shown in the access
+ * channel in a message only they can see: an ephemeral reply or follow-up to their own interaction. When no
+ * interaction of theirs is still open (its token lasts 15 minutes), the bot posts a public line with no detail
+ * and a button; pressing it shows the content to that person only (the gate checks it is theirs). The owner
+ * asks for access by sending the bot a DM and is answered there.
  */
 import {
   ActionRowBuilder,
@@ -12,6 +19,7 @@ import {
   Client,
   Events,
   MessageFlags,
+  type Message,
   SlashCommandBuilder,
   escapeMarkdown,
   type GuildMember,
@@ -22,6 +30,29 @@ import { logger } from "../util/logger.js";
 import { gate, kcopsEnabled, type ApprovalRoute, type OutboxItem } from "./gate.js";
 
 const QUIET = { flags: MessageFlags.SuppressEmbeds as MessageFlags.SuppressEmbeds, allowedMentions: { parse: [] as never[] } };
+/** A reply only the person who started the interaction can see. */
+const PRIVATE = { flags: MessageFlags.Ephemeral as MessageFlags.Ephemeral, allowedMentions: { parse: [] as never[] } };
+
+function isOwner(userId: string): boolean {
+  return userId === env().KCOPS_OWNER_USER_ID;
+}
+
+/**
+ * The latest interaction of each staff member in the access channel. Its token allows private follow-ups for
+ * 15 minutes; after that (or if Discord refuses) the bot falls back to a public pointer with a button.
+ */
+type Followable = { followUp: (m: any) => Promise<unknown> };
+const live = new Map<string, { interaction: Followable; at: number }>();
+export const FOLLOWUP_MS = 14 * 60 * 1000;
+
+export function rememberInteraction(userId: string, interaction: Followable, now = Date.now()): void {
+  if (!isOwner(userId)) live.set(userId, { interaction, at: now });
+}
+
+export function forgetInteractionsForTests(): void {
+  live.clear();
+  hinted.clear();
+}
 
 export const accessCommand = new SlashCommandBuilder()
   .setName("access")
@@ -50,6 +81,7 @@ export const kcCommand = new SlashCommandBuilder()
     s.setName("default").setDescription("Set the default session length")
       .addIntegerOption((o) => o.setName("minutes").setDescription("Minutes (5-720)").setRequired(true).setMinValue(5).setMaxValue(720))
   )
+  .addSubcommand((s) => s.setName("panel").setDescription("Post the Request access button in the access channel"))
   .addSubcommand((s) => s.setName("revoke").setDescription("End a person's session").addUserOption((o) => o.setName("user").setDescription("Person").setRequired(true)))
   .addSubcommand((s) => s.setName("approve").setDescription("Approve a person").addUserOption((o) => o.setName("user").setDescription("Person").setRequired(true)))
   .addSubcommand((s) => s.setName("block").setDescription("Block a person").addUserOption((o) => o.setName("user").setDescription("Person").setRequired(true)))
@@ -72,9 +104,13 @@ export function kcopsCommands() {
   return kcopsEnabled() ? [accessCommand.toJSON(), kcCommand.toJSON()] : [];
 }
 
-/** Button ids: kcops:ext:<requestId>:<minutes|deny>, kcops:person:<discordId>:<approve|block> */
+/**
+ * Button ids: kcops:ext:<requestId>:<minutes|deny>, kcops:person:<discordId>:<approve|block>.
+ * Always offers the time that was asked for (a standard one-hour request used to get a Deny button only), plus up
+ * to two shorter choices.
+ */
 export function extensionButtons(requestId: number, asked: number) {
-  const opts = Array.from(new Set([asked, 120, 240].filter((m) => m > 60 && m <= asked))).sort((a, b) => b - a);
+  const opts = Array.from(new Set([asked, 240, 120, 60].filter((m) => m > 0 && m <= asked))).sort((a, b) => b - a).slice(0, 3);
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     ...opts.map((m, i) =>
       new ButtonBuilder().setCustomId(`kcops:ext:${requestId}:${m}`).setLabel(`Grant ${fmt(m)}`).setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
@@ -133,13 +169,30 @@ export function elevationButtons(elevationId: number) {
   );
 }
 
+/** The public pointer's button: pressing it shows the content to the person it is for, privately. */
+export function pointerButton(customId: string, label: string) {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(customId).setLabel(label).setStyle(ButtonStyle.Primary)
+  );
+}
+
+export const REQUEST_BUTTON = "kcops:request";
+
 export function parseButton(id: string):
+  | { type: "request" }
+  | { type: "link"; requestId: number }
+  | { type: "show"; outboxId: number }
   | { type: "elev"; elevationId: number; minutes: number | null }
   | { type: "login"; loginId: number; answer: "yes" | "no" }
   | { type: "sext"; extensionId: number; minutes: number | null }
   | { type: "ext"; requestId: number; minutes: number | null }
   | { type: "person"; discordId: string; action: "approve" | "block" }
   | null {
+  if (id === REQUEST_BUTTON) return { type: "request" };
+  const k = /^kcops:link:(\d{1,18})$/.exec(id);
+  if (k) return { type: "link", requestId: Number(k[1]) };
+  const s = /^kcops:show:(\d{1,18})$/.exec(id);
+  if (s) return { type: "show", outboxId: Number(s[1]) };
   const e = /^kcops:elev:(\d{1,18}):(30|60|120|deny)$/.exec(id);
   if (e) return { type: "elev", elevationId: Number(e[1]), minutes: e[2] === "deny" ? null : Number(e[2]) };
   const l = /^kcops:login:(\d{1,18}):(yes|no)$/.exec(id);
@@ -159,22 +212,38 @@ export function fmt(minutes: number): string {
 
 function linkMessage(url: string, minutes: number): string {
   return `Your kc-ops sign-in link (works once, valid 10 minutes, session ${fmt(minutes)}):\n<${url}>\n` +
-    "Open it in your normal browser. Never share it; kc-ops will never ask you for a password here.";
+    "Open it in your normal browser. Only you can see this message; never share the link, and kc-ops will never ask " +
+    "you for a password here. After the Microsoft sign-in, come back to Discord and press It's me.";
 }
 
-async function dmLink(client: Client, userId: string, url: string, minutes: number): Promise<boolean> {
-  try {
-    const user = await client.users.fetch(userId);
-    await user.send({ content: linkMessage(url, minutes), ...QUIET });
-    return true;
-  } catch {
-    return false;
+type Shown = { content: string; components?: ActionRowBuilder<ButtonBuilder>[] };
+type Pointer = { text: string; label: string; customId: string };
+
+/**
+ * Show something to one person and nobody else. The owner gets a DM. Anyone else gets a private follow-up to
+ * their latest interaction in the access channel, or, when none is open, a public pointer (no detail) whose
+ * button shows the content to them alone. Never a DM to a non-owner.
+ */
+export async function showPrivately(client: Client, userId: string, msg: Shown, pointer: Pointer): Promise<boolean> {
+  if (isOwner(userId)) return dmOwner(client, msg);
+  const l = live.get(userId);
+  if (l && Date.now() - l.at < FOLLOWUP_MS) {
+    try {
+      await l.interaction.followUp({ content: msg.content, components: msg.components ?? [], ...PRIVATE });
+      return true;
+    } catch (err) {
+      live.delete(userId); // token expired or revoked: use the pointer
+      logger.warn({ err: String(err) }, "kc-ops private follow-up failed");
+    }
   }
+  const ch = env().KCOPS_ACCESS_CHANNEL_ID;
+  if (!ch) return false;
+  return postChannel(client, ch, pointer.text, [pointerButton(pointer.customId, pointer.label)], [userId]);
 }
 
-export async function handleAccess(interaction: ChatInputCommandInteraction): Promise<void> {
+/** /access and the Request access button: the answer (link, wait, refusal) is visible to the requester only. */
+async function requestAccess(interaction: ChatInputCommandInteraction | ButtonInteraction, minutes: number | null): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const minutes = interaction.options.getInteger("minutes");
   const r = await gate.access({
     discord_id: interaction.user.id,
     channel_id: interaction.channelId,
@@ -185,16 +254,22 @@ export async function handleAccess(interaction: ChatInputCommandInteraction): Pr
     await interaction.editReply(r.reason);
     return;
   }
+  rememberInteraction(interaction.user.id, interaction);
   if (r.kind === "pending_owner") {
-    await ownerPrompt(interaction.client, {
+    const asked = await ownerPrompt(interaction.client, {
       content: `<@${interaction.user.id}> asks for a ${fmt(r.minutes)} kc-ops session.`,
       components: [extensionButtons(r.request_id, r.minutes)],
     });
-    await interaction.editReply(`Asked Dean to approve ${fmt(r.minutes)} of kc-ops access. You'll get a DM with your sign-in link as soon as he approves.`);
+    await interaction.editReply(asked
+      ? `Asked Dean to approve ${fmt(r.minutes)} of kc-ops access. When he answers I'll show it here, in a message only you can see.`
+      : "Your request is recorded, but I couldn't reach Dean in Discord just now. Message him yourself, or run /access again in a few minutes.");
     return;
   }
-  const ok = await dmLink(interaction.client, interaction.user.id, r.url, r.minutes);
-  await interaction.editReply(ok ? "Sent you a DM with your sign-in link." : "I couldn't DM you. Allow DMs from server members, then run /access again.");
+  await interaction.editReply({ content: linkMessage(r.url, r.minutes), allowedMentions: { parse: [] } });
+}
+
+export async function handleAccess(interaction: ChatInputCommandInteraction): Promise<void> {
+  await requestAccess(interaction, interaction.options.getInteger("minutes"));
 }
 
 export async function handleKc(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -209,6 +284,16 @@ export async function handleKc(interaction: ChatInputCommandInteraction): Promis
       chat: interaction.options.getString("chat") ?? undefined,
     });
     await interaction.editReply("ok" in r ? r.text : r.reason);
+    return;
+  }
+  if (sub === "panel") {
+    // Bot-side only: posts a message with a button. The button does what /access does; the gate decides.
+    const ch = env().KCOPS_ACCESS_CHANNEL_ID;
+    const ok = isOwner(interaction.user.id) && Boolean(ch) && (await postChannel(interaction.client, ch!,
+      "Need kc-ops? Press the button (or run /access). Your sign-in link is shown only to you, never posted here.",
+      [pointerButton(REQUEST_BUTTON, "Request access")]));
+    await interaction.editReply(ok ? "Posted the Request access button." : isOwner(interaction.user.id)
+      ? "Could not post in the access channel (check KCOPS_ACCESS_CHANNEL_ID and my permissions there)." : "Only Dean can do that.");
     return;
   }
   const target = interaction.options.getUser("user")?.id;
@@ -227,7 +312,37 @@ export async function handleKc(interaction: ChatInputCommandInteraction): Promis
 export async function handleKcopsButton(interaction: ButtonInteraction): Promise<void> {
   const b = parseButton(interaction.customId);
   if (!b) return;
+  if (b.type === "request") {
+    await requestAccess(interaction, null);
+    return;
+  }
+  if (b.type === "link" || b.type === "show") {
+    // A public pointer was pressed: answer privately, and only if the gate says the content is the presser's.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (b.type === "link") {
+      const r = await gate.link({ request_id: b.requestId, discord_id: interaction.user.id });
+      if (r.kind === "refused") {
+        await interaction.editReply(r.reason);
+        return;
+      }
+      rememberInteraction(interaction.user.id, interaction);
+      await interaction.editReply({ content: linkMessage(r.url, r.minutes), allowedMentions: { parse: [] } });
+      return;
+    }
+    const r = await gate.notice({ id: b.outboxId, discord_id: interaction.user.id });
+    if (r.kind === "refused") {
+      await interaction.editReply(r.reason);
+      return;
+    }
+    rememberInteraction(interaction.user.id, interaction);
+    const lid = typeof r.payload?.login_id === "number" ? r.payload.login_id : null;
+    const confirm = r.item_kind === "login_confirm" && lid !== null;
+    await interaction.editReply({ content: r.text, components: confirm ? [loginButtons(lid)] : [], allowedMentions: { parse: [] } });
+    if (!confirm) await interaction.message.delete().catch(() => {}); // read: the public pointer has done its job
+    return;
+  }
   await interaction.deferUpdate();
+  if (b.type === "login") rememberInteraction(interaction.user.id, interaction);
   if (b.type === "elev") {
     const r = await gate.elevation({ elevation_id: b.elevationId, actor_id: interaction.user.id, minutes: b.minutes });
     if ("ok" in r) {
@@ -252,12 +367,16 @@ export async function handleKcopsButton(interaction: ButtonInteraction): Promise
       return;
     }
     if (r.kind === "denied") {
-      await dmText(interaction.client, r.discord_id, "Dean declined the extra time. Run /access for a standard session.");
-      await interaction.editReply({ content: `${interaction.message.content}\nDenied.`, components: [] });
+      // The gate queues the "declined" notice for the requester; it is delivered like every other notice.
+      await interaction.editReply({ content: `${interaction.message.content}\nDenied.`, components: [], allowedMentions: { parse: [] } });
       return;
     }
-    const ok = await dmLink(interaction.client, r.discord_id, r.url, r.minutes);
-    await interaction.editReply({ content: `${interaction.message.content}\nGranted ${fmt(r.minutes)}${ok ? "" : " (DM failed; ask them to allow DMs and request again)"}.`, components: [] });
+    const ok = await showPrivately(interaction.client, r.discord_id, { content: linkMessage(r.url, r.minutes) }, {
+      text: `<@${r.discord_id}> Dean approved your kc-ops access (${fmt(r.minutes)}). Press the button for your sign-in link; only you will see it.`,
+      label: "Show my link",
+      customId: `kcops:link:${b.requestId}`,
+    });
+    await interaction.editReply({ content: `${interaction.message.content}\nGranted ${fmt(r.minutes)}${ok ? "" : " (I could not tell them; ask them to run /access again)"}.`, components: [], allowedMentions: { parse: [] } });
     return;
   }
   const r = await gate.owner({ command: b.action, actor_id: interaction.user.id, channel_id: interaction.channelId, target_id: b.discordId });
@@ -303,33 +422,23 @@ async function ownerPrompt(client: Client, msg: { content: string; components?: 
   return ok;
 }
 
-async function dmWithButtons(client: Client, userId: string, text: string, rows: ActionRowBuilder<ButtonBuilder>[]): Promise<boolean> {
-  try {
-    await (await client.users.fetch(userId)).send({ content: text, components: rows, ...QUIET });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function dmText(client: Client, userId: string, text: string): Promise<boolean> {
-  try {
-    await (await client.users.fetch(userId)).send({ content: text, ...QUIET });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function postChannel(client: Client, channelId: string, text: string, components: ActionRowBuilder<ButtonBuilder>[] = []): Promise<boolean> {
+async function postChannel(client: Client, channelId: string, text: string, components: ActionRowBuilder<ButtonBuilder>[] = [],
+  mention: string[] = []): Promise<boolean> {
   try {
     const ch = await client.channels.fetch(channelId);
     if (!ch || !ch.isSendable()) return false;
-    await ch.send({ content: text, components, ...QUIET });
+    // Mentions are shown but never pinged, except the one person a pointer is for.
+    await ch.send({ content: text, components, ...QUIET, allowedMentions: mention.length ? { parse: [], users: mention } : { parse: [] } });
     return true;
-  } catch {
+  } catch (err) {
+    logger.warn({ err: String(err) }, "kc-ops access channel post failed");
     return false;
   }
+}
+
+/** A failed delivery is retried on the next poll until the message is too old to matter (age comes from the gate). */
+function giveUp(it: OutboxItem, seconds: number): boolean {
+  return typeof it.age !== "number" || it.age > seconds;
 }
 
 const APPROVAL_KINDS = new Set(["approve_person", "session_extension", "platform_approval"]);
@@ -354,18 +463,31 @@ export async function deliverOutbox(client: Client): Promise<number> {
       }
       if (it.target === "channel") {
         const ch = env().KCOPS_ACCESS_CHANNEL_ID;
-        if (ch) await postChannel(client, ch, it.text);
-        done.push(it.id); // announcements are best effort
+        const ok = Boolean(ch) && (await postChannel(client, ch!, it.text));
+        if (ok || !ch || giveUp(it, 600)) done.push(it.id); // announcements: retried for 10 minutes
         continue;
       }
-      if (it.target === "user" && it.discord_id) {
+      if (it.target === "user") {
+        if (!it.discord_id) {
+          done.push(it.id);
+          continue;
+        }
+        // For one person: the owner by DM, anyone else privately in the access channel (never a DM).
         const lid = typeof it.payload?.login_id === "number" ? it.payload.login_id : null;
-        if (it.kind === "login_confirm" && lid !== null) await dmWithButtons(client, it.discord_id, it.text, [loginButtons(lid)]);
-        else await dmText(client, it.discord_id, it.text);
-        done.push(it.id); // closed DMs: don't retry forever
+        const confirm = it.kind === "login_confirm" && lid !== null;
+        const ok = await showPrivately(client, it.discord_id, { content: it.text, components: confirm ? [loginButtons(lid)] : [] }, {
+          text: confirm
+            ? `<@${it.discord_id}> confirm your kc-ops sign-in: press the button (only you will see the details).`
+            : `<@${it.discord_id}> kc-ops has a message for you. Press the button; only you will see it.`,
+          label: "Show details",
+          customId: `kcops:show:${it.id}`,
+        });
+        // The confirmation is only valid for 3 minutes; other notices are retried for 15.
+        if (ok || giveUp(it, confirm ? 180 : 900)) done.push(it.id);
         continue;
       }
-      const pid = typeof it.payload?.discord_id === "string" ? it.payload.discord_id : null;
+      const pid = typeof it.payload?.discord_id === "string" ? it.payload.discord_id
+        : it.kind === "approve_person" && it.discord_id ? it.discord_id : null; // older gates put it in the column
       const msg = {
         content: it.target === "audit" ? `log: ${it.text}` : it.text,
         components: it.kind === "approve_person" && pid ? [personButtons(pid)]
@@ -385,6 +507,54 @@ export async function deliverOutbox(client: Client): Promise<number> {
   return done.length;
 }
 
+const ACCESS_WORDS = /\b(access|sign[- ]?in|log[- ]?in|link|kc-?ops)\b/i;
+const OWNER_DM = /^\s*\/?access(?:\s+(\d{1,4}))?\s*$/i;
+const hinted = new Map<string, number>();
+const HINT_MS = 60_000;
+
+/**
+ * Plain messages. In the access channel, someone typing a request gets a short public hint to use /access (never
+ * a link). In a DM, only the owner is answered: "access" or "access <minutes>" returns his link there, and nothing
+ * is posted anywhere else. A DM from anyone else gets no reply (the bot does not DM staff).
+ */
+export async function handleKcopsMessage(message: Message): Promise<void> {
+  if (message.author.bot) return;
+  if (!message.guildId) {
+    if (!isOwner(message.author.id)) return;
+    const m = OWNER_DM.exec(message.content);
+    if (!m) {
+      if (ACCESS_WORDS.test(message.content)) await message.reply({ content: "Send `access` or `access <minutes>` and I'll reply here with your sign-in link.", ...QUIET });
+      return;
+    }
+    let isMember = false;
+    try {
+      const guild = await message.client.guilds.fetch(env().DISCORD_GUILD_ID!);
+      isMember = Boolean(await guild.members.fetch(message.author.id));
+    } catch {
+      isMember = false;
+    }
+    try {
+      const r = await gate.access({ discord_id: message.author.id, channel_id: message.channelId, is_member: isMember, minutes: m[1] ? Number(m[1]) : null, owner_dm: true });
+      await message.reply({
+        content: r.kind === "link" ? linkMessage(r.url, r.minutes) : r.kind === "refused" ? r.reason : "That request needs approval; use /access in the access channel.",
+        ...QUIET,
+      });
+    } catch (err) {
+      logger.error({ err: String(err) }, "kc-ops owner DM access failed");
+      await message.reply({ content: "kc-ops is not reachable right now. Try again in a minute.", ...QUIET }).catch(() => {});
+    }
+    return;
+  }
+  if (message.channelId !== env().KCOPS_ACCESS_CHANNEL_ID || !ACCESS_WORDS.test(message.content)) return;
+  const last = hinted.get(message.author.id) ?? 0;
+  if (Date.now() - last < HINT_MS) return;
+  hinted.set(message.author.id, Date.now());
+  await message.reply({
+    content: "To get into kc-ops, run `/access` here (or press Request access). I'll show your sign-in link in a message only you can see; links are never posted in this channel.",
+    ...QUIET,
+  });
+}
+
 export function startKcops(client: Client): void {
   if (!kcopsEnabled()) {
     logger.info("kc-ops access module disabled (KCOPS_GATE_URL/KCOPS_GATE_TOKEN not set)");
@@ -393,6 +563,9 @@ export function startKcops(client: Client): void {
   client.on(Events.GuildMemberRemove, (m: GuildMember | PartialGuildMember) => {
     if (m.guild.id !== env().DISCORD_GUILD_ID) return;
     gate.memberLeft(m.id).catch((err) => logger.error({ err: String(err) }, "kc-ops member-left failed"));
+  });
+  client.on(Events.MessageCreate, (m: Message) => {
+    handleKcopsMessage(m).catch((err) => logger.warn({ err: String(err) }, "kc-ops message handling failed"));
   });
   let busy = false;
   setInterval(() => {

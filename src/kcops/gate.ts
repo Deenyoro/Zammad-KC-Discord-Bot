@@ -10,8 +10,15 @@ export type AccessResult =
   | { kind: "refused"; code: string; reason: string };
 
 export type DecisionResult =
-  | { kind: "link"; discord_id: string; url: string; minutes: number }
-  | { kind: "denied"; discord_id: string }
+  | { kind: "link"; discord_id: string; url: string; minutes: number; request_id?: number }
+  | { kind: "denied"; discord_id: string; notified?: boolean }
+  | { kind: "refused"; code: string; reason: string };
+
+export type LinkResult = { kind: "link"; url: string; minutes: number } | { kind: "refused"; code: string; reason: string };
+
+/** A message queued for one person, fetched when that person presses "Show details". */
+export type NoticeResult =
+  | { kind: "notice"; item_kind: string; text: string; payload: Record<string, unknown> }
   | { kind: "refused"; code: string; reason: string };
 
 export type OwnerResult = { ok: true; text: string } | { kind: "refused"; code: string; reason: string };
@@ -23,6 +30,10 @@ export interface OutboxItem {
   kind: string;
   text: string;
   payload: Record<string, unknown>;
+  /** Seconds since the gate queued it: a failed delivery is retried until it is too old to matter. */
+  age?: number;
+  /** How the gate wants it delivered; "dm" only ever for the owner. */
+  deliver?: "dm" | "private" | "channel";
 }
 
 export function kcopsEnabled(): boolean {
@@ -50,10 +61,14 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
 }
 
 export const gate = {
-  access: (b: { discord_id: string; channel_id: string; is_member: boolean; minutes: number | null }) =>
+  access: (b: { discord_id: string; channel_id: string; is_member: boolean; minutes: number | null; owner_dm?: boolean }) =>
     call<AccessResult>("POST", "/internal/access", b),
   decision: (b: { request_id: number; actor_id: string; channel_id: string; minutes: number | null }) =>
     call<DecisionResult>("POST", "/internal/decision", b),
+  /** "Show my link": a fresh one-time link for the requester of an approved request (the gate checks it is theirs). */
+  link: (b: { request_id: number; discord_id: string }) => call<LinkResult>("POST", "/internal/link", b),
+  /** "Show details": the text of a message queued for this person (the gate checks it is theirs). */
+  notice: (b: { id: number; discord_id: string }) => call<NoticeResult>("POST", "/internal/notice", b),
   owner: (b: { command: string; actor_id: string; channel_id: string; target_id?: string; days?: number | null; minutes?: number | null; route?: string | null; chat?: string }) =>
     call<OwnerResult>("POST", "/internal/owner", b),
   loginConfirm: (b: { login_id: number; actor_id: string; answer: "yes" | "no" }) =>

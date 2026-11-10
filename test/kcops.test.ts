@@ -30,9 +30,13 @@ test("button ids parse strictly", () => {
   }
 });
 
-test("extension buttons offer asked time, 2 h, deny", () => {
-  const row: any = extensionButtons(7, 240).toJSON();
-  assert.deepEqual(row.components.map((c: any) => c.custom_id), ["kcops:ext:7:240", "kcops:ext:7:120", "kcops:ext:7:deny"]);
+test("extension buttons always offer the asked time, then shorter choices, then deny", () => {
+  const ids = (asked: number) => (extensionButtons(7, asked).toJSON() as any).components.map((c: any) => c.custom_id);
+  assert.deepEqual(ids(240), ["kcops:ext:7:240", "kcops:ext:7:120", "kcops:ext:7:60", "kcops:ext:7:deny"]);
+  // a standard one-hour request used to get only a Deny button, so it could never be approved
+  assert.deepEqual(ids(60), ["kcops:ext:7:60", "kcops:ext:7:deny"]);
+  assert.deepEqual(ids(15), ["kcops:ext:7:15", "kcops:ext:7:deny"]);
+  assert.deepEqual(ids(720), ["kcops:ext:7:720", "kcops:ext:7:240", "kcops:ext:7:120", "kcops:ext:7:deny"]);
   assert.equal(fmt(90), "90 min");
   assert.equal(fmt(240), "4 h");
 });
@@ -70,12 +74,24 @@ test("outbox delivery: embeds suppressed, buttons for new people, only delivered
     return new Response(JSON.stringify({ ok: true }));
   }) as any);
   const sent: any[] = [];
-  const client: any = { users: { fetch: async (id: string) => ({ send: async (m: any) => sent.push({ dm: id, m }) }) } };
+  const posts: any[] = [];
+  const client: any = {
+    users: { fetch: async (id: string) => ({ send: async (m: any) => sent.push({ dm: id, m }) }) },
+    channels: { fetch: async (id: string) => ({ isSendable: () => true, send: async (m: any) => posts.push({ id, m }) }) },
+  };
   const n = await deliverOutbox(client);
   assert.equal(n, 5);
   assert.deepEqual(acked, [[1, 2, 3, 4, 5]]);
-  const confirm = sent.find((s) => s.m.content.startsWith("Is this you"));
-  assert.deepEqual(confirm.m.components[0].toJSON().components.map((c: any) => c.custom_id), ["kcops:login:77:yes", "kcops:login:77:no"]);
+  // staff messages: no DM; a public pointer without the text, pinging only that person, with a Show details button
+  assert.ok(sent.every((s) => s.dm === "100000"));
+  const pointers = posts.filter((p) => p.m.components[0]?.toJSON().components[0].custom_id.startsWith("kcops:show:"));
+  assert.deepEqual(pointers.map((p) => p.m.components[0].toJSON().components[0].custom_id), ["kcops:show:2", "kcops:show:4"]);
+  assert.ok(posts.every((p) => !/session was ended|Is this you/.test(p.m.content)));
+  for (const p of pointers) {
+    assert.equal(p.id, "300000");
+    assert.ok(!/session was ended|Is this you/.test(p.m.content));
+    assert.deepEqual(p.m.allowedMentions, { parse: [], users: ["2001"] });
+  }
   const ext = sent.find((s) => s.m.content.includes("more minutes"));
   assert.deepEqual(ext.m.components[0].toJSON().components.map((c: any) => c.custom_id), ["kcops:sext:8:120", "kcops:sext:8:60", "kcops:sext:8:deny"]);
   for (const s of sent) assert.equal(s.m.flags, MessageFlags.SuppressEmbeds);
@@ -84,7 +100,6 @@ test("outbox delivery: embeds suppressed, buttons for new people, only delivered
   assert.equal(toOwner[0].m.components[0].toJSON().components[0].custom_id, "kcops:person:555555:approve");
   assert.match(toOwner[1].m.content, /^log: session ended/);
   assert.deepEqual(toOwner[0].m.allowedMentions, { parse: [] });
-  assert.equal(sent.find((s) => s.dm === "2001").m.content, "Your session was ended");
 });
 
 for (const route of ["both", "channel", "dm"] as const) {

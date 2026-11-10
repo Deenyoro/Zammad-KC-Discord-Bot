@@ -64,6 +64,9 @@ export function onInteractionCreate(client: Client): void {
         await handleKcopsButton(interaction);
       } catch (err) {
         logger.error({ err: String(err) }, "kc-ops button error");
+        const msg = { content: "kc-ops is not reachable right now. Try again in a minute.", flags: 64 as const };
+        if (interaction.deferred || interaction.replied) await interaction.followUp(msg).catch(() => {});
+        else await interaction.reply(msg).catch(() => {});
       }
       return;
     }

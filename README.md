@@ -514,11 +514,33 @@ MIT
 
 When `KCOPS_GATE_URL` (the kc-ops gate's internal API, e.g. `http://kc-gate.kc-ops.svc:8081`) and
 `KCOPS_GATE_TOKEN` are set, the bot adds `/access` and `/kc` for KawaConnect's ops platform
-(GitLab `dean/kc-ops`). After someone signs in with Microsoft, the bot DMs them "Is this you?" with It's me / Not me
-buttons; the session starts only after It's me. Staff extension requests from the web app reach the owner
-as DMs with Grant / Deny. The gate decides who gets a link, for how long, and whether a button press came
-from the owner; the bot only relays Discord events and delivers messages. `KCOPS_OWNER_USER_ID` is the owner: approval buttons and the audit log arrive as DMs to them. Sign-in links are sent only by DM,
-never logged, with link previews suppressed.
+(GitLab `dean/kc-ops`). The gate decides who gets a link, for how long, and whether a button press came from the
+owner; the bot only relays Discord events and delivers messages.
+
+**The bot never sends a direct message to anyone but the owner** (`KCOPS_OWNER_USER_ID`). Staff see everything in
+the access channel (`KCOPS_ACCESS_CHANNEL_ID`, required for this) in messages only they can see:
+
+- `/access` (or the **Request access** button, posted once by the owner with `/kc panel`) answers with an ephemeral
+  reply: the one-time sign-in link, or "asked Dean". Links are never posted publicly, never logged, previews off.
+- After the Microsoft sign-in, "Is this you?" with It's me / Not me arrives as an ephemeral follow-up to that same
+  interaction; the session starts only after It's me. Later results (approved, declined, extended, elevation
+  decided, session ended) arrive the same way while the interaction is open (Discord allows 15 minutes).
+- When no interaction of that person is open, the bot posts a public line that mentions them, carries no detail and
+  has a button: **Show my link** (the gate issues a fresh one-time link to the requester only) or **Show details**
+  (the gate returns the message only to the person it is for). Anyone else pressing it gets an ephemeral refusal.
+- Someone typing a request in the access channel gets a short public hint to use `/access` (no link).
+- The public "signed in to kc-ops until ..." announcement is kept for staff.
+
+The owner asks for access by sending the bot a DM: `access` or `access <minutes>`. The link comes back in that DM
+and nothing is posted or announced anywhere. Owner approval prompts (new person, access request, session extension)
+follow `/kc notify`; security alerts and the audit log stay in the owner's DMs. A DM to the bot from anyone else
+gets no reply.
+
+Discord application settings: the bot now also uses the **Direct Messages** gateway intent (not privileged, nothing
+to enable in the Developer Portal) and reads message text in the access channel, which needs the **Message Content**
+privileged intent the bot already has for ticket threads. Commands are registered at start-up (`/kc panel` is new).
+The bot needs View Channel, Send Messages and Manage Messages (to remove its own pointers; optional) in the access
+channel. Deploy the kc-ops gate with `/internal/link` and `/internal/notice` before this bot version.
 
 Elevation (kc-ops chats asking for time-limited cluster administration): the gate queues the prompt; the owner's own
 chats arrive as a DM, staff chats are posted in the access channel (owner DM if that fails), both with Approve 30 min

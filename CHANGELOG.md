@@ -3,6 +3,24 @@
 All notable changes to this project are documented in this file.
 
 
+## [Unreleased]
+
+### Changed
+- kc-ops: the bot no longer sends direct messages to staff. Sign-in links, the "Is this you?" confirmation and every
+  notice are shown in the access channel in messages only that person can see (ephemeral replies and follow-ups);
+  when no interaction is open, a public pointer without detail carries a **Show my link** / **Show details** button
+  that answers only its person (gate `/internal/link`, `/internal/notice`). The owner asks for access by DM
+  (`access [minutes]`) and nothing is announced for him. `/kc panel` posts a **Request access** button. Typed
+  requests in the access channel get a hint to use `/access`. Needs the Direct Messages intent (not privileged).
+
+### Fixed
+- kc-ops: the owner prompt for a standard access request (one hour or less) had only a Deny button, so it could
+  never be approved and expired after 30 minutes. The asked time is now always offered.
+- kc-ops: the new-person prompt gets its Approve / Block buttons also when the gate names the person in the
+  message's `discord_id` instead of its payload.
+- kc-ops: undeliverable messages for a person and channel announcements are retried (by age) instead of dropped on
+  the first failure; a failed button press says kc-ops is not reachable instead of "interaction failed".
+
 ## [1.4.0] - 2026-11-08
 
 ### Added
