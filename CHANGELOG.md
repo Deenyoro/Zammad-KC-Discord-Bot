@@ -3,6 +3,18 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.7.1] - 2026-11-11
+
+### Fixed
+- Links in HTML emails and notes reach the ticket thread. The HTML-to-text conversion dropped every `<a href>`, so an
+  HTML-only email's button (e.g. a Claude "Sign in" magic link or "Accept invite") arrived as the bare word with no
+  link. Links are now kept inline as `[text](<url>)`, or `<url>` when the text is the address itself (`text: <url>`
+  when the text looks like a different address, which Discord would not show as a masked link). The angle brackets
+  stop Discord from adding a preview embed for every footer link. Image-only links without alt text (logos, social
+  icons, tracking pixels) are left out; `mailto:` links show their text.
+- Long messages are never split inside a link (the split moves to just before it; only a single link longer than a
+  whole message is still cut), and the quoted-context spoiler is truncated before a link instead of through it.
+
 ## [1.7.0] - 2026-11-11
 
 ### Changed
