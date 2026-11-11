@@ -3,7 +3,7 @@
 All notable changes to this project are documented in this file.
 
 
-## [Unreleased]
+## [1.7.0] - 2026-11-11
 
 ### Changed
 - kc-ops: Dean is silent. When the owner presses Approve/Deny/Grant/Block on a prompt in the access channel, the
