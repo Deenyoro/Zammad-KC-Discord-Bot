@@ -135,7 +135,11 @@ test("owner approves while the requester's interaction is open: the link is a pr
   assert.equal(staff.calls.followUps[0].flags, MessageFlags.Ephemeral);
   assert.ok(staff.calls.followUps[0].content.includes(LINK));
   assert.equal(posts.length, before); // nothing public
-  assert.match(text(owner.calls.edits[0]), /Granted 1 h\.$/);
+  // Dean is silent: the channel prompt is removed and the result is shown to him alone
+  assert.equal(owner.calls.edits.length, 0);
+  assert.equal(owner.calls.deleted, 1);
+  assert.equal(owner.calls.followUps[0].flags, MessageFlags.Ephemeral);
+  assert.match(text(owner.calls.followUps[0]), /Granted 1 h\.$/);
   for (const x of [...posts, ...dms]) assert.ok(!text(x.m).includes("SECRETTOKEN"));
   noStaffDm(dms);
 });

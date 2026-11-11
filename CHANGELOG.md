@@ -3,6 +3,18 @@
 All notable changes to this project are documented in this file.
 
 
+## [Unreleased]
+
+### Changed
+- kc-ops: Dean is silent. When the owner presses Approve/Deny/Grant/Block on a prompt in the access channel, the
+  prompt is removed and the result is shown only to him (ephemeral); in his DMs the prompt is edited as before. His
+  own sign-ins and elevations were already never announced (the gate queues nothing about him).
+- kc-ops: a staff member's first `/access` of the day asks for the whole day (10 hours by default) and the green
+  button grants it in one click; later sign-ins within that day get a link without a new prompt (decided by the gate).
+  `/access` and `/kc default` descriptions say so.
+- kc-ops: self-service elevation notices ("X elevated chat ... until ...", and its end) from the gate are posted as
+  plain access-channel messages without buttons; mentions are shown, never pinged.
+
 ## [1.6.0] - 2026-11-10
 
 ### Changed

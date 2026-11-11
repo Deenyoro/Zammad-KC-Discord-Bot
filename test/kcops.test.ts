@@ -224,13 +224,14 @@ test("platform-forged elevation notices never get buttons", async () => {
   for (const x of [...dms, ...posts]) assert.deepEqual(x.m.components, []);
 });
 
-function fakeButton(customId: string, userId: string) {
-  const calls: any = { edits: [], followUps: [], deferred: 0 };
+function fakeButton(customId: string, userId: string, inChannel = false) {
+  const calls: any = { edits: [], followUps: [], deferred: 0, deleted: 0 };
   const interaction: any = {
     customId,
     user: { id: userId },
     channelId: "300000",
-    message: { content: "<@2001> asks for edit for 1 h." },
+    inGuild: () => inChannel,
+    message: { content: "<@2001> asks for edit for 1 h.", delete: async () => { calls.deleted++; } },
     deferUpdate: async () => { calls.deferred++; },
     editReply: async (m: any) => calls.edits.push(m),
     followUp: async (m: any) => calls.followUps.push(m),
@@ -238,7 +239,7 @@ function fakeButton(customId: string, userId: string) {
   return { interaction, calls };
 }
 
-test("elevation button: relays presser and choice; ok edits the message and removes buttons", async () => {
+test("elevation button in the owner's DM: relays presser and choice; ok edits the message and removes buttons", async () => {
   const seen: any[] = [];
   setFetchForTests((async (url: any, init: any) => {
     seen.push({ url: String(url), body: JSON.parse(init.body) });
@@ -331,4 +332,44 @@ test("elevation reason is inert: escaped, fenced, no mentions or links (review M
   assert.ok(t.startsWith("WARNING: chat read \\*untrusted\\* content"));
   assert.ok(t.endsWith("```text\ndrop tables\n```"));
   assert.equal(inertReason(undefined), "(none)");
+});
+
+test("owner decides an elevation prompt in the access channel: nothing is shown to the channel", async () => {
+  setFetchForTests((async () => new Response(JSON.stringify({ ok: true, text: "Granted 1 h (until 14:05)." }))) as any);
+  const { interaction, calls } = fakeButton("kcops:elev:6:60", "100000", true);
+  await handleKcopsButton(interaction);
+  assert.equal(calls.edits.length, 0);                 // the public prompt is not edited to show the decision
+  assert.equal(calls.deleted, 1);                      // it is removed
+  assert.equal(calls.followUps.length, 1);
+  assert.equal(calls.followUps[0].flags, MessageFlags.Ephemeral);
+  assert.match(calls.followUps[0].content, /Granted 1 h/);
+});
+
+test("a first sign-in of the day: the green button approves the whole 10-hour day", () => {
+  const ids = (extensionButtons(42, 600).toJSON() as any).components.map((c: any) => [c.custom_id, c.label, c.style]);
+  assert.deepEqual(ids[0], ["kcops:ext:42:600", "Grant 10 h", 3]);
+  assert.deepEqual(ids.map((x: any) => x[0]), ["kcops:ext:42:600", "kcops:ext:42:240", "kcops:ext:42:120", "kcops:ext:42:deny"]);
+});
+
+test("self-elevation notices from the gate are plain channel posts without buttons", async () => {
+  let acked: number[] = [];
+  setFetchForTests((async (url: any, init: any) => {
+    const path = new URL(String(url)).pathname;
+    if (path === "/internal/outbox") {
+      return new Response(JSON.stringify({ items: [
+        { id: 31, target: "channel", discord_id: null, kind: "announce", age: 1, deliver: "channel",
+          text: "<@2001> elevated kc-ops chat abcd1234 (cluster manager) until <t:1:t> (end of their session).",
+          payload: { elevation_id: 9 } },
+      ] }));
+    }
+    acked = JSON.parse(init.body).ids;
+    return new Response(JSON.stringify({ ok: true }));
+  }) as any);
+  const { client, dms, posts } = fakeClient();
+  assert.equal(await deliverOutbox(client), 1);
+  assert.deepEqual(acked, [31]);
+  assert.equal(dms.length, 0);
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0].m.components, []);
+  assert.deepEqual(posts[0].m.allowedMentions, { parse: [] });      // shown, never pinged
 });

@@ -9,6 +9,11 @@
  * interaction of theirs is still open (its token lasts 15 minutes), the bot posts a public line with no detail
  * and a button; pressing it shows the content to that person only (the gate checks it is theirs). The owner
  * asks for access by sending the bot a DM and is answered there.
+ *
+ * Dean is silent (owner 2026-11-11): nothing the owner does is posted in a channel. When he presses a decision
+ * button on a prompt in the access channel, the prompt is removed and the result is shown to him alone; his own
+ * sign-ins and elevations are never announced (the gate queues no channel notice about him). Staff sign-ins (the
+ * start of their day) and staff self-elevations are posted as plain notices.
  */
 import {
   ActionRowBuilder,
@@ -56,9 +61,9 @@ export function forgetInteractionsForTests(): void {
 
 export const accessCommand = new SlashCommandBuilder()
   .setName("access")
-  .setDescription("Get a one-time kc-ops sign-in link (default length; ask for more and Dean decides)")
+  .setDescription("Get a one-time kc-ops sign-in link (Dean approves your first sign-in of the day: a 10-hour day)")
   .addIntegerOption((o) =>
-    o.setName("minutes").setDescription("Session length you need (over the default needs Dean's approval; staff max 720)").setMinValue(1).setMaxValue(2880)
+    o.setName("minutes").setDescription("Session length (default: your whole day; more than the day needs Dean again; staff max 720)").setMinValue(1).setMaxValue(2880)
   );
 
 export const kcCommand = new SlashCommandBuilder()
@@ -78,7 +83,7 @@ export const kcCommand = new SlashCommandBuilder()
         .addChoices({ name: "Access channel and DMs", value: "both" }, { name: "Access channel only", value: "channel" }, { name: "DMs only", value: "dm" }))
   )
   .addSubcommand((s) =>
-    s.setName("default").setDescription("Set the default session length")
+    s.setName("default").setDescription("Set the length of a staff day session (default 600 = 10 h)")
       .addIntegerOption((o) => o.setName("minutes").setDescription("Minutes (5-720)").setRequired(true).setMinValue(5).setMaxValue(720))
   )
   .addSubcommand((s) => s.setName("panel").setDescription("Post the Request access button in the access channel"))
@@ -106,8 +111,8 @@ export function kcopsCommands() {
 
 /**
  * Button ids: kcops:ext:<requestId>:<minutes|deny>, kcops:person:<discordId>:<approve|block>.
- * Always offers the time that was asked for (a standard one-hour request used to get a Deny button only), plus up
- * to two shorter choices.
+ * The first (green) button is the time that was asked for: a first sign-in of the day asks for the whole day
+ * (10 h by default), so one click approves the full day. Up to two shorter choices follow.
  */
 export function extensionButtons(requestId: number, asked: number) {
   const opts = Array.from(new Set([asked, 240, 120, 60].filter((m) => m > 0 && m <= asked))).sort((a, b) => b - a).slice(0, 3);
@@ -257,11 +262,11 @@ async function requestAccess(interaction: ChatInputCommandInteraction | ButtonIn
   rememberInteraction(interaction.user.id, interaction);
   if (r.kind === "pending_owner") {
     const asked = await ownerPrompt(interaction.client, {
-      content: `<@${interaction.user.id}> asks for a ${fmt(r.minutes)} kc-ops session.`,
+      content: `<@${interaction.user.id}> asks to start a ${fmt(r.minutes)} kc-ops session (later sign-ins in that time need no approval).`,
       components: [extensionButtons(r.request_id, r.minutes)],
     });
     await interaction.editReply(asked
-      ? `Asked Dean to approve ${fmt(r.minutes)} of kc-ops access. When he answers I'll show it here, in a message only you can see.`
+      ? `Asked Dean to approve ${fmt(r.minutes)} of kc-ops access. When he answers I'll show it here, in a message only you can see. Signing in again within that time needs no new approval.`
       : "Your request is recorded, but I couldn't reach Dean in Discord just now. Message him yourself, or run /access again in a few minutes.");
     return;
   }
@@ -309,6 +314,20 @@ export async function handleKc(interaction: ChatInputCommandInteraction): Promis
   await interaction.editReply("ok" in r ? r.text : r.reason);
 }
 
+/**
+ * The owner decided on a prompt. In a DM the prompt is edited to show the result (only he sees it). In a channel
+ * the result is never shown to others: the prompt (and its buttons) is removed and the result is shown to him in a
+ * message only he can see.
+ */
+async function ownerDecided(interaction: ButtonInteraction, result: string): Promise<void> {
+  if (interaction.inGuild()) {
+    await interaction.message.delete().catch((err: unknown) => logger.warn({ err: String(err) }, "kc-ops prompt delete failed"));
+    await interaction.followUp({ content: `${interaction.message.content}\n${result}`, ...PRIVATE });
+    return;
+  }
+  await interaction.editReply({ content: `${interaction.message.content}\n${result}`, components: [], allowedMentions: { parse: [] } });
+}
+
 export async function handleKcopsButton(interaction: ButtonInteraction): Promise<void> {
   const b = parseButton(interaction.customId);
   if (!b) return;
@@ -346,18 +365,22 @@ export async function handleKcopsButton(interaction: ButtonInteraction): Promise
   if (b.type === "elev") {
     const r = await gate.elevation({ elevation_id: b.elevationId, actor_id: interaction.user.id, minutes: b.minutes });
     if ("ok" in r) {
-      await interaction.editReply({ content: `${interaction.message.content}\n${r.text}`, components: [], allowedMentions: { parse: [] } });
+      await ownerDecided(interaction, r.text);
     } else {
       // Refused (e.g. not the owner): buttons stay so the owner can still decide.
       await interaction.followUp({ content: r.reason, flags: MessageFlags.Ephemeral });
     }
     return;
   }
-  if (b.type === "login" || b.type === "sext") {
-    const r = b.type === "login"
-      ? await gate.loginConfirm({ login_id: b.loginId, actor_id: interaction.user.id, answer: b.answer })
-      : await gate.sessionExtension({ extension_id: b.extensionId, actor_id: interaction.user.id, minutes: b.minutes });
+  if (b.type === "login") {
+    const r = await gate.loginConfirm({ login_id: b.loginId, actor_id: interaction.user.id, answer: b.answer });
     await interaction.editReply({ content: `${interaction.message.content}\n${"ok" in r ? r.text : r.reason}`, components: [], allowedMentions: { parse: [] } });
+    return;
+  }
+  if (b.type === "sext") {
+    const r = await gate.sessionExtension({ extension_id: b.extensionId, actor_id: interaction.user.id, minutes: b.minutes });
+    if ("ok" in r) await ownerDecided(interaction, r.text);
+    else await interaction.followUp({ content: r.reason, flags: MessageFlags.Ephemeral });
     return;
   }
   if (b.type === "ext") {
@@ -368,7 +391,7 @@ export async function handleKcopsButton(interaction: ButtonInteraction): Promise
     }
     if (r.kind === "denied") {
       // The gate queues the "declined" notice for the requester; it is delivered like every other notice.
-      await interaction.editReply({ content: `${interaction.message.content}\nDenied.`, components: [], allowedMentions: { parse: [] } });
+      await ownerDecided(interaction, "Denied.");
       return;
     }
     const ok = await showPrivately(interaction.client, r.discord_id, { content: linkMessage(r.url, r.minutes) }, {
@@ -376,12 +399,12 @@ export async function handleKcopsButton(interaction: ButtonInteraction): Promise
       label: "Show my link",
       customId: `kcops:link:${b.requestId}`,
     });
-    await interaction.editReply({ content: `${interaction.message.content}\nGranted ${fmt(r.minutes)}${ok ? "" : " (I could not tell them; ask them to run /access again)"}.`, components: [], allowedMentions: { parse: [] } });
+    await ownerDecided(interaction, `Granted ${fmt(r.minutes)}${ok ? "" : " (I could not tell them; ask them to run /access again)"}.`);
     return;
   }
   const r = await gate.owner({ command: b.action, actor_id: interaction.user.id, channel_id: interaction.channelId, target_id: b.discordId });
   if ("ok" in r) {
-    await interaction.editReply({ content: `${interaction.message.content}\n${r.text}`, components: [], allowedMentions: { parse: [] } });
+    await ownerDecided(interaction, r.text);
   } else {
     await interaction.followUp({ content: r.reason, flags: MessageFlags.Ephemeral });
   }
