@@ -50,6 +50,7 @@ import {
   parseImgPx,
 } from "../util/inlineImages.js";
 import { convertHeicToJpeg } from "../util/fileConvert.js";
+import { protectLinks, restoreLinks, safeCutIndex } from "../util/htmlLinks.js";
 
 // Re-exported for existing importers; the implementation lives in util/inlineImages.
 export { isDecorativeImage, parseImgPx };
@@ -773,9 +774,18 @@ function renderContextNote(article: { body: string; from?: string }): string {
   return `📜 **Earlier conversation**${source}\n${quoted}`;
 }
 
-/** Convert HTML to plain text with basic formatting. */
+/**
+ * Convert HTML to plain text with basic formatting. Links are kept inline as
+ * Discord markdown (see util/htmlLinks.ts): an HTML-only email's "Sign in"
+ * button must reach the thread with its link, not as the bare word.
+ */
 function stripHtml(html: string | undefined | null): string {
   if (!html) return "";
+  const { html: protectedHtml, links } = protectLinks(html);
+  return restoreLinks(htmlToText(protectedHtml), links).trim();
+}
+
+function htmlToText(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>/gi, "\n")
@@ -847,7 +857,8 @@ export function renderEmailArticle(
   const MAX_CONTEXT_LEN = 800;
   let truncatedContext = contextText;
   if (truncatedContext.length > MAX_CONTEXT_LEN) {
-    truncatedContext = truncatedContext.slice(0, MAX_CONTEXT_LEN).trimEnd() + "…";
+    // Never cut a link in half: stop before it instead.
+    truncatedContext = truncatedContext.slice(0, safeCutIndex(truncatedContext, MAX_CONTEXT_LEN)).trimEnd() + "…";
   }
 
   // Sanitize: escape spoiler delimiters and collapse blank lines
