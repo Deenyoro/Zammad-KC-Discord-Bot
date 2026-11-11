@@ -12,6 +12,7 @@ Built for [Zammad-KC](https://github.com/Deenyoro/zammad-kc) (which adds SMS, Te
 - **Real-time sync** - Zammad webhooks push new articles, state changes, and title updates to Discord instantly
 - **Bidirectional messaging** - messages in a ticket thread become Zammad internal notes; Zammad articles appear in Discord
 - **Full attachment support** - images, documents, and files sync in both directions (up to 25 MB)
+- **Links kept** - links in HTML emails and notes are shown inline as `[text](<url>)` (no preview embeds), so a button-only email such as a sign-in / magic-link email is usable from the thread; long messages are split between links, never inside one
 - **Inline images** - images embedded in an article body (Zammad `ticket_attachment` URLs, `cid:` references, `data:` URIs) are posted as Discord image attachments, for emails and notes alike. Images in a reply's quoted chain are posted too, but an image is posted only once per ticket (matched by content), so quoted copies of earlier screenshots are not repeated. HEIC images are converted to JPEG when the bundled image library can decode them
 - **All notes** - every Zammad note reaches the thread, internal or public, agent or System (e.g. Zammad-KC call activity notes); only System-sender non-note articles (trigger auto-replies) are skipped
 - **Multi-channel replies** - `/reply` auto-detects whether a ticket is email, SMS (RingCentral), or Teams and sends via the correct channel

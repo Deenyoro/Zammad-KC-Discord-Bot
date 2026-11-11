@@ -1,3 +1,5 @@
+import { safeCutIndex } from "./htmlLinks.js";
+
 /**
  * Truncate a string to a maximum length, appending an ellipsis if truncated.
  * Discord embed limits:
@@ -11,7 +13,8 @@ export function truncate(str: string, max: number): string {
 
 /**
  * Split a long message into chunks that fit within Discord's 2000 char limit.
- * Tries to split at natural boundaries (newlines, then spaces) for readability.
+ * Tries to split at natural boundaries (newlines, then spaces) for readability,
+ * and never inside a link.
  */
 export function splitMessage(text: string, maxLength = 2000): string[] {
   if (text.length <= maxLength) return [text];
@@ -40,6 +43,11 @@ export function splitMessage(text: string, maxLength = 2000): string[] {
       }
       // Otherwise just hard split at maxLength
     }
+
+    // Never split inside a link (URLs and [label](<url>) can be long):
+    // move the split to just before it, unless the link alone is too long.
+    const safe = safeCutIndex(remaining, splitIndex);
+    if (safe > 0) splitIndex = safe;
 
     chunks.push(remaining.slice(0, splitIndex).trimEnd());
     remaining = remaining.slice(splitIndex).trimStart();
