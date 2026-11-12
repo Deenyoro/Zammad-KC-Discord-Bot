@@ -1,6 +1,6 @@
 {
   "name": "zammad-kc-discord-bot",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Discord bot bridging Zammad tickets to Discord threads",
   "main": "dist/index.js",
   "scripts": {

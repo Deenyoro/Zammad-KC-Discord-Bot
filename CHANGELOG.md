@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.7.2] - 2026-11-12
+
+### Fixed
+- A Discord thread message that is only a picture or a file now reaches the ticket. Zammad refuses a note without a
+  body ("Need at least an 'article body' field"), so such messages were dropped (seen on #188507, 10044, 9974); the
+  note now says "Attached from Discord: <files>".
+- Files not copied (too large, too many, download failed) are named in the note instead of disappearing silently.
+
 ## [1.7.1] - 2026-11-11
 
 ### Fixed
