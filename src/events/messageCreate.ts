@@ -61,14 +61,20 @@ async function forwardToZammad(
   const MAX_ATTACHMENT_COUNT = limits.maxCount;
   let totalBytes = 0;
   const attachments: ArticleAttachment[] = [];
+  const skipped: string[] = [];   // named in the note, so nobody thinks they reached the ticket
   for (const [, att] of message.attachments) {
-    if (attachments.length >= MAX_ATTACHMENT_COUNT) break;
+    if (attachments.length >= MAX_ATTACHMENT_COUNT) {
+      skipped.push(`${att.name ?? "attachment"} (more than ${MAX_ATTACHMENT_COUNT} files)`);
+      continue;
+    }
     if (att.size > MAX_ATTACHMENT_BYTES) {
       logger.warn({ filename: att.name, size: att.size }, "Skipping oversized Discord attachment");
+      skipped.push(`${att.name ?? "attachment"} (${(att.size / 1048576).toFixed(1)} MB, over the per-file limit)`);
       continue;
     }
     if (totalBytes + att.size > MAX_TOTAL_BYTES) {
       logger.warn({ filename: att.name, size: att.size, totalBytes }, "Skipping attachment — total budget exceeded");
+      skipped.push(`${att.name ?? "attachment"} (over the total size limit)`);
       continue;
     }
     try {
@@ -86,16 +92,19 @@ async function forwardToZammad(
       });
     } catch (err) {
       logger.warn({ filename: att.name, err }, "Failed to download Discord attachment");
+      skipped.push(`${att.name ?? "attachment"} (download failed)`);
     }
   }
 
-  if (!expandedBody.trim() && attachments.length === 0) return; // nothing to forward
+  if (!expandedBody.trim() && attachments.length === 0 && skipped.length === 0) return; // nothing to forward
+  const fullBody = body + attachmentNote(attachments.map((a) => a.filename), skipped, !expandedBody.trim(),
+                                         contentType === "text/html");
 
   // Thread messages are always internal notes — use /reply to send externally.
   // This prevents accidental outbound messages to customers via Teams/SMS/email.
   const article = await createArticle({
     ticket_id: ticketId,
-    body,
+    body: fullBody,
     type: "note",
     sender: "Agent",
     internal: true,
@@ -116,4 +125,16 @@ async function forwardToZammad(
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+}
+
+/** Zammad refuses an article without a body ("Need at least an 'article body' field"), so a Discord message that
+ *  is only a picture or a file was lost (2026-11-12). Such a note says what is attached; files not copied are
+ *  always named. */
+export function attachmentNote(sent: string[], skipped: string[], noText: boolean, html: boolean): string {
+  const lines: string[] = [];
+  if (noText && sent.length) lines.push(`Attached from Discord: ${sent.join(", ")}`);
+  if (skipped.length) lines.push(`Not copied from Discord (still in the Discord thread): ${skipped.join("; ")}`);
+  if (!lines.length) return "";
+  if (html) return lines.map((l) => `<p><em>${escapeHtml(l)}</em></p>`).join("");
+  return (noText ? "" : "\n\n") + lines.join("\n");
 }
