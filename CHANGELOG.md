@@ -3,6 +3,10 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.7.3] - 2026-11-13
+
+### Fixed
+
 ## [1.7.2] - 2026-11-12
 
 ### Fixed
