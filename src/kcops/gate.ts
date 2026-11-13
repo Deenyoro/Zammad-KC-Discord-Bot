@@ -69,7 +69,8 @@ export const gate = {
   link: (b: { request_id: number; discord_id: string }) => call<LinkResult>("POST", "/internal/link", b),
   /** "Show details": the text of a message queued for this person (the gate checks it is theirs). */
   notice: (b: { id: number; discord_id: string }) => call<NoticeResult>("POST", "/internal/notice", b),
-  owner: (b: { command: string; actor_id: string; channel_id: string; target_id?: string; days?: number | null; minutes?: number | null; route?: string | null; chat?: string }) =>
+  owner: (b: { command: string; actor_id: string; channel_id: string; target_id?: string; days?: number | null; minutes?: number | null; route?: string | null; chat?: string;
+    approval_id?: string; args_hash?: string; decision?: "approve" | "deny" }) =>
     call<OwnerResult>("POST", "/internal/owner", b),
   loginConfirm: (b: { login_id: number; actor_id: string; answer: "yes" | "no" }) =>
     call<OwnerResult>("POST", "/internal/login-confirm", b),

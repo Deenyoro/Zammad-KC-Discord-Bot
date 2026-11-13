@@ -165,12 +165,28 @@ export function elevationText(text: string, reason: unknown): string {
 /** Elevation prompt buttons: kcops:elev:<elevationId>:<30|60|120|deny>. Only the owner's press is accepted (gate checks). */
 export const ELEVATION_MINUTES = [30, 60, 120] as const;
 
-export function elevationButtons(elevationId: number) {
+export function elevationButtons(elevationId: number, wholeSignIn = false) {
+  if (wholeSignIn) {
+    // Owner powers for trusted staff last the rest of their sign-in whatever is picked: one clear choice.
+    return new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`kcops:elev:${elevationId}:120`).setLabel("Approve for this sign-in").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`kcops:elev:${elevationId}:deny`).setLabel("Deny").setStyle(ButtonStyle.Danger)
+    );
+  }
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     ...ELEVATION_MINUTES.map((m, i) =>
       new ButtonBuilder().setCustomId(`kcops:elev:${elevationId}:${m}`).setLabel(`Approve ${fmt(m)}`).setStyle(i === 1 ? ButtonStyle.Success : ButtonStyle.Primary)
     ),
     new ButtonBuilder().setCustomId(`kcops:elev:${elevationId}:deny`).setLabel("Deny").setStyle(ButtonStyle.Danger)
+  );
+}
+
+/** A staff tool call waiting for the owner: kcops:appr:<approvalId>:<argsHash prefix>:<a|d> (owner only, gate checks). */
+export function approvalButtons(approvalId: string, argsHash: string) {
+  const h = argsHash.slice(0, 16);
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`kcops:appr:${approvalId}:${h}:a`).setLabel("Approve").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`kcops:appr:${approvalId}:${h}:d`).setLabel("Deny").setStyle(ButtonStyle.Danger)
   );
 }
 
@@ -192,6 +208,7 @@ export function parseButton(id: string):
   | { type: "sext"; extensionId: number; minutes: number | null }
   | { type: "ext"; requestId: number; minutes: number | null }
   | { type: "person"; discordId: string; action: "approve" | "block" }
+  | { type: "appr"; approvalId: string; argsHash: string; decision: "approve" | "deny" }
   | null {
   if (id === REQUEST_BUTTON) return { type: "request" };
   const k = /^kcops:link:(\d{1,18})$/.exec(id);
@@ -206,6 +223,8 @@ export function parseButton(id: string):
   if (x) return { type: "sext", extensionId: Number(x[1]), minutes: x[2] === "deny" ? null : Number(x[2]) };
   const m = /^kcops:ext:(\d{1,18}):(\d{1,4}|deny)$/.exec(id);
   if (m) return { type: "ext", requestId: Number(m[1]), minutes: m[2] === "deny" ? null : Number(m[2]) };
+  const a = /^kcops:appr:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):([0-9a-f]{12,16}):(a|d)$/.exec(id);
+  if (a) return { type: "appr", approvalId: a[1], argsHash: a[2], decision: a[3] === "a" ? "approve" : "deny" };
   const p = /^kcops:person:(\d{5,20}):(approve|block)$/.exec(id);
   if (p) return { type: "person", discordId: p[1], action: p[2] as "approve" | "block" };
   return null;
@@ -362,6 +381,16 @@ export async function handleKcopsButton(interaction: ButtonInteraction): Promise
   }
   await interaction.deferUpdate();
   if (b.type === "login") rememberInteraction(interaction.user.id, interaction);
+  if (b.type === "appr") {
+    const r = await gate.owner({ command: "approval_decide", actor_id: interaction.user.id, channel_id: interaction.channelId,
+      approval_id: b.approvalId, args_hash: b.argsHash, decision: b.decision });
+    if ("ok" in r) {
+      await ownerDecided(interaction, r.text);
+    } else {
+      await interaction.followUp({ content: r.reason, flags: MessageFlags.Ephemeral });
+    }
+    return;
+  }
   if (b.type === "elev") {
     const r = await gate.elevation({ elevation_id: b.elevationId, actor_id: interaction.user.id, minutes: b.minutes });
     if ("ok" in r) {
@@ -421,8 +450,8 @@ async function dmOwner(client: Client, msg: { content: string; components?: Acti
   }
 }
 
-// Last approval route the gate reported (refreshed on every outbox poll).
-let approvalRoute: ApprovalRoute = "both";
+// Last approval route the gate reported (refreshed on every outbox poll). Default: the owner's DMs only.
+let approvalRoute: ApprovalRoute = "dm";
 
 /** Owner approval prompt: to the access channel and/or the owner's DMs. Buttons only act for the owner (the gate checks). */
 async function ownerPrompt(client: Client, msg: { content: string; components?: ActionRowBuilder<ButtonBuilder>[] }): Promise<boolean> {
@@ -476,7 +505,7 @@ export async function deliverOutbox(client: Client): Promise<number> {
       const eid = typeof it.payload?.elevation_id === "number" ? it.payload.elevation_id : null;
       if (it.kind === "elevation" && eid !== null && (it.target === "owner" || it.target === "channel")) {
         // Gate-queued elevation prompt: owner chats by DM, staff chats in the access channel (fallback: owner DM).
-        const rows = [elevationButtons(eid)];
+        const rows = [elevationButtons(eid, /for the rest of their sign-in|every chat of this sign-in/.test(it.text))];
         const ch = env().KCOPS_ACCESS_CHANNEL_ID;
         const content = elevationText(it.text, it.payload?.reason);
         let ok = it.target === "channel" && Boolean(ch) && (await postChannel(client, ch!, content, rows));
@@ -513,7 +542,10 @@ export async function deliverOutbox(client: Client): Promise<number> {
         : it.kind === "approve_person" && it.discord_id ? it.discord_id : null; // older gates put it in the column
       const msg = {
         content: it.target === "audit" ? `log: ${it.text}` : it.text,
-        components: it.kind === "approve_person" && pid ? [personButtons(pid)]
+        components: it.kind === "platform_approval" && typeof it.payload?.approval_id === "string"
+            && typeof it.payload?.args_hash === "string"
+          ? [approvalButtons(it.payload.approval_id, it.payload.args_hash)]
+          : it.kind === "approve_person" && pid ? [personButtons(pid)]
           : it.kind === "session_extension" && typeof it.payload?.extension_id === "number"
             ? [sessionExtensionButtons(it.payload.extension_id, Number(it.payload.minutes) || 60)] : [],
       };

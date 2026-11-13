@@ -124,8 +124,9 @@ test("owner approves while the requester's interaction is open: the link is a pr
   const staff = fakeInteraction(client, STAFF);
   await k.handleAccess(staff.interaction);
   assert.match(text(staff.calls.edits[0]), /Asked Dean to approve 1 h/);
-  // the owner prompt: channel and owner DM (route "both"), with a button for the asked hour
-  const prompt = posts[0].m;
+  // the owner prompt: the owner's DM only (default route "dm" since 2026-11-13), with a button for the asked hour
+  assert.equal(posts.length, 0);
+  const prompt = dms.find((d) => d.id === OWNER)!.m;
   assert.deepEqual(buttonIds(prompt), ["kcops:ext:42:60", "kcops:ext:42:deny"]);
   assert.ok(dms.every((d) => d.id === OWNER));
   const before = posts.length;
