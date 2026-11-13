@@ -3,6 +3,13 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.7.3] - 2026-11-13
+
+### Fixed
+- kc-ops approvals actually reach Dean and work: staff tool approvals arrive in his DMs with Approve/Deny buttons
+  (needs kc-ops 0.11.29), elevation and owner-powers requests go to his DMs instead of the access channel, and the
+  default route is DMs only. An owner-powers request has one "Approve for this sign-in" button.
+
 ## [1.7.2] - 2026-11-12
 
 ### Fixed
