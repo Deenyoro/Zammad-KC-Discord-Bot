@@ -59,6 +59,12 @@ export function ticketsNeedingCatchup(
   return tickets.filter((t) => full || seen.get(t.id) !== t.updated_at).map((t) => t.id);
 }
 
+/** True when a ticket changed within the last 30 minutes (or its time cannot be read). Pure, for tests. */
+export function recentlyUpdated(updatedAt: string, now: number): boolean {
+  const at = new Date(updatedAt).getTime();
+  return Number.isNaN(at) || now - at < 30 * 60 * 1000;
+}
+
 export async function catchUpArticles(client: Client): Promise<void> {
   let tickets;
   try {
@@ -68,11 +74,12 @@ export async function catchUpArticles(client: Client): Promise<void> {
     return;
   }
   catchupPass++;
-  // First pass after start: only remember where every ticket stands. The full sync does the first catch-up
-  // once the bot has settled (bulk attachment downloads right after boot ran it out of memory before).
+  // First pass after start: tickets that have not moved recently are only remembered (the full sync does their
+  // first catch-up once the bot has settled; bulk attachment downloads right after boot ran it out of memory
+  // before). Tickets updated in the last 30 minutes are checked now: 1.7.7 remembered those too, so a message
+  // created while the bot restarted was treated as already seen and waited for the next full pass.
   if (catchupPass === 1) {
-    for (const t of tickets) catchupSeen.set(t.id, t.updated_at);
-    return;
+    for (const t of tickets) if (!recentlyUpdated(t.updated_at, Date.now())) catchupSeen.set(t.id, t.updated_at);
   }
   const ids = new Set(ticketsNeedingCatchup(tickets, catchupSeen, catchupPass % CATCHUP_FULL_EVERY === 0));
   let checked = 0;
