@@ -121,6 +121,19 @@ export interface WebhookPayload {
 // Main webhook handler
 // ---------------------------------------------------------------
 
+/**
+ * Which owner_id to trust when the fresh expand-fetch and the webhook payload disagree.
+ * Zammad's webhook-triggered fetches are frequently stale, so right after an assignment the
+ * fresh read can still show the ticket unassigned (owner_id 0/1). The webhook payload reflects
+ * the change that fired the hook, so when the fresh read says unassigned but the webhook shows an
+ * owner, trust the webhook, otherwise the thread would be renamed without the assignee's name.
+ * Every other case (genuine unassignment, unrelated updates) keeps the fresh read's owner.
+ */
+export function reconcileOwnerId(freshOwnerId: number | undefined, webhookOwnerId: number | undefined): number {
+  if ((freshOwnerId ?? 0) <= 1 && (webhookOwnerId ?? 0) > 1) return webhookOwnerId as number;
+  return freshOwnerId ?? 0;
+}
+
 export async function handleWebhook(
   client: Client,
   payload: WebhookPayload,
@@ -179,11 +192,19 @@ async function processWebhook(
   // The webhook payload does NOT include expanded data.
   const fullTicket = await getTicket(ticketId);
 
+  // Stale-read guard for the owner (mirrors the state guard below): the webhook
+  // payload reflects the change that fired the hook, but a fresh expand fetch can
+  // still return the pre-change owner_id (Zammad webhook-triggered fetches are
+  // frequently stale). If the fresh read shows unassigned while the webhook shows
+  // an owner, trust the webhook so an assignment doesn't strip the assignee's name
+  // off the thread.
+  const ownerId = reconcileOwnerId(fullTicket.owner_id, webhookTicket.owner_id);
+
   // Resolve owner/customer to "Firstname Lastname" via the users API
   let ownerName: string | undefined;
-  if (fullTicket.owner_id && fullTicket.owner_id > 1) {
+  if (ownerId && ownerId > 1) {
     try {
-      const owner = await getUser(fullTicket.owner_id);
+      const owner = await getUser(ownerId);
       ownerName = `${owner.firstname} ${owner.lastname}`.trim() || undefined;
     } catch {
       ownerName = undefined;
@@ -210,7 +231,7 @@ async function processWebhook(
     priority: fullTicket.priority,
     customer: customerName,
     owner: ownerName,
-    owner_id: fullTicket.owner_id,
+    owner_id: ownerId,
     group: fullTicket.group,
     created_at: fullTicket.created_at,
     escalation_at: fullTicket.escalation_at,
