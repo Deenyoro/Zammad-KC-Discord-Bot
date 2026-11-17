@@ -145,6 +145,38 @@ const NON_CLOSED_QUERY = [...CLOSED_STATE_NAMES]
   .map((s) => `!state.name:"${s}"`)
   .join(" AND ");
 
+// 2026-11-17: the negated query above does not filter on this Zammad. Every form tried (`!state.name:"closed"`,
+// `NOT state.name:closed`, `NOT state_id:4`) returned closed tickets too, so each sync paged through the whole
+// archive (50 pages, 75-190 s) and only the client-side filter kept the result right. Positive queries do
+// filter (`state_id:(1 OR 2 ...)`: 22 tickets in about a second), so the query is built from the ids of the
+// states that are not closed-equivalent. The negated query stays as the fallback if the states cannot be read.
+let openStateIds: { ids: number[]; at: number } | null = null;
+const STATE_CACHE_MS = 10 * 60 * 1000;
+
+/** Query for tickets in the given states. Pure, for tests. */
+export function stateIdQuery(states: Array<{ id: number; name: string; active?: boolean }>): string | null {
+  const ids = states
+    .filter((s) => s.active !== false && !CLOSED_STATE_NAMES.has(s.name.toLowerCase()))
+    .map((s) => s.id);
+  return ids.length > 0 ? `state_id:(${ids.join(" OR ")})` : null;
+}
+
+async function openTicketQuery(): Promise<string> {
+  try {
+    if (!openStateIds || Date.now() - openStateIds.at > STATE_CACHE_MS) {
+      const res = await zammadFetch(`/ticket_states`);
+      const states = (await res.json()) as Array<{ id: number; name: string; active?: boolean }>;
+      const q = stateIdQuery(states);
+      const ids = q ? states.filter((s) => s.active !== false && !CLOSED_STATE_NAMES.has(s.name.toLowerCase())).map((s) => s.id) : [];
+      openStateIds = { ids, at: Date.now() };
+    }
+    if (openStateIds.ids.length > 0) return `state_id:(${openStateIds.ids.join(" OR ")})`;
+  } catch (err) {
+    logger.warn({ err }, "Could not read ticket states; using the negated state query");
+  }
+  return NON_CLOSED_QUERY;
+}
+
 /**
  * Fetch all non-closed tickets via Zammad's search endpoint.
  *
@@ -159,11 +191,12 @@ export async function getAllOpenTickets(): Promise<ZammadTicket[]> {
   const all: ZammadTicket[] = [];
   let page = 1;
   const perPage = 100;
+  const query = await openTicketQuery();
   const MAX_PAGES = 50; // safety limit: 5 000 open tickets max
 
   while (page <= MAX_PAGES) {
     const res = await zammadFetch(
-      `/tickets/search?query=${encodeURIComponent(NON_CLOSED_QUERY)}` +
+      `/tickets/search?query=${encodeURIComponent(query)}` +
         `&expand=true&page=${page}&per_page=${perPage}`,
     );
     const batch = (await res.json()) as ZammadTicket[];
