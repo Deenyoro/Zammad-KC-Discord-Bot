@@ -713,21 +713,35 @@ export async function createScheduledArticle(data: {
   scheduled_at: string;
   article_type?: string;
   to?: string;
+  cc?: string;
+  subject?: string;
   content_type?: string;
+  /** Zammad agent who schedules (and later sends) it; defaults to the token owner. */
+  on_behalf_of?: number | null;
 }): Promise<KcScheduledArticle> {
-  const { ticket_id, body, scheduled_at, article_type, to, content_type } = data;
-  const res = await zammadFetch(`/kc/tickets/${ticket_id}/scheduled_articles`, {
-    method: "POST",
-    body: JSON.stringify({
-      article_data: {
-        body,
-        type: article_type || "note",
-        to,
-        content_type: content_type || "text/html",
-      },
-      scheduled_at,
-    }),
-  });
+  const { ticket_id, body, scheduled_at, article_type, to, cc, subject, content_type, on_behalf_of } = data;
+  const type = article_type || "note";
+  const res = await zammadFetch(
+    `/kc/tickets/${ticket_id}/scheduled_articles`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        article_data: {
+          body,
+          type,
+          sender: "Agent",
+          // A note stays internal; every customer channel (email, SMS, Teams) goes out.
+          internal: type === "note",
+          ...(to ? { to } : {}),
+          ...(cc ? { cc } : {}),
+          ...(subject ? { subject } : {}),
+          content_type: content_type || "text/html",
+        },
+        scheduled_at,
+      }),
+    },
+    { onBehalfOf: on_behalf_of ?? null },
+  );
   return res.json() as Promise<KcScheduledArticle>;
 }
 

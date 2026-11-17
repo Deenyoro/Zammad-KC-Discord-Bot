@@ -1,4 +1,5 @@
 import { ChatInputCommandInteraction, ThreadChannel } from "discord.js";
+import { addTicketNote } from "../services/ticketNotes.js";
 import { logger } from "../util/logger.js";
 import {
   getThreadByThreadId,
@@ -1471,6 +1472,26 @@ export async function handleHistory(interaction: ChatInputCommandInteraction) {
 // /schedule, /schedules, /unschedule
 // ---------------------------------------------------------------
 
+/** Parse a comma/semicolon/newline/pipe separated address list into bare emails. */
+function parseAddressList(input: string | null): { emails: string[]; invalid: string[] } {
+  const emails: string[] = [];
+  const invalid: string[] = [];
+  for (const raw of (input ?? "").split(/[,;\n|]+/).map((e) => e.trim()).filter(Boolean)) {
+    const parsed = parseEmailAddress(raw);
+    if (parsed) emails.push(parsed);
+    else invalid.push(raw);
+  }
+  return { emails: [...new Set(emails)], invalid };
+}
+
+const CHANNEL_LABELS: Record<string, string> = {
+  email: "email",
+  ringcentral_sms_message: "SMS (RingCentral)",
+  freepbx_sms_message: "SMS (FreePBX)",
+  teams_chat_message: "Teams",
+  note: "internal note",
+};
+
 export async function handleSchedule(interaction: ChatInputCommandInteraction) {
   const mapping = await requireMapping(interaction);
   if (!mapping) return;
@@ -1478,35 +1499,105 @@ export async function handleSchedule(interaction: ChatInputCommandInteraction) {
 
   const rawText = interaction.options.getString("text", true);
   const timeInput = interaction.options.getString("time", true);
-
-  // Expand ::shortcut text modules before scheduling
-  const { expanded: text, contentType } = await expandTextModules(rawText);
-  const scheduledAt = parseTime(timeInput);
-
-  if (!scheduledAt) {
-    await interaction.editReply(
-      'Could not parse time. Use formats like: `2h`, `1d`, `tomorrow 9am`, or an ISO date.'
-    );
+  const channelChoice = interaction.options.getString("channel") ?? "auto";
+  const toList = parseAddressList(interaction.options.getString("to"));
+  const ccList = parseAddressList(interaction.options.getString("cc"));
+  const bad = [...toList.invalid, ...ccList.invalid];
+  if (bad.length) {
+    await interaction.editReply(`Invalid email(s): ${bad.map((e) => `\`${e}\``).join(", ")}. Use \`/participants\` to see valid addresses.`);
     return;
   }
 
-  // Detect reply channel to set article type
-  const channel = await detectReplyChannel(mapping.ticket_id);
-  const articleType = channel?.type ?? "email";
+  const scheduledAt = parseTime(timeInput);
+  if (!scheduledAt) {
+    await interaction.editReply(
+      "Could not parse time. Use formats like `2h`, `tomorrow 9am`, `nov 24 9am`, `11/24`, `the 24th` or `2026-11-24 14:00`."
+    );
+    return;
+  }
+  if (new Date(scheduledAt).getTime() <= Date.now()) {
+    await interaction.editReply(`That time (${formatInBotTz(scheduledAt)}) is in the past. Pick a time in the future.`);
+    return;
+  }
 
-  await createScheduledArticle({
-    ticket_id: mapping.ticket_id,
-    body: text,
-    scheduled_at: scheduledAt,
-    article_type: articleType,
-    to: channel?.to,
-    content_type: contentType,
-  });
+  // Expand ::shortcut text modules before scheduling
+  const { expanded: text, contentType } = await expandTextModules(rawText);
+
+  // Work out the delivery channel now, so a reply that could never be
+  // delivered is refused here instead of failing silently when it is due.
+  let type: string;
+  let to: string | undefined;
+  let cc: string | undefined;
+  let label: string;
+  const wantsEmail = channelChoice === "email" || toList.emails.length > 0 || ccList.emails.length > 0;
+  if (channelChoice === "note") {
+    type = "note";
+    label = "internal note";
+  } else {
+    const detected = await detectReplyChannel(mapping.ticket_id);
+    if (wantsEmail || !detected || detected.type === "email") {
+      // Email: explicit recipients, else the customer's address.
+      let customerEmail: string | undefined;
+      if (!toList.emails.length) {
+        if (detected?.type === "email") customerEmail = detected.to;
+        else {
+          // SMS/Teams ticket forced to email: the customer's own address.
+          try {
+            const t = await getTicket(mapping.ticket_id);
+            const cust = t.customer_id && t.customer_id !== 1 ? await getUser(t.customer_id) : null;
+            customerEmail = cust?.email?.trim() || undefined;
+          } catch { /* handled below */ }
+        }
+      }
+      to = toList.emails.length ? toList.emails.join(", ") : customerEmail;
+      if (!to) {
+        await interaction.editReply(
+          "No email address to send to: this ticket has no email channel and the customer has no email. " +
+            "Add `to:` with an address, or use `channel: ticket's channel` for SMS/Teams."
+        );
+        return;
+      }
+      type = "email";
+      cc = ccList.emails.length ? ccList.emails.join(", ") : undefined;
+      label = `email to ${to}${cc ? ` (CC: ${cc})` : ""}`;
+    } else {
+      type = detected.type;
+      to = detected.to || undefined;
+      label = detected.label || CHANNEL_LABELS[type] || type;
+    }
+  }
+
+  const userEntry = getUserMap(interaction.user.id);
+  let scheduled;
+  try {
+    scheduled = await createScheduledArticle({
+      ticket_id: mapping.ticket_id,
+      body: text,
+      scheduled_at: scheduledAt,
+      article_type: type,
+      to,
+      cc,
+      subject: type === "email" ? (mapping.title || undefined) : undefined,
+      content_type: contentType,
+      on_behalf_of: userEntry?.zammad_id ?? null,
+    });
+  } catch (err) {
+    logger.error({ err, ticketId: mapping.ticket_id }, "Failed to schedule reply");
+    await interaction.editReply(`Could not schedule the reply: ${err instanceof Error ? truncate(err.message, 300) : String(err)}`);
+    return;
+  }
 
   const tz = getBotTimezone();
   const tzLabel = tz ? ` (${tz})` : "";
+  const when = formatInBotTz(scheduledAt);
   await interaction.editReply(
-    `Reply scheduled for **${formatInBotTz(scheduledAt)}**${tzLabel} on ticket #${mapping.ticket_number}.`
+    `Reply **#${scheduled.id}** scheduled for **${when}**${tzLabel} as ${label} on ticket #${mapping.ticket_number}.` +
+      `\nCancel with \`/unschedule id:${scheduled.id}\`. Added to the ticket as an internal note.`
+  );
+  await addTicketNote(
+    mapping.ticket_id,
+    `Scheduled reply #${scheduled.id} set for ${when}${tzLabel}, to go out as ${label}.\n---\n${truncate(rawText, 1500)}`,
+    { zammadId: userEntry?.zammad_id ?? null, threadId: mapping.thread_id },
   );
 }
 
@@ -1552,7 +1643,11 @@ export async function handleUnschedule(interaction: ChatInputCommandInteraction)
   }
 
   await cancelScheduledArticle(mapping.ticket_id, id);
-  await interaction.editReply(`Scheduled reply #${id} cancelled.`);
+  await interaction.editReply(`Scheduled reply #${id} cancelled. Added to the ticket as an internal note.`);
+  await addTicketNote(mapping.ticket_id, `Scheduled reply #${id} was cancelled by ${interaction.user.displayName ?? interaction.user.username}.`, {
+    zammadId: getUserMap(interaction.user.id)?.zammad_id ?? null,
+    threadId: mapping.thread_id,
+  });
 }
 
 // ---------------------------------------------------------------

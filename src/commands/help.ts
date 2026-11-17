@@ -48,7 +48,7 @@ export async function handleHelpCommand(
       {
         name: "Scheduled Replies (use inside a ticket thread)",
         value: [
-          "`/schedule <text> <time>` -Schedule a reply (2h, 1d, tomorrow 9am)",
+          "`/schedule <text> <time> [channel] [to] [cc]` -Schedule a reply on the ticket's channel (email, SMS or Teams), or force email / internal note. Logged on the ticket",
           "`/schedules` -List pending scheduled replies",
           "`/unschedule <id>` -Cancel a scheduled reply",
         ].join("\n"),
@@ -67,7 +67,7 @@ export async function handleHelpCommand(
       {
         name: "Reminders (anywhere)",
         value: [
-          "`/remind-me <when> [message]` -Ping you here later. `when`: 30m, 2h, 3d, tomorrow 9am, friday 3pm, nov 24 9am, 11/24, the 24th, 17:30, 2026-10-05 14:00 (bot timezone)",
+          "`/remind-me <when> [message] [ping] [who]` -Ping you here later; `ping:` @everyone/@here, `who:` a person or role. In a ticket thread it is logged on the ticket. `when`: 30m, 2h, 3d, tomorrow 9am, friday 3pm, nov 24 9am, 11/24, the 24th, 17:30, 2026-10-05 14:00 (bot timezone)",
           "`/reminders [cancel]` -List your pending reminders or cancel one by ID",
         ].join("\n"),
         inline: false,

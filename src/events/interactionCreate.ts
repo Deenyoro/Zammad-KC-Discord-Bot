@@ -45,7 +45,7 @@ export function onInteractionCreate(client: Client): void {
     // Handle autocomplete interactions (fired while user is typing)
     if (interaction.isAutocomplete()) {
       try {
-        if (interaction.commandName === "reply") {
+        if (interaction.commandName === "reply" || interaction.commandName === "schedule") {
           await handleReplyAutocomplete(interaction);
         } else if (interaction.commandName === "merge") {
           await handleMergeAutocomplete(interaction);

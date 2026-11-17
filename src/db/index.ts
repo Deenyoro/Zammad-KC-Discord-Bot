@@ -97,8 +97,19 @@ export function initDb(dbPath: string): Database.Database {
   _db.pragma("journal_mode = WAL");
   _db.pragma("foreign_keys = ON");
   _db.exec(SCHEMA);
+  migrate(_db);
   logger.info({ dbPath }, "Database initialized");
   return _db;
+}
+
+/** Additive column migrations for databases created by older versions. */
+function migrate(d: Database.Database): void {
+  const cols = new Set((d.prepare("PRAGMA table_info(reminders)").all() as { name: string }[]).map((c) => c.name));
+  // Who a reminder pings besides its creator: "everyone" / "here", and user or role ids ("u:<id>", "r:<id>").
+  if (!cols.has("mention_everyone")) d.exec("ALTER TABLE reminders ADD COLUMN mention_everyone TEXT");
+  if (!cols.has("mention_ids")) d.exec("ALTER TABLE reminders ADD COLUMN mention_ids TEXT");
+  // The Zammad ticket a reminder was set in (ticket thread), for its ticket notes.
+  if (!cols.has("ticket_id")) d.exec("ALTER TABLE reminders ADD COLUMN ticket_id INTEGER");
 }
 
 export function db(): Database.Database {
@@ -355,6 +366,10 @@ export interface Reminder {
   attempts: number;
   next_attempt_at: string | null;
   last_error: string | null;
+  mention_everyone?: "everyone" | "here" | null;
+  /** JSON array of "u:<id>" / "r:<id>". */
+  mention_ids?: string | null;
+  ticket_id?: number | null;
 }
 
 export function createReminder(row: {
@@ -363,13 +378,21 @@ export function createReminder(row: {
   channel_id: string;
   message: string | null;
   due_at: string;
+  mention_everyone?: "everyone" | "here" | null;
+  mention_ids?: string[] | null;
+  ticket_id?: number | null;
 }): number {
   const res = db()
     .prepare(
-      `INSERT INTO reminders (user_id, guild_id, channel_id, message, due_at)
-       VALUES (@user_id, @guild_id, @channel_id, @message, @due_at)`
+      `INSERT INTO reminders (user_id, guild_id, channel_id, message, due_at, mention_everyone, mention_ids, ticket_id)
+       VALUES (@user_id, @guild_id, @channel_id, @message, @due_at, @mention_everyone, @mention_ids, @ticket_id)`
     )
-    .run(row);
+    .run({
+      ...row,
+      mention_everyone: row.mention_everyone ?? null,
+      mention_ids: row.mention_ids && row.mention_ids.length ? JSON.stringify(row.mention_ids) : null,
+      ticket_id: row.ticket_id ?? null,
+    });
   return Number(res.lastInsertRowid);
 }
 
@@ -422,6 +445,10 @@ export function markReminderFailed(id: number, error: string, retryAfterMs = 60_
 }
 
 /** Cancel a pending reminder. Only the owner can cancel; returns true if one was cancelled. */
+export function getReminder(id: number): Reminder | undefined {
+  return db().prepare("SELECT * FROM reminders WHERE id = ?").get(id) as Reminder | undefined;
+}
+
 export function cancelReminder(id: number, userId: string): boolean {
   const res = db()
     .prepare(

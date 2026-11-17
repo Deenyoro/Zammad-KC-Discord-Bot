@@ -6,22 +6,26 @@
  * services/reminders.ts.
  */
 
-import { ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
+import { ChatInputCommandInteraction, Role, SlashCommandBuilder, User } from "discord.js";
 import {
   cancelReminder,
   countPendingRemindersForUser,
   createReminder,
   getPendingRemindersForUser,
+  getReminder,
+  getThreadByThreadId,
+  getUserMap,
   setReminderSourceUrl,
 } from "../db/index.js";
 import { parseTime } from "../util/parseTime.js";
-import { getBotTimezone } from "../util/timezone.js";
+import { formatInBotTz, getBotTimezone } from "../util/timezone.js";
 import { truncate } from "../util/truncate.js";
 import {
   checkReminderTime,
   REMINDER_FORMATS,
   REMINDER_MAX_PENDING_PER_USER,
 } from "../services/reminders.js";
+import { addTicketNote } from "../services/ticketNotes.js";
 
 export const remindMeCommand = new SlashCommandBuilder()
   .setName("remind-me")
@@ -35,6 +39,16 @@ export const remindMeCommand = new SlashCommandBuilder()
   )
   .addStringOption((o) =>
     o.setName("message").setDescription("What to remind you about").setRequired(false).setMaxLength(1000)
+  )
+  .addStringOption((o) =>
+    o
+      .setName("ping")
+      .setDescription("Also ping @everyone or @here (staff only)")
+      .setRequired(false)
+      .addChoices({ name: "@everyone", value: "everyone" }, { name: "@here", value: "here" })
+  )
+  .addMentionableOption((o) =>
+    o.setName("who").setDescription("Also ping this person or role").setRequired(false)
   );
 
 export const remindersCommand = new SlashCommandBuilder()
@@ -68,12 +82,39 @@ export async function handleRemindMe(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  const ping = interaction.options.getString("ping") as "everyone" | "here" | null;
+  const who = interaction.options.getMentionable("who");
+  const caller = getUserMap(interaction.user.id);
+  if (ping && !caller) {
+    await interaction.reply({
+      content: "Only staff mapped to a Zammad agent can ping @everyone or @here. Ask an admin to run `/setup usermap`.",
+      ephemeral: true,
+    });
+    return;
+  }
+  let mentionIds: string[] = [];
+  let whoLabel = "";
+  if (who instanceof Role) {
+    mentionIds = [`r:${who.id}`];
+    whoLabel = `@${who.name}`;
+  } else if (who) {
+    const u: User | null = who instanceof User ? who : "user" in who ? (who as { user: User }).user : null;
+    if (u && u.id !== interaction.user.id) {
+      mentionIds = [`u:${u.id}`];
+      whoLabel = `@${u.displayName ?? u.username}`;
+    }
+  }
+  const ticket = getThreadByThreadId(interaction.channelId);
+
   const id = createReminder({
     user_id: interaction.user.id,
     guild_id: interaction.guildId,
     channel_id: interaction.channelId,
     message,
     due_at: check.due.toISOString(),
+    mention_everyone: ping,
+    mention_ids: mentionIds,
+    ticket_id: ticket?.ticket_id ?? null,
   });
   // Link back to the conversation as it was when the reminder was set.
   const lastMessageId =
@@ -82,21 +123,44 @@ export async function handleRemindMe(interaction: ChatInputCommandInteraction) {
 
   const unix = Math.floor(check.due.getTime() / 1000);
   const tz = getBotTimezone();
+  const audience = [ping ? `@${ping}` : "", whoLabel].filter(Boolean);
   await interaction.reply({
     content:
       `Reminder **#${id}** set for <t:${unix}:f> (<t:${unix}:R>)` +
       (tz ? `, parsed in ${tz}` : "") +
-      `. I will ping you in this ${interaction.channel?.isThread() ? "thread" : "channel"}` +
+      `. I will ping you${audience.length ? ` and ${audience.join(" and ")}` : ""} in this ${interaction.channel?.isThread() ? "thread" : "channel"}` +
       (message ? `: ${truncate(message, 200)}` : ".") +
-      `\nCancel with \`/reminders cancel:${id}\`.`,
+      `\nCancel with \`/reminders cancel:${id}\`.` +
+      (ticket ? `\n-# Added to ticket #${ticket.ticket_number} as an internal note.` : ""),
     ephemeral: true,
   });
+
+  if (ticket) {
+    const who2 = caller ? "" : ` (Discord user ${interaction.user.username})`;
+    await addTicketNote(
+      ticket.ticket_id,
+      `Reminder #${id} set${who2} for ${formatInBotTz(check.due)}${tz ? ` (${tz})` : ""}, pinging ` +
+        `${audience.length ? `${audience.join(", ")} and ` : ""}${interaction.user.displayName ?? interaction.user.username} in the Discord thread.` +
+        (message ? `\n${message}` : ""),
+      { zammadId: caller?.zammad_id ?? null, threadId: ticket.thread_id },
+    );
+  }
 }
 
 export async function handleReminders(interaction: ChatInputCommandInteraction) {
   const cancelId = interaction.options.getInteger("cancel");
   if (cancelId !== null) {
+    const before = getReminder(cancelId);
     const ok = cancelReminder(cancelId, interaction.user.id);
+    if (ok && before?.ticket_id) {
+      const thread = getThreadByThreadId(before.channel_id);
+      await addTicketNote(
+        before.ticket_id,
+        `Reminder #${cancelId} (due ${formatInBotTz(before.due_at)}) was cancelled by ${interaction.user.displayName ?? interaction.user.username}.` +
+          (before.message ? `\n${before.message}` : ""),
+        { zammadId: getUserMap(interaction.user.id)?.zammad_id ?? null, threadId: thread?.thread_id ?? null },
+      );
+    }
     await interaction.reply({
       content: ok ? `Reminder #${cancelId} cancelled.` : `No pending reminder #${cancelId} of yours was found.`,
       ephemeral: true,

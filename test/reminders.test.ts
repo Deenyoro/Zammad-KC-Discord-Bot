@@ -79,7 +79,8 @@ test("due reminders are delivered once, in their thread, pinging only the user (
   assert.equal(await runDueReminders(f.client, NOW), 1);
   assert.equal(f.sent.length, 1);
   assert.equal(f.sent[0].where, "t1");
-  assert.deepEqual(f.sent[0].allowedMentions, { users: ["u2"] });
+  // A literal "@everyone" in the text never pings: only the creator is allowed.
+  assert.deepEqual(f.sent[0].allowedMentions, { users: ["u2"], roles: [], parse: [] });
   // Archived + locked ticket thread: unarchived to send, then restored.
   assert.deepEqual(f.edits[0], { archived: false, reason: "Delivering a reminder" });
   assert.deepEqual(f.edits[1], { archived: true, locked: true, reason: "Re-archiving after reminder" });
@@ -101,4 +102,50 @@ test("falls back to a DM when the channel is gone; retries later when both fail"
   assert.equal(pending.attempts, 1);
   assert.match(pending.last_error!, /Unknown Channel.*Cannot DM/);
   assert.ok(pending.next_attempt_at);
+});
+
+test("@everyone / @here and extra people or roles are pinged only when asked for", async () => {
+  const base = { user_id: "u9", guild_id: "g", channel_id: "t1", message: "post the notice", due_at: "2026-09-30T13:59:00.000Z" };
+  const id = db.createReminder({ ...base, mention_everyone: "everyone", mention_ids: ["r:123456", "u:654321", "u:u9"] });
+  const r = db.getReminder(id)!;
+  const text = renderReminder(r, NOW);
+  assert.match(text, /^⏰ @everyone <@&123456> <@654321> <@u9> reminder: post the notice/);
+  const f = fakeClient({});
+  await runDueReminders(f.client, NOW);
+  const sent = f.sent.find((x: any) => x.where === "t1")!;
+  assert.deepEqual(sent.allowedMentions, { users: ["u9", "654321"], roles: ["123456"], parse: ["everyone"] });
+
+  const here = db.getReminder(db.createReminder({ ...base, mention_everyone: "here" }))!;
+  assert.match(renderReminder(here, NOW), /^⏰ @here <@u9> reminder/);
+});
+
+test("garbage mention ids are ignored", () => {
+  const id = db.createReminder({ user_id: "u8", guild_id: "g", channel_id: "c", message: null, due_at: "2026-10-30T13:59:00.000Z" });
+  db.db().prepare("UPDATE reminders SET mention_ids = ? WHERE id = ?").run('["x:1","u:<@everyone>",5,"r:999999"]', id);
+  const r = db.getReminder(id)!;
+  assert.match(renderReminder(r, NOW), /^⏰ <@&999999> <@u8> reminder\./);
+});
+
+test("a reminder set in a ticket thread writes an internal ticket note when it fires", async () => {
+  const calls: { url: string; body: any }[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init: any) => {
+    calls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 777, ticket_id: 42 }), { status: 201, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    db.createReminder({ user_id: "u7", guild_id: "g", channel_id: "t1", message: "post closing notice", due_at: "2026-09-30T13:59:00.000Z", ticket_id: 42 });
+    const f = fakeClient({});
+    await runDueReminders(f.client, NOW);
+    const note = calls.find((c) => c.url.endsWith("/api/v1/ticket_articles"));
+    assert.ok(note, "a ticket article was created");
+    assert.equal(note!.body.ticket_id, 42);
+    assert.equal(note!.body.type, "note");
+    assert.equal(note!.body.internal, true);
+    assert.match(note!.body.body, /went off.*\n?post closing notice/s);
+    // Already visible in the thread: recorded as synced so it is not echoed back.
+    assert.equal(db.isArticleSynced(777), true);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

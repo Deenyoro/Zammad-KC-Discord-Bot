@@ -257,6 +257,23 @@ export const scheduleCommand = new SlashCommandBuilder()
   )
   .addStringOption((o) =>
     o.setName("time").setDescription("When to send (e.g. 2h, tomorrow 9am, nov 24 9am, 11/24, ISO date)").setRequired(true)
+  )
+  .addStringOption((o) =>
+    o
+      .setName("channel")
+      .setDescription("How to send it (default: the ticket's own channel: email, SMS or Teams)")
+      .setRequired(false)
+      .addChoices(
+        { name: "ticket's channel (email/SMS/Teams)", value: "auto" },
+        { name: "email", value: "email" },
+        { name: "internal note", value: "note" },
+      )
+  )
+  .addStringOption((o) =>
+    o.setName("to").setDescription("Email recipient(s) instead of the customer (comma-separated)").setRequired(false).setAutocomplete(true)
+  )
+  .addStringOption((o) =>
+    o.setName("cc").setDescription("CC email(s) (comma-separated)").setRequired(false).setAutocomplete(true)
   );
 
 export const schedulesCommand = new SlashCommandBuilder()

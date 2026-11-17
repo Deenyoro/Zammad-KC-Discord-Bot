@@ -12,10 +12,13 @@ import { logger } from "../util/logger.js";
 import { discordQueue } from "../queue/index.js";
 import {
   getDueReminders,
+  getThreadByTicketId,
   markReminderDelivered,
   markReminderFailed,
   type Reminder,
 } from "../db/index.js";
+import { addTicketNote } from "./ticketNotes.js";
+import { formatInBotTz } from "../util/timezone.js";
 
 export const REMINDER_MIN_LEAD_MS = 30_000;
 export const REMINDER_MAX_AHEAD_MS = 366 * 24 * 3600_000;
@@ -54,11 +57,59 @@ export function checkReminderTime(parsedIso: string | null, input: string, now: 
   return { ok: true, due };
 }
 
+/** Extra user/role ids a reminder pings ("u:<id>" / "r:<id>"), parsed defensively. */
+export function reminderMentionIds(r: Reminder): { users: string[]; roles: string[] } {
+  const users: string[] = [];
+  const roles: string[] = [];
+  let list: unknown = [];
+  try {
+    list = r.mention_ids ? JSON.parse(r.mention_ids) : [];
+  } catch {
+    list = [];
+  }
+  if (Array.isArray(list)) {
+    for (const v of list) {
+      const m = typeof v === "string" ? v.match(/^([ur]):(\d{5,25})$/) : null;
+      if (!m) continue;
+      (m[1] === "u" ? users : roles).push(m[2]);
+    }
+  }
+  return { users: [...new Set(users)], roles: [...new Set(roles)] };
+}
+
+/** Who the reminder pings: the creator, @everyone/@here, and any extra users or roles. */
+export function reminderAllowedMentions(r: Reminder): { users: string[]; roles: string[]; parse: ("everyone")[] } {
+  const extra = reminderMentionIds(r);
+  return {
+    users: [...new Set([r.user_id, ...extra.users])],
+    roles: extra.roles,
+    parse: r.mention_everyone ? ["everyone"] : [],
+  };
+}
+
+/** Plain-text description of who is pinged, for ticket notes and confirmations. */
+export function describeReminderAudience(r: Reminder, names: { users?: Map<string, string>; roles?: Map<string, string> } = {}): string {
+  const extra = reminderMentionIds(r);
+  const parts: string[] = [];
+  if (r.mention_everyone) parts.push(`@${r.mention_everyone}`);
+  for (const id of extra.roles) parts.push(`@${names.roles?.get(id) ?? `role ${id}`}`);
+  for (const id of extra.users) parts.push(`@${names.users?.get(id) ?? `user ${id}`}`);
+  return parts.length ? parts.join(", ") : "only the person who set it";
+}
+
 /** The reminder ping text. */
 export function renderReminder(r: Reminder, now: Date = new Date()): string {
   const created = Math.floor(new Date(r.created_at.includes("T") ? r.created_at : `${r.created_at.replace(" ", "T")}Z`).getTime() / 1000);
   const dueMs = new Date(r.due_at).getTime();
-  const lines = [`⏰ <@${r.user_id}> reminder${r.message ? `: ${r.message}` : "."}`];
+  const extra = reminderMentionIds(r);
+  const pings = [
+    ...(r.mention_everyone ? [`@${r.mention_everyone}`] : []),
+    ...extra.roles.map((id) => `<@&${id}>`),
+    ...extra.users.filter((id) => id !== r.user_id).map((id) => `<@${id}>`),
+  ];
+  const lines = [
+    `⏰ ${pings.length ? `${pings.join(" ")} ` : ""}<@${r.user_id}> reminder${r.message ? `: ${r.message}` : "."}`,
+  ];
   const meta: string[] = [];
   if (Number.isFinite(created)) meta.push(`set <t:${created}:R>`);
   if (r.source_url) meta.push(`[jump to where it was set](${r.source_url})`);
@@ -72,7 +123,7 @@ async function sendInChannel(client: Client, r: Reminder, content: string): Prom
   if (!channel || !channel.isTextBased() || !("send" in channel)) {
     throw new Error("channel not found or not text based");
   }
-  const allowedMentions = { users: [r.user_id] };
+  const allowedMentions = reminderAllowedMentions(r);
   if (channel.isThread()) {
     const thread = channel as ThreadChannel;
     const wasArchived = thread.archived;
@@ -99,6 +150,7 @@ export async function deliverReminder(client: Client, r: Reminder): Promise<void
     const msgId = await sendInChannel(client, r, content);
     markReminderDelivered(r.id);
     logger.info({ reminderId: r.id, channelId: r.channel_id, msgId }, "Reminder delivered");
+    await noteReminderFired(r, msgId);
     return;
   } catch (channelErr) {
     // Channel gone or no access: fall back to a direct message.
@@ -107,6 +159,7 @@ export async function deliverReminder(client: Client, r: Reminder): Promise<void
       await user.send({ content: `${content}\n-# (could not post in <#${r.channel_id}>)`, allowedMentions: { users: [r.user_id] } });
       markReminderDelivered(r.id, "delivered by DM");
       logger.warn({ reminderId: r.id, channelId: r.channel_id, err: channelErr }, "Reminder delivered by DM (channel failed)");
+      await noteReminderFired(r, null, " (sent by DM: the thread could not be reached)");
       return;
     } catch (dmErr) {
       const msg = `${channelErr instanceof Error ? channelErr.message : channelErr}; DM: ${dmErr instanceof Error ? dmErr.message : dmErr}`;
@@ -119,6 +172,18 @@ export async function deliverReminder(client: Client, r: Reminder): Promise<void
       }
     }
   }
+}
+
+/** Internal ticket note when a reminder set in a ticket thread fires. Never throws. */
+async function noteReminderFired(r: Reminder, msgId: string | null, suffix = ""): Promise<void> {
+  if (!r.ticket_id) return;
+  const thread = getThreadByTicketId(r.ticket_id);
+  await addTicketNote(
+    r.ticket_id,
+    `Reminder #${r.id} went off${suffix} (due ${formatInBotTz(r.due_at)}), pinging ${describeReminderAudience(r)} and the person who set it.` +
+      (r.message ? `\n${r.message}` : ""),
+    { threadId: thread?.thread_id ?? r.channel_id, discordMsgId: msgId, echo: false },
+  );
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;

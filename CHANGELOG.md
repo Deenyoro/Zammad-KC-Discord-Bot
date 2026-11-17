@@ -3,6 +3,26 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.8.0] - 2026-11-17
+
+### Added
+
+- `/remind-me` can ping more than you: `ping:` @everyone or @here (staff mapped to a Zammad agent only) and `who:` a
+  person or role. Only the people asked for are pinged; a literal "@everyone" typed in the message still pings nobody.
+- Everything reminders and scheduled replies do on a ticket is written to the ticket as an internal note: a reminder
+  set, fired or cancelled in a ticket thread, and a reply scheduled or cancelled with `/schedule` / `/unschedule`
+  (author: the Discord user's mapped agent). The "fired" note is not echoed back into the thread, which already
+  shows the ping.
+
+### Fixed
+
+- `/schedule` works on every channel. It sends on the ticket's own channel (email, RingCentral or FreePBX SMS,
+  Teams) like `/reply`, or `channel:` email / internal note; `to:` and `cc:` (with autocomplete) for email. Scheduled
+  emails now carry the ticket title as subject, scheduled customer replies are explicitly not internal, and the
+  reply is scheduled as the Discord user's agent instead of the API token owner. A reply that could never be
+  delivered (no channel and no email address, a time in the past) is refused when scheduling instead of failing
+  silently when it falls due, and Zammad's own refusal is shown.
+
 ## [1.7.11] - 2026-11-17
 
 ### Fixed
