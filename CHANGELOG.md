@@ -3,6 +3,17 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.7.4] - 2026-11-17
+
+### Fixed
+
+- Assigning a ticket in Zammad sometimes stripped the assignee's name off the Discord thread. The webhook-triggered
+  re-fetch of the ticket is frequently stale and can still show the ticket unassigned, so the thread was renamed
+  without the owner. The owner id is now reconciled against the webhook payload (the authoritative post-change value):
+  when the fresh read says unassigned but the webhook shows an owner, the webhook is trusted and the name is kept.
+  Genuine unassignment still clears the name.
+
+
 ## [1.7.3] - 2026-11-13
 
 ### Fixed
