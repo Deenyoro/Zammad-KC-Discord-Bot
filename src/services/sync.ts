@@ -202,12 +202,14 @@ async function processWebhook(
 
   // Resolve owner/customer to "Firstname Lastname" via the users API
   let ownerName: string | undefined;
+  let ownerLookupFailed = false;   // owner set but unreadable: unknown, not "unassigned"
   if (ownerId && ownerId > 1) {
     try {
       const owner = await getUser(ownerId);
       ownerName = `${owner.firstname} ${owner.lastname}`.trim() || undefined;
     } catch {
       ownerName = undefined;
+      ownerLookupFailed = true;
     }
   }
 
@@ -375,11 +377,14 @@ async function processWebhook(
   if (fullTicket.title !== mapping.title) {
     updateThreadTitle(ticketId, fullTicket.title);
   }
-  // Always pass current owner to rename, it will skip if the name hasn't actually changed
-  try {
-    await renameTicketThread(client, mapping.thread_id, mapping.ticket_number, fullTicket.title, ownerLabel);
-  } catch (err) {
-    logger.warn({ ticketId, err }, "Failed to rename thread during webhook sync");
+  // Always pass current owner to rename, it will skip if the name hasn't actually changed.
+  // Not when the owner's name could not be read: that would strip the assignee off the thread.
+  if (!ownerLookupFailed) {
+    try {
+      await renameTicketThread(client, mapping.thread_id, mapping.ticket_number, fullTicket.title, ownerLabel);
+    } catch (err) {
+      logger.warn({ ticketId, err }, "Failed to rename thread during webhook sync");
+    }
   }
 
   // Sync ALL unsynced articles in order (by article ID).

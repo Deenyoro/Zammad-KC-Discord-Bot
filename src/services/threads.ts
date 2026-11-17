@@ -59,11 +59,30 @@ export function formatOwnerLabelFromFull(fullName: string): string | undefined {
 /**
  * Build a thread name with optional owner prefix.
  */
-function buildThreadName(ticketNumber: string, title: string, ownerLabel?: string): string {
+export function buildThreadName(ticketNumber: string, title: string, ownerLabel?: string): string {
   if (ownerLabel) {
     return truncate(`#${ticketNumber} 👤${ownerLabel} ${title}`, 100);
   }
   return truncate(`#${ticketNumber} ${title}`, 100);
+}
+
+/**
+ * Whether the periodic sync must re-read a ticket individually before it touches the thread.
+ * The list API lags behind (seconds to minutes), so list data alone must never change what the thread shows:
+ * re-read when the list disagrees with our stored state or title, or when the name the list would produce
+ * differs from the thread's current name (an owner the list does not know yet, or still knows).
+ */
+export function listNeedsVerification(o: {
+  listState: string; storedState: string; listTitle: string; storedTitle: string;
+  currentThreadName?: string; nameFromList: string;
+}): boolean {
+  if (o.listState !== o.storedState || o.listTitle !== o.storedTitle) return true;
+  return o.currentThreadName !== undefined && o.currentThreadName !== o.nameFromList;
+}
+
+/** An owner is set but the name could not be read (users API failed): unknown, not "unassigned". */
+export function ownerUnknown(info: { owner?: string; owner_id?: number }): boolean {
+  return !!info.owner_id && info.owner_id > 1 && !info.owner;
 }
 
 function stateColor(state: string): number {

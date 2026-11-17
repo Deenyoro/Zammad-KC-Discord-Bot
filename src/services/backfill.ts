@@ -18,6 +18,9 @@ import {
   renameTicketThread,
   ticketUrl,
   formatOwnerLabelFromFull,
+  buildThreadName,
+  listNeedsVerification,
+  ownerUnknown,
   type TicketInfo,
 } from "./threads.js";
 import { discordQueue, enqueueForTicket } from "../queue/index.js";
@@ -84,20 +87,43 @@ export async function syncAllTickets(client: Client): Promise<void> {
         let verifiedTicketInfo = ticketInfo;
         let verifiedTitle = ticket.title;
 
-        if (listDisagreesOnState || listDisagreesOnTitle) {
+        // The same goes for the owner: a list that still shows the ticket unassigned (or still shows the
+        // previous owner) would rename the thread and undo the assignment, and the next webhook would put it
+        // back (2026-11-17: the name flipped every sync). So whenever the list would change the thread's
+        // name, re-read the ticket first.
+        let currentThreadName: string | undefined;
+        try {
+          const th = await client.channels.fetch(existing.thread_id) as ThreadChannel | null;
+          if (th?.isThread() && !th.archived) currentThreadName = th.name;
+        } catch {
+          // thread not readable: nothing to rename, nothing to verify for the name
+        }
+        const listOwnerLabel = ticketInfo.owner ? formatOwnerLabelFromFull(ticketInfo.owner) : undefined;
+        // true when the name must not be touched this cycle (data could not be confirmed)
+        let keepThreadName = ownerUnknown(ticketInfo);
+
+        if (listNeedsVerification({
+          listState: ticketInfo.state, storedState: existing.state, listTitle: ticket.title, storedTitle: existing.title ?? "",
+          currentThreadName, nameFromList: buildThreadName(existing.ticket_number, ticket.title, listOwnerLabel),
+        }) || listDisagreesOnState || listDisagreesOnTitle) {
           try {
             const freshTicket = await getTicket(ticket.id);
             const freshInfo = await buildTicketInfo(freshTicket);
             verifiedTicketInfo = freshInfo;
             verifiedTitle = freshTicket.title;
-            if (freshInfo.state !== ticketInfo.state || freshTicket.title !== ticket.title) {
+            keepThreadName = ownerUnknown(freshInfo);
+            if (freshInfo.state !== ticketInfo.state || freshTicket.title !== ticket.title
+                || freshInfo.owner_id !== ticketInfo.owner_id) {
               logger.info(
-                { ticketId: ticket.id, listState: ticketInfo.state, freshState: freshInfo.state, listTitle: ticket.title, freshTitle: freshTicket.title },
+                { ticketId: ticket.id, listState: ticketInfo.state, freshState: freshInfo.state, listTitle: ticket.title,
+                  freshTitle: freshTicket.title, listOwnerId: ticketInfo.owner_id, freshOwnerId: freshInfo.owner_id },
                 "List API was stale, using fresh individual ticket data"
               );
             }
           } catch (err) {
-            logger.warn({ ticketId: ticket.id, err }, "Failed to fetch fresh ticket data, using list data");
+            // Could not confirm: keep what the thread shows rather than apply data known to lag.
+            keepThreadName = true;
+            logger.warn({ ticketId: ticket.id, err }, "Failed to fetch fresh ticket data, leaving the thread name as it is");
           }
         }
 
@@ -243,11 +269,13 @@ export async function syncAllTickets(client: Client): Promise<void> {
         if (verifiedTitle !== existing.title) {
           updateThreadTitle(ticket.id, verifiedTitle);
         }
-        // Always pass current owner to rename, it will skip if the name hasn't actually changed
-        try {
-          await renameTicketThread(client, existing.thread_id, existing.ticket_number, verifiedTitle, ownerLabel);
-        } catch (err) {
-          logger.warn({ ticketId: ticket.id, err }, "Failed to rename thread");
+        // Rename only with confirmed data, it skips by itself when the name hasn't actually changed
+        if (!keepThreadName) {
+          try {
+            await renameTicketThread(client, existing.thread_id, existing.ticket_number, verifiedTitle, ownerLabel);
+          } catch (err) {
+            logger.warn({ ticketId: ticket.id, err }, "Failed to rename thread");
+          }
         }
       }
     } catch (err) {

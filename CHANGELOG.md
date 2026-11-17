@@ -3,6 +3,17 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.7.5] - 2026-11-17
+
+### Fixed
+
+- The assignee's name on a ticket thread flipped on and off every few minutes. The periodic sync reads the ticket
+  list, which lags behind Zammad by seconds to minutes; a list that still showed the ticket unassigned renamed the
+  thread without the owner, and the next webhook put the name back (1.7.4 only covered the webhook path). The sync
+  now re-reads a ticket individually whenever the list would change the thread's name, and leaves the name alone
+  when the fresh read fails or the owner's name cannot be read (unknown is not "unassigned"). The header embed
+  uses the same verified data.
+
 ## [1.7.4] - 2026-11-17
 
 ### Fixed
