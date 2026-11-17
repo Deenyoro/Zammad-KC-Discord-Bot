@@ -10,6 +10,10 @@
  *     optionally prefixed with "in" ("in 2h")
  *   - Named: "tomorrow", "tomorrow 9am", "tomorrow 14:30", "today 5pm"
  *   - Weekday: "monday", "fri 3pm" (next occurrence; today if still ahead)
+ *   - Calendar dates without a year: "nov 24", "November 24th 9am",
+ *     "24 nov", "11/24", "11/24 2:30pm", "11/24/2026", "the 24th", "24th 9am"
+ *     (US month/day; next occurrence, so a date already past means next year,
+ *     or next month for a bare day; a date alone means 9:00)
  *   - Time of day: "9am", "17:30" (today if still ahead, else tomorrow)
  *   - Date/time: "2026-10-05", "2026-10-05 14:00", "2026-10-05T14:00",
  *     "2026-10-05 2pm" (bot timezone; a date alone means 9:00)
@@ -65,6 +69,41 @@ function weekdayIndex(word: string): number {
   const w = word.toLowerCase();
   if (w.length < 3) return -1;
   return WEEKDAYS.findIndex((d) => d.startsWith(w));
+}
+
+const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+
+/** 1-12 for a month name or 3+ letter prefix ("nov", "sept", "December"), else 0. */
+function monthIndex(word: string): number {
+  const w = word.toLowerCase().replace(/\.$/, "");
+  if (w.length < 3) return 0;
+  if (w === "sept") return 9;
+  return MONTHS.findIndex((m) => m.startsWith(w)) + 1;
+}
+
+/** True when year/month/day is a real calendar date (no Feb 31 roll-over). */
+function validDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  return probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day;
+}
+
+/**
+ * The next time month/day (at clock) comes around, in the bot timezone: this
+ * year if still ahead, else next year. With an explicit year, that date only.
+ */
+function nextCalendarDate(now: Date, month: number, day: number, clock: { hour: number; minute: number }, year?: number): string | null {
+  if (year !== undefined) {
+    if (!validDate(year, month, day)) return null;
+    return dateFromBotTz(year, month, day, clock.hour, clock.minute).toISOString();
+  }
+  const cur = nowInBotTz(now);
+  for (const y of [cur.year, cur.year + 1, cur.year + 2, cur.year + 3, cur.year + 4]) {
+    if (!validDate(y, month, day)) continue; // Feb 29 waits for a leap year
+    const at = dateFromBotTz(y, month, day, clock.hour, clock.minute);
+    if (at.getTime() > now.getTime()) return at.toISOString();
+  }
+  return null;
 }
 
 /** Calendar date `days` after the bot-timezone date of `now`. */
@@ -140,6 +179,47 @@ export function parseTime(input: string, now: Date = new Date()): string | null 
       : { hour: current.hour + 1, minute: 0 };
     if (!clock) return null;
     return dateFromBotTz(current.year, current.month, current.day, clock.hour, clock.minute).toISOString();
+  }
+
+  // Calendar dates without a year (US order): "nov 24", "november 24th 9am",
+  // "24 nov", "dec 22, 2026 3pm", "11/24", "11/24/26 9am", "the 24th", "24th 2pm".
+  const AT = String.raw`(?:,? (?:at )?${CLOCK})?`;
+  const ORD = String.raw`(?:st|nd|rd|th)?`;
+  const YEAR = String.raw`(?:,? (\d{4}))?`;
+  const monthDay = trimmed.match(new RegExp(`^(?:on )?([a-z]+\\.?) (\\d{1,2})${ORD}${YEAR}${AT}$`, "i"));
+  if (monthDay && monthIndex(monthDay[1]) > 0) {
+    const clock = monthDay[4] !== undefined ? parseClock(monthDay[4], monthDay[5], monthDay[6]) : { hour: DEFAULT_HOUR, minute: 0 };
+    if (!clock) return null;
+    return nextCalendarDate(now, monthIndex(monthDay[1]), +monthDay[2], clock, monthDay[3] ? +monthDay[3] : undefined);
+  }
+  const dayMonth = trimmed.match(new RegExp(`^(?:on )?(?:the )?(\\d{1,2})${ORD} (?:of )?([a-z]+\\.?)${YEAR}${AT}$`, "i"));
+  if (dayMonth && monthIndex(dayMonth[2]) > 0) {
+    const clock = dayMonth[4] !== undefined ? parseClock(dayMonth[4], dayMonth[5], dayMonth[6]) : { hour: DEFAULT_HOUR, minute: 0 };
+    if (!clock) return null;
+    return nextCalendarDate(now, monthIndex(dayMonth[2]), +dayMonth[1], clock, dayMonth[3] ? +dayMonth[3] : undefined);
+  }
+  const slash = trimmed.match(new RegExp(`^(?:on )?(\\d{1,2})/(\\d{1,2})(?:/(\\d{2}|\\d{4}))?${AT}$`, "i"));
+  if (slash) {
+    const clock = slash[4] !== undefined ? parseClock(slash[4], slash[5], slash[6]) : { hour: DEFAULT_HOUR, minute: 0 };
+    if (!clock) return null;
+    const year = slash[3] === undefined ? undefined : slash[3].length === 2 ? 2000 + +slash[3] : +slash[3];
+    return nextCalendarDate(now, +slash[1], +slash[2], clock, year);
+  }
+  // A bare ordinal day needs the suffix ("24th"), so "24" stays unparsed.
+  const ordinal = trimmed.match(new RegExp(`^(?:on )?(?:the )?(\\d{1,2})(?:st|nd|rd|th)${AT}$`, "i"));
+  if (ordinal) {
+    const clock = ordinal[2] !== undefined ? parseClock(ordinal[2], ordinal[3], ordinal[4]) : { hour: DEFAULT_HOUR, minute: 0 };
+    if (!clock) return null;
+    const day = +ordinal[1];
+    const cur = nowInBotTz(now);
+    for (let i = 0; i < 13; i++) {
+      const y = cur.year + Math.floor((cur.month - 1 + i) / 12);
+      const m = ((cur.month - 1 + i) % 12) + 1;
+      if (!validDate(y, m, day)) continue;
+      const at = dateFromBotTz(y, m, day, clock.hour, clock.minute);
+      if (at.getTime() > now.getTime()) return at.toISOString();
+    }
+    return null;
   }
 
   // Weekday names: "monday", "fri 3pm"

@@ -72,3 +72,50 @@ test("rejects garbage and impossible dates", () => {
 test("returns past times unchanged (callers validate)", () => {
   assert.equal(p("2020-01-01 10:00"), "2020-01-01T15:00:00.000Z");
 });
+
+test("calendar dates without a year (next occurrence, 9:00 default)", () => {
+  // NOW is Wed 2026-09-30 10:00 EDT. November is EST (UTC-5).
+  assert.equal(p("nov 24"), "2026-11-24T14:00:00.000Z");
+  assert.equal(p("Nov 24 9am"), "2026-11-24T14:00:00.000Z");
+  assert.equal(p("november 24th at 2:30pm"), "2026-11-24T19:30:00.000Z");
+  assert.equal(p("Nov. 24, 9am"), "2026-11-24T14:00:00.000Z");
+  assert.equal(p("on dec 22"), "2026-12-22T14:00:00.000Z");
+  assert.equal(p("24 nov"), "2026-11-24T14:00:00.000Z");
+  assert.equal(p("the 22nd of december 8am"), "2026-12-22T13:00:00.000Z");
+  assert.equal(p("sept 30 11am"), "2026-09-30T15:00:00.000Z"); // later today
+  assert.equal(p("sep 30"), "2027-09-30T13:00:00.000Z"); // 9:00 today already passed
+  assert.equal(p("jan 5"), "2027-01-05T14:00:00.000Z"); // rolls into next year
+});
+
+test("calendar dates with a year", () => {
+  assert.equal(p("dec 22, 2026"), "2026-12-22T14:00:00.000Z");
+  assert.equal(p("dec 22 2026 3pm"), "2026-12-22T20:00:00.000Z");
+  assert.equal(p("11/24/2026"), "2026-11-24T14:00:00.000Z");
+  assert.equal(p("11/24/26 9am"), "2026-11-24T14:00:00.000Z");
+});
+
+test("US month/day", () => {
+  assert.equal(p("11/24"), "2026-11-24T14:00:00.000Z");
+  assert.equal(p("12/22 9:30am"), "2026-12-22T14:30:00.000Z");
+  assert.equal(p("1/2"), "2027-01-02T14:00:00.000Z");
+});
+
+test("bare ordinal day of the month", () => {
+  assert.equal(p("24th"), "2026-10-24T13:00:00.000Z"); // next 24th is in October (EDT)
+  assert.equal(p("the 1st 8am"), "2026-10-01T12:00:00.000Z");
+  assert.equal(p("31st"), "2026-10-31T13:00:00.000Z");
+});
+
+test("invalid calendar dates are rejected", () => {
+  assert.equal(p("feb 30"), null);
+  assert.equal(p("13/5"), null);
+  assert.equal(p("nov 31"), null);
+  assert.equal(p("smarch 3"), null);
+  assert.equal(p("24"), null);
+  assert.equal(p("nov 24 25pm"), null);
+});
+
+test("weekday parsing is unchanged by month names", () => {
+  assert.equal(p("monday"), "2026-10-05T13:00:00.000Z");
+  assert.equal(p("fri 3pm"), "2026-10-02T19:00:00.000Z");
+});

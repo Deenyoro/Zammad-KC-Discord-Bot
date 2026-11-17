@@ -67,7 +67,7 @@ export async function handleHelpCommand(
       {
         name: "Reminders (anywhere)",
         value: [
-          "`/remind-me <when> [message]` -Ping you here later. `when`: 30m, 2h, 1h30m, 3d, 1w, tomorrow 9am, friday 3pm, 17:30, 2026-10-05 14:00 (bot timezone)",
+          "`/remind-me <when> [message]` -Ping you here later. `when`: 30m, 2h, 3d, tomorrow 9am, friday 3pm, nov 24 9am, 11/24, the 24th, 17:30, 2026-10-05 14:00 (bot timezone)",
           "`/reminders [cancel]` -List your pending reminders or cancel one by ID",
         ].join("\n"),
         inline: false,

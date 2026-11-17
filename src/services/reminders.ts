@@ -30,7 +30,7 @@ export type ReminderTimeCheck =
   | { ok: false; error: string };
 
 export const REMINDER_FORMATS =
-  "`30m`, `2h`, `1h30m`, `3d`, `1w`, `tomorrow 9am`, `friday 3pm`, `17:30`, `2026-10-05 14:00`";
+  "`30m`, `2h`, `3d`, `tomorrow 9am`, `friday 3pm`, `nov 24 9am`, `11/24`, `the 24th`, `17:30`, `2026-10-05 14:00`";
 
 /** Validate a parsed reminder time (from parseTime) against now. */
 export function checkReminderTime(parsedIso: string | null, input: string, now: Date = new Date()): ReminderTimeCheck {

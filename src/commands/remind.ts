@@ -25,11 +25,11 @@ import {
 
 export const remindMeCommand = new SlashCommandBuilder()
   .setName("remind-me")
-  .setDescription("Ping you here after a time (e.g. 2h, 3d, tomorrow 9am, 2026-10-05 14:00)")
+  .setDescription("Ping you here at a time (e.g. 2h, tomorrow 9am, nov 24 9am, 11/24, 2026-10-05 14:00)")
   .addStringOption((o) =>
     o
       .setName("when")
-      .setDescription("Duration (30m, 2h, 3d, 1w) or date/time (tomorrow 9am, friday 3pm, 2026-10-05 14:00)")
+      .setDescription("Duration (30m, 2h, 3d) or date/time (tomorrow 9am, fri 3pm, nov 24 9am, 11/24 2pm, the 24th)")
       .setRequired(true)
       .setMaxLength(64)
   )

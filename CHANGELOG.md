@@ -3,6 +3,17 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.7.11] - 2026-11-17
+
+### Fixed
+
+- `/remind-me` (and `/schedule`) refused normal calendar dates such as "nov 24 9am", "11/24" or "the 24th", so a
+  reminder for a specific day had to be guessed as a duration (a "10d" reminder for a Thanksgiving notice
+  landed on Nov 27, after the holiday). The time parser now takes month names ("nov 24", "November 24th 2:30pm",
+  "24 nov", "dec 22, 2026"), US month/day ("11/24", "11/24/26 9am") and a bare ordinal day ("the 24th"), in the bot
+  timezone, at 9:00 when no time is given, at the next occurrence when no year is given. Impossible dates
+  (Feb 30, 13/5) are rejected. Help text and option hints list the new forms.
+
 ## [1.7.5] - 2026-11-17
 
 ### Fixed

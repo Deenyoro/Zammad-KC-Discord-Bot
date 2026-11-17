@@ -256,7 +256,7 @@ export const scheduleCommand = new SlashCommandBuilder()
     o.setName("text").setDescription("Reply text").setRequired(true)
   )
   .addStringOption((o) =>
-    o.setName("time").setDescription("When to send (e.g. 2h, 1d, tomorrow 9am, ISO date)").setRequired(true)
+    o.setName("time").setDescription("When to send (e.g. 2h, tomorrow 9am, nov 24 9am, 11/24, ISO date)").setRequired(true)
   );
 
 export const schedulesCommand = new SlashCommandBuilder()
