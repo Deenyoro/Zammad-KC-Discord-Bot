@@ -36,6 +36,63 @@ import { updateDashboards } from "./dashboards.js";
 let syncCycleCount = 1;
 const ARTICLE_CATCHUP_INTERVAL = 4;
 
+// ---------------------------------------------------------------------------
+// Fast article catch-up
+//
+// The full sync below does several Discord calls per ticket and takes 1.5-2 minutes for ~25 tickets, so its
+// own "every 4th cycle" article catch-up really ran every 7-8 minutes (2026-11-17: a note and an email created
+// without a webhook showed up in Discord 2 and 4 minutes late, the customer's reply arrived first).
+// This pass is separate and cheap: one ticket list call, then an article check only for tickets whose
+// updated_at moved since the last pass (plus every ticket on each CATCHUP_FULL_EVERY-th pass, because the list
+// API can lag).
+// ---------------------------------------------------------------------------
+const CATCHUP_FULL_EVERY = 10;
+const catchupSeen = new Map<number, string>();
+let catchupPass = 0;
+
+/** Ticket ids whose articles should be checked on this pass. Pure, for tests. */
+export function ticketsNeedingCatchup(
+  tickets: Array<{ id: number; updated_at: string }>,
+  seen: ReadonlyMap<number, string>,
+  full: boolean,
+): number[] {
+  return tickets.filter((t) => full || seen.get(t.id) !== t.updated_at).map((t) => t.id);
+}
+
+export async function catchUpArticles(client: Client): Promise<void> {
+  let tickets;
+  try {
+    tickets = await getAllOpenTickets();
+  } catch (err) {
+    logger.warn({ err }, "Article catch-up: could not list open tickets");
+    return;
+  }
+  catchupPass++;
+  // First pass after start: only remember where every ticket stands. The full sync does the first catch-up
+  // once the bot has settled (bulk attachment downloads right after boot ran it out of memory before).
+  if (catchupPass === 1) {
+    for (const t of tickets) catchupSeen.set(t.id, t.updated_at);
+    return;
+  }
+  const ids = new Set(ticketsNeedingCatchup(tickets, catchupSeen, catchupPass % CATCHUP_FULL_EVERY === 0));
+  let checked = 0;
+  for (const t of tickets) {
+    if (!ids.has(t.id)) continue;
+    const existing = getThreadByTicketId(t.id);
+    if (!existing) continue; // the full sync creates the thread and its first messages
+    try {
+      await enqueueForTicket(t.id, () => syncAllUnsyncedArticles(client, existing.thread_id, t.id));
+      catchupSeen.set(t.id, t.updated_at);
+      checked++;
+    } catch (err) {
+      logger.warn({ ticketId: t.id, err }, "Article catch-up failed for ticket");
+    }
+  }
+  const open = new Set(tickets.map((t) => t.id));
+  for (const id of catchupSeen.keys()) if (!open.has(id)) catchupSeen.delete(id);
+  if (checked > 0) logger.info({ checked, open: tickets.length }, "Article catch-up pass complete");
+}
+
 /**
  * Sync all non-closed Zammad tickets to Discord threads.
  * - Creates threads for tickets that don't have one yet

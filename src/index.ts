@@ -6,7 +6,7 @@ import { logger } from "./util/logger.js";
 import { initDb, closeDb, pruneDedup, pruneSyncedArticles, prunePostedMedia, pruneReminders } from "./db/index.js";
 import { createClient } from "./client.js";
 import { startWebServer } from "./web/server.js";
-import { syncAllTickets } from "./services/backfill.js";
+import { syncAllTickets, catchUpArticles } from "./services/backfill.js";
 import { startHealthCheck, stopHealthCheck } from "./services/health.js";
 import { startDailySummary, stopDailySummary } from "./services/dailySummary.js";
 import { startKeepalive, stopKeepalive } from "./services/keepalive.js";
@@ -54,6 +54,7 @@ let discordClient: Client | null = null;
 let server: Awaited<ReturnType<typeof startWebServer>> | null = null;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+let catchupTimer: ReturnType<typeof setInterval> | null = null;
 
 /** Deploy slash commands to Discord on startup */
 async function deployCommands() {
@@ -157,6 +158,20 @@ async function main() {
     }
   }, 30 * 1000);
 
+  // 7b. Fast article catch-up every 30 seconds, independent of the (slow) full sync above
+  let catchingUp = false;
+  catchupTimer = setInterval(async () => {
+    if (catchingUp) return;
+    catchingUp = true;
+    try {
+      await catchUpArticles(client);
+    } catch (err) {
+      logger.error({ err }, "Article catch-up failed");
+    } finally {
+      catchingUp = false;
+    }
+  }, 30 * 1000);
+
   // 8. Periodic maintenance (hourly), prune old dedup/sync entries
   cleanupTimer = setInterval(() => {
     pruneDedup();
@@ -189,6 +204,7 @@ async function shutdown(signal: string) {
 
   if (syncTimer) clearInterval(syncTimer);
   if (cleanupTimer) clearInterval(cleanupTimer);
+  if (catchupTimer) clearInterval(catchupTimer);
   stopHealthCheck();
   stopDailySummary();
   stopKeepalive();
