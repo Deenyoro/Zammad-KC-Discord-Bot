@@ -23,6 +23,7 @@ import {
   ownerUnknown,
   type TicketInfo,
 } from "./threads.js";
+import PQueue from "p-queue";
 import { discordQueue, enqueueForTicket } from "../queue/index.js";
 import { isClosedState, isHiddenState, isDashboardState } from "../util/states.js";
 import { updateDashboards } from "./dashboards.js";
@@ -35,6 +36,8 @@ import { updateDashboards } from "./dashboards.js";
 // attachments (avoids OOM on boot when there's a large backlog).
 let syncCycleCount = 1;
 const ARTICLE_CATCHUP_INTERVAL = 4;
+const SYNC_CONCURRENCY = 5;
+const MEMBER_CHECK_EVERY = 10;
 
 // ---------------------------------------------------------------------------
 // Fast article catch-up
@@ -128,7 +131,9 @@ export async function syncAllTickets(client: Client): Promise<void> {
   let closed = 0;
   let failed = 0;
 
-  for (const ticket of tickets) {
+  // Tickets are handled in parallel (SYNC_CONCURRENCY at a time). Work for one ticket still runs in order, and
+  // anything that must not interleave with a webhook goes through that ticket's own queue as before.
+  const perTicket = async (ticket: (typeof tickets)[number]): Promise<void> => {
     openTicketIds.add(ticket.id);
 
     try {
@@ -238,10 +243,16 @@ export async function syncAllTickets(client: Client): Promise<void> {
               // Discord auto-archives after inactivity and the cached state
               // may not reflect reality. This is cheap (Discord ignores
               // no-op edits) and guarantees the thread stays visible.
-              await discordQueue.add(async () => {
-                await thread.edit({ archived: false, locked: false, reason: "Ticket is open, ensuring thread is visible" });
-              });
-              await addRoleMembersToThread(thread);
+              // The fetch above is forced, so archived/locked are what Discord has now. Only edit when the thread
+              // really is archived or locked, and re-check its members then or on every MEMBER_CHECK_EVERY-th
+              // cycle: an edit plus a member list per ticket per cycle was most of what a sync cycle cost.
+              const wasHidden = thread.archived === true || thread.locked === true;
+              if (wasHidden) {
+                await discordQueue.add(async () => {
+                  await thread.edit({ archived: false, locked: false, reason: "Ticket is open, ensuring thread is visible" });
+                });
+              }
+              if (wasHidden || syncCycleCount % MEMBER_CHECK_EVERY === 1) await addRoleMembersToThread(thread);
             });
           } catch (err) {
             logger.debug({ ticketId: ticket.id, err }, "Failed to sync role members to thread");
@@ -346,7 +357,9 @@ export async function syncAllTickets(client: Client): Promise<void> {
       failed++;
       logger.error({ ticketId: ticket.id, err }, "Failed to sync ticket");
     }
-  }
+  };
+  const work = new PQueue({ concurrency: SYNC_CONCURRENCY });
+  await Promise.all(tickets.map((t) => work.add(() => perTicket(t))));
 
   // Close threads for tickets that are no longer open
   const allMappings = getAllTicketThreads();

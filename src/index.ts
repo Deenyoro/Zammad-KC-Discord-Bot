@@ -141,6 +141,21 @@ async function main() {
   // 5. Start webhook HTTP server
   server = await startWebServer(client);
 
+  // 5b. Fast article catch-up every 10 seconds, independent of the full sync. Started before the initial sync
+  // so a restart does not hold messages back until that sync (about 2 minutes) is over.
+  let catchingUp = false;
+  catchupTimer = setInterval(async () => {
+    if (catchingUp) return;
+    catchingUp = true;
+    try {
+      await catchUpArticles(client);
+    } catch (err) {
+      logger.error({ err }, "Article catch-up failed");
+    } finally {
+      catchingUp = false;
+    }
+  }, 10 * 1000);
+
   // 6. Initial sync, pull all open tickets from Zammad and create threads
   await syncAllTickets(client);
 
@@ -155,20 +170,6 @@ async function main() {
       logger.error({ err }, "Periodic ticket sync failed");
     } finally {
       syncing = false;
-    }
-  }, 30 * 1000);
-
-  // 7b. Fast article catch-up every 30 seconds, independent of the (slow) full sync above
-  let catchingUp = false;
-  catchupTimer = setInterval(async () => {
-    if (catchingUp) return;
-    catchingUp = true;
-    try {
-      await catchUpArticles(client);
-    } catch (err) {
-      logger.error({ err }, "Article catch-up failed");
-    } finally {
-      catchingUp = false;
     }
   }, 30 * 1000);
 
