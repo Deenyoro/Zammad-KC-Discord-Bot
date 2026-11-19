@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Security
+- No message the bot sends resolves mentions unless it asks to: AI replies and other text built from ticket content
+  could ping `@everyone` or a role. The Zammad outage alert and `/remind-me` still ping as before.
+- `/remind-me who:<role>` needs a mapped agent, like `ping:` @everyone/@here.
+- `/textmodule` (all subcommands) needs a mapped agent, like the other commands that read from Zammad.
+- Document conversion (`convert:` on `/reply`) no longer uses the attachment's file name as a path.
+- Authorization headers, tokens and API keys are redacted if a log entry ever contains them.
+
+### Fixed
+- A variable left blank in `.env` (as `.env.example` ships them) is treated as unset. Before, the bot refused to
+  start with blank optional values, and a blank `DAILY_SUMMARY_HOUR` meant hour 0.
+- `npm run deploy-commands` registered an old command list and removed `/replyall`, `/aitranslate`, `/weekly`,
+  `/checknote` and `/rename` until the next restart. It now shares one list with the bot.
+- `.env.example` said an empty `ADMIN_USER_IDS` makes everyone an admin; it means nobody is.
+- Docker `HEALTHCHECK` probes `127.0.0.1` instead of `localhost`.
+- `/help` text spacing.
+
+### Changed
+- README: privileged intents, bot permissions, environment variable table, current command list, security notes
+  and more troubleshooting. `.env.example` keeps comments on their own lines and lists `DEBUG_TOKEN`.
+
 ## [1.9.0] - 2026-11-19
 
 ### Removed
