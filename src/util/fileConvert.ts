@@ -114,7 +114,9 @@ async function convertDocToPdf(
   let tmpDir: string | null = null;
   try {
     tmpDir = await mkdtemp(join(tmpdir(), "convert-"));
-    const inputPath = join(tmpDir, filename);
+    // Fixed name inside the temp dir: the attachment's own name is never used
+    // as a path (no "../", no leading "-").
+    const inputPath = join(tmpDir, `input.${getExtension(filename)}`);
     await writeFile(inputPath, buf);
 
     await new Promise<void>((resolve, reject) => {
@@ -130,7 +132,7 @@ async function convertDocToPdf(
     });
 
     const pdfFilename = replaceExtension(filename, "pdf");
-    const pdfPath = join(tmpDir, pdfFilename);
+    const pdfPath = join(tmpDir, "input.pdf");
     const pdfBuf = await readFile(pdfPath);
 
     return {
