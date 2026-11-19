@@ -1,106 +1,31 @@
 /**
- * Standalone script to register slash commands with Discord.
- * Run: npx tsx src/commands/deploy.ts
+ * Standalone script to register the slash commands with Discord.
+ * Run: npm run deploy-commands
  *
- * Deploys guild commands (instant) when DISCORD_GUILD_ID is set,
- * otherwise deploys global commands (~1h propagation).
- *
- * NOTE: Commands are also auto-deployed on bot startup via index.ts.
+ * The bot also registers them on every start (index.ts), so this is only
+ * needed to update commands without restarting. Both use commands/all.ts.
  */
 import "dotenv/config";
 import { REST, Routes } from "discord.js";
-import { setupCommand } from "./setup.js";
-import { helpCommand } from "./help.js";
-import {
-  replyCommand,
-  noteCommand,
-  closeCommand,
-  assignCommand,
-  timeCommand,
-  priorityCommand,
-  stateCommand,
-  pendingCommand,
-  infoCommand,
-  linkCommand,
-  lockCommand,
-  searchCommand,
-  tagsCommand,
-  mergeCommand,
-  historyCommand,
-  relatedCommand,
-  scheduleCommand,
-  schedulesCommand,
-  unscheduleCommand,
-  newticketCommand,
-  textmoduleCommand,
-  participantsCommand,
-  aireplyCommand,
-  aisummaryCommand,
-  aihelpCommand,
-  aiproofreadCommand,
-} from "./shortcuts.js";
-import { mdCommand } from "./md.js";
-import { remindMeCommand, remindersCommand } from "./remind.js";
+import { allCommands } from "./all.js";
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
 const guildId = process.env.DISCORD_GUILD_ID;
 
-if (!token || !clientId) {
-  console.error("DISCORD_TOKEN and DISCORD_CLIENT_ID are required");
+if (!token || !clientId || !guildId) {
+  console.error("DISCORD_TOKEN, DISCORD_CLIENT_ID and DISCORD_GUILD_ID are required");
   process.exit(1);
 }
 
-const commands = [
-  setupCommand.toJSON(),
-  helpCommand.toJSON(),
-  replyCommand.toJSON(),
-  noteCommand.toJSON(),
-  closeCommand.toJSON(),
-  assignCommand.toJSON(),
-  timeCommand.toJSON(),
-  priorityCommand.toJSON(),
-  stateCommand.toJSON(),
-  pendingCommand.toJSON(),
-  infoCommand.toJSON(),
-  linkCommand.toJSON(),
-  lockCommand.toJSON(),
-  searchCommand.toJSON(),
-  tagsCommand.toJSON(),
-  mergeCommand.toJSON(),
-  historyCommand.toJSON(),
-  relatedCommand.toJSON(),
-  scheduleCommand.toJSON(),
-  schedulesCommand.toJSON(),
-  unscheduleCommand.toJSON(),
-  newticketCommand.toJSON(),
-  textmoduleCommand.toJSON(),
-  participantsCommand.toJSON(),
-  aireplyCommand.toJSON(),
-  aisummaryCommand.toJSON(),
-  aihelpCommand.toJSON(),
-  aiproofreadCommand.toJSON(),
-  mdCommand.toJSON(),
-  remindMeCommand.toJSON(),
-  remindersCommand.toJSON(),
-];
+const commands = allCommands();
 const rest = new REST().setToken(token);
 
 (async () => {
   try {
     console.log(`Deploying ${commands.length} commands...`);
-
-    if (guildId) {
-      await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
-        body: commands,
-      });
-      console.log(`Guild commands deployed to ${guildId}`);
-    } else {
-      await rest.put(Routes.applicationCommands(clientId), {
-        body: commands,
-      });
-      console.log("Global commands deployed (may take up to 1 hour)");
-    }
+    await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
+    console.log(`Guild commands deployed to ${guildId}`);
   } catch (err) {
     console.error("Failed to deploy commands:", err);
     process.exit(1);

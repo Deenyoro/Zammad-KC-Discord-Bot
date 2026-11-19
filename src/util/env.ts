@@ -42,9 +42,26 @@ export type Env = z.infer<typeof envSchema>;
 
 let _env: Env | null = null;
 
+/**
+ * A variable left blank (as in .env.example, `AI_API_KEY=`) means "not set".
+ * Without this, optional values failed validation and a blank
+ * DAILY_SUMMARY_HOUR was coerced to hour 0.
+ */
+export function withoutBlanks(source: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined && value.trim() !== "") out[key] = value;
+  }
+  return out;
+}
+
+export function parseEnv(source: Record<string, string | undefined>) {
+  return envSchema.safeParse(withoutBlanks(source));
+}
+
 export function loadEnv(): Env {
   if (_env) return _env;
-  const result = envSchema.safeParse(process.env);
+  const result = parseEnv(process.env);
   if (!result.success) {
     const missing = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`);
     console.error("Missing or invalid environment variables:\n" + missing.join("\n"));
