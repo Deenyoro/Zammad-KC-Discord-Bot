@@ -1997,11 +1997,11 @@ export async function handleAiReply(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+    const { isAIConfigured, aiNotConfiguredMessage, buildTicketContext, aiChat } = await import("../services/ai.js");
 
     if (!isAIConfigured()) {
       await interaction.editReply(
-        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+        aiNotConfiguredMessage()
       );
       return;
     }
@@ -2059,11 +2059,11 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+    const { isAIConfigured, aiNotConfiguredMessage, buildTicketContext, aiChat } = await import("../services/ai.js");
 
     if (!isAIConfigured()) {
       await interaction.editReply(
-        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+        aiNotConfiguredMessage()
       );
       return;
     }
@@ -2132,12 +2132,12 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+    const { isAIConfigured, aiNotConfiguredMessage, buildTicketContext, aiChat } = await import("../services/ai.js");
     const { isSearchConfigured, webSearch } = await import("../services/search.js");
 
     if (!isAIConfigured()) {
       await interaction.editReply(
-        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+        aiNotConfiguredMessage()
       );
       return;
     }
@@ -2216,11 +2216,11 @@ export async function handleAiProofread(interaction: ChatInputCommandInteraction
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+    const { isAIConfigured, aiNotConfiguredMessage, buildTicketContext, aiChat } = await import("../services/ai.js");
 
     if (!isAIConfigured()) {
       await interaction.editReply(
-        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+        aiNotConfiguredMessage()
       );
       return;
     }
@@ -2279,11 +2279,11 @@ export async function handleAiTranslate(interaction: ChatInputCommandInteraction
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+    const { isAIConfigured, aiNotConfiguredMessage, buildTicketContext, aiChat } = await import("../services/ai.js");
 
     if (!isAIConfigured()) {
       await interaction.editReply(
-        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+        aiNotConfiguredMessage()
       );
       return;
     }

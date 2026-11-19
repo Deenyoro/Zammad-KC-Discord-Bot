@@ -1,5 +1,5 @@
 import { logger } from "../util/logger.js";
-import { getSettingOrEnv } from "../db/index.js";
+import { envValue, getSettingOrEnv } from "../db/index.js";
 
 // ---------------------------------------------------------------
 // Search providers
@@ -67,7 +67,11 @@ export function isSearchConfigured(): boolean {
 
 export async function webSearch(query: string): Promise<string> {
   const apiKey = getSettingOrEnv("SEARCH_API_KEY");
-  const provider = getSettingOrEnv("SEARCH_PROVIDER") ?? "tavily";
+  // A key from the environment uses SEARCH_PROVIDER from the environment, a
+  // key saved with /setup the provider saved with it.
+  const provider = envValue("SEARCH_API_KEY")
+    ? envValue("SEARCH_PROVIDER") ?? "tavily"
+    : getSettingOrEnv("SEARCH_PROVIDER") ?? "tavily";
 
   if (!apiKey) throw new Error("Search not configured (no API key)");
 

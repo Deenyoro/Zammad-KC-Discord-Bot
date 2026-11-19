@@ -17,6 +17,9 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3100),
   // Bearer token for the /debug/* routes; they are not registered without it.
   DEBUG_TOKEN: z.string().optional(),
+  // Encrypts the API keys saved with /setup ai|search in data/bot.db
+  // (AES-256-GCM, same scheme as the Uptime bot). See db/secrets.ts.
+  SETTINGS_ENCRYPTION_KEY: z.string().optional(),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
 
   // AI provider configuration (all optional, features degrade gracefully)

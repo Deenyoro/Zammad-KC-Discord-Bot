@@ -1,5 +1,5 @@
 import { logger } from "../util/logger.js";
-import { getSettingOrEnv } from "../db/index.js";
+import { envValue, getSettingOrEnv, secretSettingProblem } from "../db/index.js";
 import { getBotTimezone } from "../util/timezone.js";
 import { getTicket, getArticles, getUser, getAgents, getTicketTags } from "./zammad.js";
 
@@ -119,16 +119,34 @@ export function isAIConfigured(): boolean {
   return !!getSettingOrEnv("AI_API_KEY");
 }
 
+/** Reply for AI commands when no usable key is configured. */
+export function aiNotConfiguredMessage(): string {
+  return (
+    secretSettingProblem("AI_API_KEY") ??
+    "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+  );
+}
+
+/**
+ * The provider belongs to the key: a key from the environment uses
+ * AI_PROVIDER from the environment, a key saved with /setup the provider
+ * saved with it.
+ */
+function aiProvider(): string {
+  if (envValue("AI_API_KEY")) return envValue("AI_PROVIDER") ?? "openrouter";
+  return getSettingOrEnv("AI_PROVIDER") ?? "openrouter";
+}
+
 export async function aiChat(
   systemPrompt: string,
   userMessage: string
 ): Promise<string> {
   const apiKey = getSettingOrEnv("AI_API_KEY");
-  const provider = getSettingOrEnv("AI_PROVIDER") ?? "openrouter";
+  const provider = aiProvider();
   const model = getSettingOrEnv("AI_MODEL");
   const baseURL = getSettingOrEnv("AI_BASE_URL");
 
-  if (!apiKey) throw new Error("AI not configured (no API key)");
+  if (!apiKey) throw new Error(aiNotConfiguredMessage());
 
   // Try primary provider
   try {
@@ -211,6 +229,7 @@ export async function buildTicketContext(
   try {
     tags = await getTicketTags(ticketId);
   } catch {
+  const lastAgentMsg = agentMessages[agentMessages.length - 1];
     // non-critical
   }
 
@@ -229,7 +248,6 @@ export async function buildTicketContext(
   const agentMessages = articles.filter(a => a.sender === "Agent" && !a.internal);
   const internalNotes = articles.filter(a => a.internal);
   const lastCustomerMsg = customerMessages[customerMessages.length - 1];
-  const lastAgentMsg = agentMessages[agentMessages.length - 1];
 
   // Determine communication channel from most recent article types
   const channelTypes = articles.slice(-5).map(a => a.type).filter(Boolean);
