@@ -2,10 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
-
 ## [1.9.0] - 2026-11-19
 
 ### Removed
+- An optional access module that now runs as a separate bot. This bot no longer asks for the Direct Messages
+  intent.
 
 ## [1.8.0] - 2026-11-17
 
@@ -59,11 +60,6 @@ All notable changes to this project are documented in this file.
   when the fresh read says unassigned but the webhook shows an owner, the webhook is trusted and the name is kept.
   Genuine unassignment still clears the name.
 
-
-## [1.7.3] - 2026-11-13
-
-### Fixed
-
 ## [1.7.2] - 2026-11-12
 
 ### Fixed
@@ -84,28 +80,9 @@ All notable changes to this project are documented in this file.
 - Long messages are never split inside a link (the split moves to just before it; only a single link longer than a
   whole message is still cut), and the quoted-context spoiler is truncated before a link instead of through it.
 
-## [1.7.0] - 2026-11-11
-
-### Changed
-
-## [1.6.0] - 2026-11-10
-
-### Changed
-
-### Fixed
-
-## [1.4.0] - 2026-11-08
-
-### Added
-
-## [1.2.0] - 2026-11-08
-
-### Added
-
 ## [1.1.0] - 2026-11-08
 
 ### Added
-
 
 ## [1.0.11] - 2026-11-04
 
