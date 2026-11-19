@@ -23,7 +23,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: bot
-          image: ghcr.io/deenyoro/zammad-kc-discord-bot:latest
+          image: ghcr.io/kawaconnect/zammad-kc-discord-bot:latest
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
