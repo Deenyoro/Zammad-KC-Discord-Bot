@@ -5,7 +5,7 @@
 # on a v* tag, or manually from the UI/API (set RELEASE_VERSION=v1.2.3 to stamp
 # a version without tagging, DOCKER_PUSH=false to build without publishing).
 #
-# The check job (test stage) gates the image build: npm ci, type check,
+# The check job (test stage) gates the image build: npm ci, type check, lint,
 # build and `npm test` on the Dockerfile's Node image, plus a release version
 # check against package.json. A failed check means no image is built or pushed.
 #
@@ -20,6 +20,9 @@ include:
     file: /docker.yml
 
 variables:
+  # GHCR mirror target for the template's build job (ghcr.io/kawaconnect/<image>).
+  # Also set as a project CI variable; this keeps it visible in the repo.
+  GHCR_OWNER: kawaconnect
   # Same base image as both Dockerfile stages; ci/check.sh fails if they drift.
   NODE_IMAGE: node:24-alpine
 
@@ -43,3 +46,28 @@ build:
     matrix:
     - IMAGE: zammad-kc-discord-bot
       CONTEXT: .
+
+# Starts the image with the shipped docker-compose.yml on a fresh (missing)
+# ./data and on a root-owned ./data with an existing database (ci/compose-test.sh).
+# Runs on merge requests that touch the image or compose file, and before
+# every release.
+compose-test:
+  stage: test
+  tags: [linux]
+  image: docker:27
+  services: ["docker:27-dind"]
+  interruptible: true
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: /certs/client
+    DOCKER_BUILDKIT: "1"
+    GIT_DEPTH: "1"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: [Dockerfile, docker-entrypoint.sh, docker-compose.yml, ci/compose-test.sh, package.json, package-lock.json]
+    - if: $CI_COMMIT_TAG =~ /^v/
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+  script:
+    - for _ in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 2; done
+    - sh ci/compose-test.sh

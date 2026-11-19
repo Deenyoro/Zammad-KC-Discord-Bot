@@ -1,8 +1,8 @@
 # Zammad KC Discord Bot
 
-Part of the [KawaConnect](https://github.com/Deenyoro/zammad-kc) support structure - a unified platform that brings every support channel (email, SMS, Teams, phone) into one place. This bot bridges Zammad tickets to Discord threads, replacing Zammad's lack of a mobile app with Discord's cross-platform presence for fast, on-the-go ticket operations.
+Part of the [KawaConnect](https://github.com/kawaconnect/zammad-kc) support structure - a unified platform that brings every support channel (email, SMS, Teams, phone) into one place. This bot bridges Zammad tickets to Discord threads, replacing Zammad's lack of a mobile app with Discord's cross-platform presence for fast, on-the-go ticket operations.
 
-Built for [Zammad-KC](https://github.com/Deenyoro/zammad-kc) (which adds SMS, Teams Chat, scheduled replies, and custom ticket states on top of Zammad), but **should work with any standard Zammad installation** - the KC-specific features (scheduled replies, SMS conversations) simply won't be available if the KC endpoints don't exist.
+Built for [Zammad-KC](https://github.com/kawaconnect/zammad-kc) (which adds SMS, Teams Chat, scheduled replies, and custom ticket states on top of Zammad), but **should work with any standard Zammad installation** - the KC-specific features (scheduled replies, SMS conversations) simply won't be available if the KC endpoints don't exist.
 
 ## Features
 
@@ -161,15 +161,36 @@ Fill in the values. A variable left blank counts as not set.
 | `PORT` | no | `3100` | HTTP port (webhook, `/healthz`, `/readyz`) |
 | `LOG_LEVEL` | no | `info` | `trace`, `debug`, `info`, `warn`, `error`, `fatal` |
 | `DEBUG_TOKEN` | no | | Enables `/debug/*`, which then require `Authorization: Bearer <token>` |
+| `SETTINGS_ENCRYPTION_KEY` | no | | Encrypts the API keys saved with `/setup ai` and `/setup search` in `data/bot.db`, see [Stored API keys](#stored-api-keys) |
 | `AI_API_KEY`, `AI_PROVIDER`, `AI_MODEL`, `AI_BASE_URL` | no | provider `openrouter` | AI commands, see [Optional Features](#optional-features) |
 | `AI_FALLBACK_API_KEY`, `AI_FALLBACK_PROVIDER`, `AI_FALLBACK_MODEL` | no | | Fallback AI provider |
 | `SEARCH_API_KEY`, `SEARCH_PROVIDER` | no | provider `tavily` | Web search for `/aihelp` |
 | `SEARCH_FALLBACK_API_KEY`, `SEARCH_FALLBACK_PROVIDER` | no | | Fallback search provider |
 | `DAILY_SUMMARY_HOUR` | no | off | Hour (0-23) for the daily summary |
 
-Values set with `/setup` (AI and search keys, summary hour, timezone and the
-rest) are stored in `data/bot.db` and win over the environment. They are stored
-unencrypted, so protect the data volume and its backups like the `.env` file.
+Values set with `/setup` (summary hour, timezone, AI provider and model and
+the rest) are stored in `data/bot.db` and win over the environment. The API
+keys are the exception: a non-blank `AI_API_KEY`, `AI_FALLBACK_API_KEY`,
+`SEARCH_API_KEY` or `SEARCH_FALLBACK_API_KEY` in the environment wins over a key
+saved with `/setup`, so a deployment can inject the keys from a secret store and
+keep none in the database. A key from the environment is used with the provider
+from the environment (`AI_PROVIDER`, `SEARCH_PROVIDER`); while it is set,
+`/setup ai` or `/setup search` refuses to save a key.
+
+#### Stored API keys
+
+Keys saved with `/setup ai` and `/setup search` are encrypted in `data/bot.db`
+when `SETTINGS_ENCRYPTION_KEY` is set (any long random string, e.g.
+`openssl rand -base64 32`): AES-256-GCM, stored as `enc:v1:<iv>:<tag>:<data>`,
+the same scheme as the Uptime Discord bot. Keys saved before the variable was
+set are encrypted at the next start. Without it the bot works as before, stores
+the keys in plaintext and logs a warning at startup, so protect the data volume
+and its backups like the `.env` file.
+
+Keep the encryption key with the other bot secrets. If it is lost or changed,
+the stored keys can no longer be read: the bot keeps running, logs which
+setting is affected, and the AI commands answer that an admin needs to run
+`/setup ai` (or `/setup search`) again. Restoring the old key also works.
 
 ### 5. Create the Zammad Webhook + Triggers
 
@@ -204,12 +225,19 @@ npm run build
 npm start
 ```
 
-With Docker Compose the database is kept in `./data` on the host. The container
-runs as a non-root user, so create the directory and make it writable for that
-user before the first start (`docker compose run --rm discord-bot id` shows the
-uid), otherwise the bot exits with "unable to open database file". Port 3100
-only needs to be published if Zammad reaches the bot through the host; on a
-shared Docker network you can remove the `ports:` entry.
+With Docker Compose the database is kept in `./data` on the host. The
+container starts as root only long enough to give the unprivileged `bot` user
+ownership of `./data` (Docker creates it as root on a fresh install, and older
+installs may have root-owned files there), then runs the bot as `bot`. No
+manual step is needed, and existing data stays where it is. When the container
+is started as another user (Kubernetes `runAsUser`, `docker run --user`), that
+step is skipped and the platform must make `/app/data` writable, e.g. with
+`fsGroup` as in `k8s/deployment.yaml`.
+
+The compose file publishes port 3100 on `127.0.0.1` only. Zammad on the shared
+Docker network reaches the bot by container name and does not need it; remove
+the `ports:` entry if nothing on the host uses it, or change the address if
+Zammad runs on another machine (then put TLS in front).
 
 Slash commands are automatically deployed to your Discord server on startup. You can also deploy them manually:
 
@@ -238,7 +266,7 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     volumes:
       - ./data:/app/data
     networks:
@@ -286,12 +314,19 @@ mirror). Plain pushes do not start a pipeline.
    - on a release (a `v*` tag, or `RELEASE_VERSION`), fails unless `package.json`
      and `package-lock.json` carry that version;
    - `npm ci`, a load check of the native modules (`better-sqlite3`, `sharp`),
-     `npm run typecheck`, `npm run build`, and `npm test` (Zammad webhook
-     signature checks and attachment image conversion).
+     `npm run typecheck`, `npm run lint`, `npm run build`, and `npm test`
+     (Zammad webhook signature checks, attachment image conversion, settings
+     encryption).
+   - `compose-test` job (`ci/compose-test.sh`, Docker-in-Docker): starts the
+     image with the shipped `docker-compose.yml` on a fresh `./data` and on a
+     root-owned `./data` holding a database, and checks the database opens and
+     keeps its data. Runs on merge requests that change the image or compose
+     file, and on every release.
 2. **build** stage, `build` job: builds the `Dockerfile` with the shared
    `dean/ci-templates` docker template. It runs only if `check` passed. It pushes
    to the GitLab container registry and mirrors to
-   `ghcr.io/deenyoro/zammad-kc-discord-bot` (the image `k8s/deployment.yaml` uses).
+   `ghcr.io/kawaconnect/zammad-kc-discord-bot` (the image `k8s/deployment.yaml`
+   uses; `GHCR_OWNER` in `.gitlab-ci.yml`).
    A tag `v1.2.3` publishes `1.2.3`, `1.2` and `latest`, plus `sha-<commit>`.
    A manual run without `RELEASE_VERSION` publishes `sha-<commit>`, `<branch>` and
    `<branch>-<commit>`, and also `latest` when run on `master`.
@@ -307,7 +342,13 @@ Manual runs (GitLab: Build > Pipelines > Run pipeline) accept these variables:
 | `RELEASE_VERSION=v1.2.3` | Build and publish as that version without a tag (package.json must match) |
 | `DOCKER_PUSH=false` | Run the checks and build the image, but publish nothing |
 
-To run the same checks locally with Node 24: `sh ci/check.sh`.
+To run the same checks locally with Node 24: `sh ci/check.sh`. With Docker:
+`sh ci/compose-test.sh`.
+
+Linting: `npm run lint`. ESLint and typescript-eslint live in `tools/lint` with
+their own `package.json`, because typescript-eslint needs the TypeScript 6
+compiler API while the bot builds with TypeScript 7; the script installs them on
+first use. The config is `eslint.config.js`.
 
 ## Commands Reference
 
@@ -432,7 +473,9 @@ AI_FALLBACK_PROVIDER=openai
 AI_FALLBACK_MODEL=gpt-4o
 ```
 
-Or configure at runtime (stored in the bot's database, overrides env vars):
+Or configure at runtime (stored in the bot's database, encrypted when
+`SETTINGS_ENCRYPTION_KEY` is set; only used while `AI_API_KEY` is not set in
+the environment, see [Configure](#4-configure)):
 
 ```
 /setup ai <api_key> [provider] [model]
@@ -510,7 +553,7 @@ Discord <──WebSocket──> Bot <──HTTP POST──> Zammad (webhooks)
 
 ## Compatibility
 
-This bot is built for [Zammad-KC](https://github.com/Deenyoro/zammad-kc), which extends Zammad with additional features. However, it **works with standard Zammad** installations with the following differences:
+This bot is built for [Zammad-KC](https://github.com/kawaconnect/zammad-kc), which extends Zammad with additional features. However, it **works with standard Zammad** installations with the following differences:
 
 | Feature | Standard Zammad | Zammad-KC |
 |---------|----------------|-----------|
@@ -547,6 +590,12 @@ For standard Zammad, you may need to create the "waiting for reply" and "closed 
 **The AI commands say "not configured"**
 - Set up a provider with `/setup ai <api_key>` or the `AI_API_KEY` env var
 
+**The AI commands say the stored key "cannot be decrypted"**
+- `SETTINGS_ENCRYPTION_KEY` was removed or changed after the key was saved. Run `/setup ai` (or `/setup search`) again, or restore the previous value. The log names the affected setting.
+
+**`/setup ai` says the key is set in the environment**
+- `AI_API_KEY` (or `SEARCH_API_KEY`) in the environment wins over the database. Change it in the deployment, or remove it there to manage the key with `/setup`.
+
 **Bot shows "ZAMMAD UNREACHABLE"**
 - Check that `ZAMMAD_BASE_URL` is correct and Zammad is running
 - The bot retries automatically and will recover when connectivity is restored
@@ -558,7 +607,7 @@ For standard Zammad, you may need to create the "waiting for reply" and "closed 
 - Enable Message Content Intent and Server Members Intent on the bot's page in the Developer Portal.
 
 **Bot exits with "unable to open database file"**
-- `data/` is not writable by the container user. See [Build & Start](#6-build--start).
+- `data/` is not writable by the container user. With the shipped image and compose file this is fixed at start; it can still happen when the container runs as a fixed user (`--user`, Kubernetes `runAsUser`) on a volume that user cannot write. See [Build & Start](#6-build--start).
 
 **Slash commands are missing**
 - Check the log for "Failed to deploy slash commands". The bot must be in the server named by `DISCORD_GUILD_ID` and invited with the `applications.commands` scope.
@@ -576,9 +625,6 @@ For standard Zammad, you may need to create the "waiting for reply" and "closed 
 
 - `/webhooks/zammad` accepts only requests signed with `ZAMMAD_WEBHOOK_SECRET` (HMAC-SHA1, as Zammad sends it). `/healthz` and `/readyz` are open; `/debug/*` exist only with `DEBUG_TOKEN`.
 - Do not expose port 3100 to the internet. Zammad is the only client.
+- Set `SETTINGS_ENCRYPTION_KEY` so API keys saved with `/setup` are not stored in plaintext, or inject the keys through the environment and save none.
 - `/setup` is limited to `ADMIN_USER_IDS`; ticket commands to Discord users mapped to a Zammad agent. The bot acts in Zammad with an admin token, so treat the mapping as granting agent access.
 - Ticket text relayed into Discord never pings anyone: mentions in it are not resolved.
-
-## License
-
-MIT

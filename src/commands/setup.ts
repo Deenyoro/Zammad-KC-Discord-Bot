@@ -4,7 +4,8 @@ import {
   PermissionFlagsBits,
 } from "discord.js";
 import { logger } from "../util/logger.js";
-import { setUserMap, setSetting, deleteSetting, getSetting } from "../db/index.js";
+import { setUserMap, setSetting, deleteSetting, getSetting, envValue } from "../db/index.js";
+import { settingsKey } from "../db/secrets.js";
 import { findUserByEmail } from "../services/zammad.js";
 import { env } from "../util/env.js";
 import { getAttachmentLimits } from "../util/attachmentLimits.js";
@@ -240,8 +241,23 @@ async function handleUsermap(interaction: ChatInputCommandInteraction) {
   );
 }
 
+/** How the key was stored, appended to the /setup ai|search reply. */
+function storageNote(): string {
+  return settingsKey()
+    ? "\nThe key is stored encrypted."
+    : "\nNote: SETTINGS_ENCRYPTION_KEY is not set, so the key is stored in plaintext in data/bot.db.";
+}
+
 async function handleAiSetup(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
+
+  if (envValue("AI_API_KEY")) {
+    await interaction.editReply(
+      "AI_API_KEY is set in the bot's environment and takes precedence, so nothing was saved. " +
+        "Change AI_API_KEY / AI_PROVIDER in the deployment instead, or remove AI_API_KEY there to use `/setup ai`."
+    );
+    return;
+  }
 
   const apiKey = interaction.options.getString("api_key", true);
   const provider = interaction.options.getString("provider") ?? "openrouter";
@@ -254,7 +270,7 @@ async function handleAiSetup(interaction: ChatInputCommandInteraction) {
   }
 
   await interaction.editReply(
-    `AI configured: provider=${provider}${model ? `, model=${model}` : ""}`
+    `AI configured: provider=${provider}${model ? `, model=${model}` : ""}${storageNote()}`
   );
   logger.info({ provider, model }, "AI settings updated via /setup ai");
 }
@@ -262,13 +278,21 @@ async function handleAiSetup(interaction: ChatInputCommandInteraction) {
 async function handleSearchSetup(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
+  if (envValue("SEARCH_API_KEY")) {
+    await interaction.editReply(
+      "SEARCH_API_KEY is set in the bot's environment and takes precedence, so nothing was saved. " +
+        "Change SEARCH_API_KEY / SEARCH_PROVIDER in the deployment instead, or remove SEARCH_API_KEY there to use `/setup search`."
+    );
+    return;
+  }
+
   const apiKey = interaction.options.getString("api_key", true);
   const provider = interaction.options.getString("provider") ?? "tavily";
 
   setSetting("SEARCH_API_KEY", apiKey);
   setSetting("SEARCH_PROVIDER", provider);
 
-  await interaction.editReply(`Search configured: provider=${provider}`);
+  await interaction.editReply(`Search configured: provider=${provider}${storageNote()}`);
   logger.info({ provider }, "Search settings updated via /setup search");
 }
 

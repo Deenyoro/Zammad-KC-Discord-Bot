@@ -9,10 +9,11 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Client } from "discord.js";
-import { EmbedBuilder, ThreadChannel } from "discord.js";
+import { ThreadChannel } from "discord.js";
 import { getAllTicketThreads, getSetting, setSetting } from "../../db/index.js";
 import { isClosedState, isHiddenState } from "../../util/states.js";
 import { runKeepaliveSweep } from "../../services/keepalive.js";
+import { errorMessage } from "../../util/errorMessage.js";
 
 /** Constant-time check of "Authorization: Bearer <token>". */
 function hasDebugToken(req: FastifyRequest, token: string): boolean {
@@ -78,12 +79,12 @@ function registerDebugRouteHandlers(app: FastifyInstance, client: Client): void 
               username: m.user?.username ?? "unknown",
             }));
             entry.discord_member_count_actual = members.size;
-          } catch (err: any) {
-            entry.discord_members_error = err?.message ?? String(err);
+          } catch (err) {
+            entry.discord_members_error = errorMessage(err);
           }
         }
-      } catch (err: any) {
-        entry.discord_error = err?.message ?? String(err);
+      } catch (err) {
+        entry.discord_error = errorMessage(err);
       }
 
       results.push(entry);
@@ -92,7 +93,7 @@ function registerDebugRouteHandlers(app: FastifyInstance, client: Client): void 
     // Check dashboard thread
     const dashboardThreadId = getSetting("dashboard:other_tickets:thread_id");
     const dashboardMsgId = getSetting("dashboard:other_tickets:message_id");
-    let dashboard: Record<string, unknown> = {
+    const dashboard: Record<string, unknown> = {
       thread_id: dashboardThreadId ?? null,
       message_id: dashboardMsgId ?? null,
     };
@@ -115,14 +116,14 @@ function registerDebugRouteHandlers(app: FastifyInstance, client: Client): void 
               username: m.user?.username ?? "unknown",
             }));
             dashboard.discord_member_count_actual = members.size;
-          } catch (err: any) {
-            dashboard.discord_members_error = err?.message ?? String(err);
+          } catch (err) {
+            dashboard.discord_members_error = errorMessage(err);
           }
         } else {
           dashboard.discord_error = "Thread not found";
         }
-      } catch (err: any) {
-        dashboard.discord_error = err?.message ?? String(err);
+      } catch (err) {
+        dashboard.discord_error = errorMessage(err);
       }
     }
 
@@ -160,7 +161,7 @@ function registerDebugRouteHandlers(app: FastifyInstance, client: Client): void 
   });
 
   app.post<{ Body: { hour: number } }>("/debug/settings/keepalive", async (req) => {
-    const hour = (req.body as any)?.hour;
+    const hour = (req.body as { hour?: unknown } | undefined)?.hour;
     if (typeof hour !== "number" || hour < 0 || hour > 23) {
       return { ok: false, error: "hour must be 0-23" };
     }

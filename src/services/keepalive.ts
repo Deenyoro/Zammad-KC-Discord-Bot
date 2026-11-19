@@ -20,10 +20,11 @@ import {
   Client,
   EmbedBuilder,
   Message,
+  MessageFlags,
   ThreadChannel,
 } from "discord.js";
 import { logger } from "../util/logger.js";
-import { getAllTicketThreads, getThreadByTicketId, getSetting, getSettingOrEnv, setSetting } from "../db/index.js";
+import { getAllTicketThreads, getThreadByTicketId, getSettingOrEnv, setSetting } from "../db/index.js";
 import { getCurrentHourInTz } from "../util/timezone.js";
 import { getTicket, getArticles, getUser } from "./zammad.js";
 import { ticketUrl } from "./threads.js";
@@ -105,9 +106,9 @@ async function ensureStatusAtBottom(
   const newMsg = (await discordQueue.add(async () =>
     thread.send({
       embeds: [embed],
-      flags: 4096, // SUPPRESS_NOTIFICATIONS
+      flags: MessageFlags.SuppressNotifications,
       allowedMentions: { parse: [] },
-    } as any)
+    })
   )) as Message | undefined;
 
   if (newMsg) {
@@ -323,7 +324,9 @@ async function buildStatusEmbed(
             }
           }
 
-          const prefs = a.preferences as Record<string, any> | undefined;
+          const prefs = a.preferences as
+            | { teams_chat?: { conversation_id?: string; display_name?: string } }
+            | undefined;
           if (prefs?.teams_chat?.conversation_id) {
             const teamsKey = `teams:${prefs.teams_chat.conversation_id}`;
             if (!seenContacts.has(teamsKey)) {

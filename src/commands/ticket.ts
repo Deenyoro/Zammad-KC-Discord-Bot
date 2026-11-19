@@ -3,7 +3,6 @@ import { addTicketNote } from "../services/ticketNotes.js";
 import { logger } from "../util/logger.js";
 import {
   getThreadByThreadId,
-  getThreadByTicketId,
   getAllTicketThreads,
   getUserMap,
   updateThreadState,
@@ -40,7 +39,7 @@ import {
   searchTeamsContacts,
   createTeamsConversation,
 } from "../services/zammad.js";
-import { ticketUrl, closeTicketThread, removeRoleMembersFromThread, renameTicketThread, formatOwnerLabel, sendToThread } from "../services/threads.js";
+import { ticketUrl, closeTicketThread, removeRoleMembersFromThread, renameTicketThread, formatOwnerLabel } from "../services/threads.js";
 import { discordQueue } from "../queue/index.js";
 import { announceMerges, formatRelatedLines, getRelatedTickets } from "../services/related.js";
 import { refreshTicketStatus } from "../services/keepalive.js";
@@ -48,9 +47,8 @@ import { isClosedState, isHiddenState, isDashboardState } from "../util/states.j
 import { parseTime } from "../util/parseTime.js";
 import { formatInBotTz, getBotTimezone } from "../util/timezone.js";
 import { truncate, splitMessage } from "../util/truncate.js";
-import { env } from "../util/env.js";
 import { getAttachmentLimits } from "../util/attachmentLimits.js";
-import { isValidEmail, parseEmailAddress, parseDisplayName } from "../util/email.js";
+import { parseEmailAddress, parseDisplayName } from "../util/email.js";
 import { canConvert, convertFile, type ConvertTarget } from "../util/fileConvert.js";
 
 // ---------------------------------------------------------------
@@ -983,7 +981,7 @@ export async function handleReplyAll(interaction: ChatInputCommandInteraction) {
     nonEmailFallback = true;
   }
 
-  let to: string = (channel.type === "email" ? customerEmail : undefined) ?? channel.to;
+  const to: string = (channel.type === "email" ? customerEmail : undefined) ?? channel.to;
   let cc: string | undefined;
   let fellBackToReply = false;
 
@@ -1192,17 +1190,6 @@ export async function handlePending(interaction: ChatInputCommandInteraction) {
 }
 
 // handleOwner removed, merged into handleAssign
-
-// ---------------------------------------------------------------
-// Admin check (reuses env ADMIN_USER_IDS)
-// ---------------------------------------------------------------
-
-// Only user IDs listed in ADMIN_USER_IDS are admins. An empty list means
-// nobody is, rather than every member who can see the command.
-function isAdmin(userId: string): boolean {
-  const ids = env().ADMIN_USER_IDS;
-  return ids.length > 0 && ids.includes(userId);
-}
 
 // ---------------------------------------------------------------
 // /search
@@ -1997,11 +1984,11 @@ export async function handleAiReply(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+    const { isAIConfigured, aiNotConfiguredMessage, buildTicketContext, aiChat } = await import("../services/ai.js");
 
     if (!isAIConfigured()) {
       await interaction.editReply(
-        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+        aiNotConfiguredMessage()
       );
       return;
     }
@@ -2059,11 +2046,11 @@ export async function handleAiSummary(interaction: ChatInputCommandInteraction) 
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+    const { isAIConfigured, aiNotConfiguredMessage, buildTicketContext, aiChat } = await import("../services/ai.js");
 
     if (!isAIConfigured()) {
       await interaction.editReply(
-        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+        aiNotConfiguredMessage()
       );
       return;
     }
@@ -2132,12 +2119,12 @@ export async function handleAiHelp(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+    const { isAIConfigured, aiNotConfiguredMessage, buildTicketContext, aiChat } = await import("../services/ai.js");
     const { isSearchConfigured, webSearch } = await import("../services/search.js");
 
     if (!isAIConfigured()) {
       await interaction.editReply(
-        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+        aiNotConfiguredMessage()
       );
       return;
     }
@@ -2216,11 +2203,11 @@ export async function handleAiProofread(interaction: ChatInputCommandInteraction
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+    const { isAIConfigured, aiNotConfiguredMessage, buildTicketContext, aiChat } = await import("../services/ai.js");
 
     if (!isAIConfigured()) {
       await interaction.editReply(
-        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+        aiNotConfiguredMessage()
       );
       return;
     }
@@ -2279,11 +2266,11 @@ export async function handleAiTranslate(interaction: ChatInputCommandInteraction
   await interaction.deferReply({ ephemeral: false });
 
   try {
-    const { isAIConfigured, buildTicketContext, aiChat } = await import("../services/ai.js");
+    const { isAIConfigured, aiNotConfiguredMessage, buildTicketContext, aiChat } = await import("../services/ai.js");
 
     if (!isAIConfigured()) {
       await interaction.editReply(
-        "AI is not configured. Set AI_API_KEY or use `/setup ai` to enable AI features."
+        aiNotConfiguredMessage()
       );
       return;
     }

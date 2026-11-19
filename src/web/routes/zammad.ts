@@ -22,7 +22,7 @@ function verifySignature(raw: string | undefined, header: string | undefined, se
 
 export function registerZammadRoutes(app: FastifyInstance, client: Client): void {
   app.post<{ Body: WebhookPayload }>("/webhooks/zammad", async (req, reply) => {
-    const raw = (req as any).rawBody as string | undefined;
+    const raw = req.rawBody as string | undefined;
     const deliveryId = req.headers["x-zammad-delivery"] as string | undefined;
     const signature = req.headers["x-hub-signature"] as string | undefined;
 

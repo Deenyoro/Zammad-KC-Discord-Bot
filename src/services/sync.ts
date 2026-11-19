@@ -241,7 +241,6 @@ async function processWebhook(
   };
 
   let mapping = getThreadByTicketId(ticketId);
-  let threadJustCreated = false;
 
   // Never create a thread for a ticket that is already closed: a closed
   // ticket with no thread (e.g. the target of a merge into a closed ticket,
@@ -258,7 +257,6 @@ async function processWebhook(
     await createTicketThread(client, ticketInfo);
     mapping = getThreadByTicketId(ticketId);
     if (!mapping) throw new Error(`Failed to create mapping for ticket ${ticketId}`);
-    threadJustCreated = true;
 
     // If we just created a thread for a closed/locked ticket, close it immediately
     if (isClosedState(normalizedState)) {

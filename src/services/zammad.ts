@@ -23,7 +23,7 @@ export interface ZammadTicket {
   created_at: string;
   updated_at: string;
   escalation_at?: string | null;
-  preferences?: Record<string, any>;
+  preferences?: Record<string, unknown>;
   tags?: string[];
   organization?: string | null;
   organization_id?: number | null;
@@ -927,6 +927,8 @@ export async function expandTextModules(text: string): Promise<{
   }
 
   // Build final HTML: escape plain text parts, preserve text module HTML as-is
+  // NUL-delimited markers set above; they cannot occur in the module text.
+  // eslint-disable-next-line no-control-regex
   const parts = result.split(/\x00TM_START\x00|\x00TM_END\x00/);
   let html = "";
   for (let i = 0; i < parts.length; i++) {

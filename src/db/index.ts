@@ -2,6 +2,15 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { logger } from "../util/logger.js";
+import {
+  ENV_FIRST_KEYS,
+  SECRET_SETTING_KEYS,
+  decryptValue,
+  encryptValue,
+  isEncryptedValue,
+  settingsKey,
+  setupCommandFor,
+} from "./secrets.js";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS ticket_threads (
@@ -99,6 +108,7 @@ export function initDb(dbPath: string): Database.Database {
   _db.exec(SCHEMA);
   migrate(_db);
   logger.info({ dbPath }, "Database initialized");
+  migrateSecretSettings();
   return _db;
 }
 
@@ -505,14 +515,14 @@ export function pruneReminders(): void {
 // settings (runtime config, overrides env vars)
 // ---------------------------------------------------------------
 
-export function getSetting(key: string): string | undefined {
+function readRaw(key: string): string | undefined {
   const row = db()
     .prepare("SELECT value FROM settings WHERE key = ?")
     .get(key) as { value: string } | undefined;
   return row?.value;
 }
 
-export function setSetting(key: string, value: string): void {
+function writeRaw(key: string, value: string): void {
   db()
     .prepare(
       `INSERT INTO settings (key, value) VALUES (?, ?)
@@ -521,17 +531,127 @@ export function setSetting(key: string, value: string): void {
     .run(key, value, value);
 }
 
-export function deleteSetting(key: string): boolean {
-  const result = db().prepare("DELETE FROM settings WHERE key = ?").run(key);
-  return result.changes > 0;
+// Secret settings that exist but cannot be decrypted, so the error is logged
+// once per key and commands can tell the admin what to do.
+const undecryptable = new Set<string>();
+
+function markUndecryptable(key: string, keySet: boolean): void {
+  if (undecryptable.has(key)) return;
+  undecryptable.add(key);
+  const reason = keySet
+    ? "cannot be decrypted with the current SETTINGS_ENCRYPTION_KEY (was the key changed?)"
+    : "is encrypted but SETTINGS_ENCRYPTION_KEY is not set";
+  logger.error(
+    { key },
+    `Stored ${key} ${reason}; treating it as unset. Restore the old key, or re-run ${setupCommandFor(key)} to save it again.`
+  );
 }
 
 /**
- * Get a configuration value: check SQLite settings first, fall back to env var.
- * This allows runtime configuration via /setup commands to override .env values.
+ * Message for the admin when a stored secret cannot be read, or undefined
+ * when it is fine (or not stored at all).
+ */
+export function secretSettingProblem(key: string): string | undefined {
+  if (!undecryptable.has(key)) return undefined;
+  return (
+    `The stored ${key} cannot be decrypted (SETTINGS_ENCRYPTION_KEY is missing or was changed). ` +
+    `An admin needs to re-run \`${setupCommandFor(key)}\` to save it again, or restore the previous key.`
+  );
+}
+
+/**
+ * Encrypt secret settings still stored in plaintext (when a key is set),
+ * otherwise warn once that they are kept in plaintext. Also reports stored
+ * values that cannot be decrypted.
+ */
+function migrateSecretSettings(): void {
+  const k = settingsKey();
+  const plain: string[] = [];
+  for (const name of SECRET_SETTING_KEYS) {
+    const raw = readRaw(name);
+    if (raw === undefined) continue;
+    if (isEncryptedValue(raw)) {
+      if (!k) {
+        markUndecryptable(name, false);
+        continue;
+      }
+      try {
+        decryptValue(raw, k);
+      } catch {
+        markUndecryptable(name, true);
+      }
+      continue;
+    }
+    if (k) {
+      writeRaw(name, encryptValue(raw, k));
+      logger.info({ key: name }, "Encrypted plaintext secret setting");
+    } else {
+      plain.push(name);
+    }
+  }
+  if (!k) {
+    logger.warn(
+      { plaintextKeys: plain },
+      plain.length > 0
+        ? "SETTINGS_ENCRYPTION_KEY is not set: API keys saved with /setup are stored in plaintext in data/bot.db. Set it to encrypt them."
+        : "SETTINGS_ENCRYPTION_KEY is not set: API keys saved with /setup will be stored in plaintext in data/bot.db."
+    );
+  }
+}
+
+export function getSetting(key: string): string | undefined {
+  const raw = readRaw(key);
+  if (raw === undefined || !SECRET_SETTING_KEYS.has(key)) return raw;
+  const k = settingsKey();
+  if (isEncryptedValue(raw)) {
+    if (!k) {
+      markUndecryptable(key, false);
+      return undefined;
+    }
+    try {
+      const value = decryptValue(raw, k);
+      undecryptable.delete(key);
+      return value;
+    } catch {
+      markUndecryptable(key, true);
+      return undefined;
+    }
+  }
+  // Plaintext secret from before encryption was enabled: migrate on read.
+  if (k) writeRaw(key, encryptValue(raw, k));
+  undecryptable.delete(key);
+  return raw;
+}
+
+export function setSetting(key: string, value: string): void {
+  const k = SECRET_SETTING_KEYS.has(key) ? settingsKey() : null;
+  writeRaw(key, k ? encryptValue(value, k) : value);
+  undecryptable.delete(key);
+}
+
+export function deleteSetting(key: string): boolean {
+  const result = db().prepare("DELETE FROM settings WHERE key = ?").run(key);
+  undecryptable.delete(key);
+  return result.changes > 0;
+}
+
+/** A non-blank environment variable, or undefined. */
+export function envValue(key: string): string | undefined {
+  const v = process.env[key];
+  return v !== undefined && v.trim() !== "" ? v : undefined;
+}
+
+/**
+ * Get a configuration value. Settings saved with /setup win over .env values,
+ * except for the API keys (ENV_FIRST_KEYS): for those a non-blank environment
+ * variable wins, so a deployment can inject them and store nothing.
  */
 export function getSettingOrEnv(key: string): string | undefined {
+  if (ENV_FIRST_KEYS.has(key)) {
+    const fromEnv = envValue(key);
+    if (fromEnv !== undefined) return fromEnv;
+  }
   const dbVal = getSetting(key);
   if (dbVal !== undefined) return dbVal;
-  return process.env[key] || undefined;
+  return envValue(key);
 }

@@ -11,6 +11,11 @@ All notable changes to this project are documented in this file.
 - `/textmodule` (all subcommands) needs a mapped agent, like the other commands that read from Zammad.
 - Document conversion (`convert:` on `/reply`) no longer uses the attachment's file name as a path.
 - Authorization headers, tokens and API keys are redacted if a log entry ever contains them.
+- AI and search API keys saved with `/setup ai` / `/setup search` are encrypted in `data/bot.db` when
+  `SETTINGS_ENCRYPTION_KEY` is set (AES-256-GCM, same format as the Uptime Discord bot). Plaintext keys from older
+  versions keep working and are encrypted at the next start. Without the variable nothing changes except a startup
+  warning. A missing or changed key does not stop the bot: the AI commands tell the admin to run `/setup` again.
+- `docker-compose.yml` publishes port 3100 on `127.0.0.1` only.
 
 ### Fixed
 - A variable left blank in `.env` (as `.env.example` ships them) is treated as unset. Before, the bot refused to
@@ -20,8 +25,22 @@ All notable changes to this project are documented in this file.
 - `.env.example` said an empty `ADMIN_USER_IDS` makes everyone an admin; it means nobody is.
 - Docker `HEALTHCHECK` probes `127.0.0.1` instead of `localhost`.
 - `/help` text spacing.
+- A fresh `docker compose up` failed with "unable to open database file": Docker creates `./data` as root and the
+  image ran as a non-root user. The image now starts with an entrypoint that gives the `bot` user ownership of
+  `data/` and then drops privileges, so new and existing installs work without a manual step (Kubernetes with
+  `runAsUser` is unaffected).
+- `npm run lint` failed (ESLint 10 without a flat config or TypeScript parser). It now runs ESLint with
+  typescript-eslint and is part of the CI check. Fixed what it found: unused imports and variables, `any` casts in
+  production code, and the dashboard's emoji line filter, which lacked the `u` flag and matched any emoji.
 
 ### Changed
+- Upgrade note: `AI_API_KEY`, `AI_FALLBACK_API_KEY`, `SEARCH_API_KEY` and `SEARCH_FALLBACK_API_KEY` from the
+  environment now win over keys saved with `/setup`, so a deployment can inject them and store nothing. A key
+  from the environment is used with the provider from the environment. While one is set, `/setup ai` or
+  `/setup search` does not save a key. Other `/setup` values still win over the environment.
+- New CI job `compose-test` starts the image with the shipped compose file on a fresh and on a root-owned `./data`.
+- Images are mirrored to `ghcr.io/kawaconnect/zammad-kc-discord-bot`; links point to `github.com/kawaconnect`.
+- README no longer claims an MIT license; no license has been chosen.
 - README: privileged intents, bot permissions, environment variable table, current command list, security notes
   and more troubleshooting. `.env.example` keeps comments on their own lines and lists `DEBUG_TOKEN`.
 
