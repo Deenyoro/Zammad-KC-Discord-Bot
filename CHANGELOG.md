@@ -3,6 +3,10 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.9.0] - 2026-11-19
+
+### Removed
+
 ## [1.8.0] - 2026-11-17
 
 ### Added
