@@ -8,7 +8,7 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "deploy-commands": "tsx src/commands/deploy.ts",
-    "lint": "eslint src/",
+    "lint": "sh tools/lint/lint.sh",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts"
   },
@@ -32,7 +32,6 @@
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^24.0.0",
     "@types/turndown": "^5.0.6",
-    "eslint": "^10.0.0",
     "pino-pretty": "^13.0.0",
     "tsx": "^4.19.0",
     "typescript": "^7.0.0"

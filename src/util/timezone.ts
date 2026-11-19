@@ -123,9 +123,8 @@ export function dateFromBotTz(year: number, month: number, day: number, hour: nu
 
   // Compute the offset: what the TZ shows minus what we put in UTC
   // This tells us: to get our desired local time, shift UTC by this offset
-  let offsetMs = 0;
   const tzDate = new Date(Date.UTC(get("year"), tzMonth - 1, tzDay, tzHour, tzMinute, 0, 0));
-  offsetMs = tzDate.getTime() - target.getTime();
+  const offsetMs = tzDate.getTime() - target.getTime();
 
   // Subtract the offset to get the correct UTC time
   return new Date(target.getTime() - offsetMs);

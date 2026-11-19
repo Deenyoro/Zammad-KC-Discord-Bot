@@ -8,10 +8,11 @@
  */
 
 import { execFile } from "node:child_process";
-import { writeFile, readFile, unlink, mkdtemp } from "node:fs/promises";
+import { writeFile, readFile, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { logger } from "./logger.js";
+import { errorCode, errorMessage } from "./errorMessage.js";
 
 // Extensions that can be converted to PNG (via sharp)
 const IMAGE_TO_PNG = new Set(["webp", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "avif"]);
@@ -78,8 +79,8 @@ async function convertImageToPng(
       filename: replaceExtension(filename, "png"),
       mimeType: "image/png",
     };
-  } catch (err: any) {
-    if (err?.code === "ERR_MODULE_NOT_FOUND" || err?.code === "MODULE_NOT_FOUND") {
+  } catch (err) {
+    if (errorCode(err) === "ERR_MODULE_NOT_FOUND" || errorCode(err) === "MODULE_NOT_FOUND") {
       logger.debug("sharp not installed, skipping image conversion");
     } else {
       logger.warn({ err, filename }, "Image conversion to PNG failed");
@@ -101,8 +102,8 @@ export async function convertHeicToJpeg(
     const sharp = (await import("sharp")).default;
     const jpg = await sharp(buf).rotate().jpeg({ quality: 85 }).toBuffer();
     return { data: Buffer.from(jpg), filename: replaceExtension(filename, "jpg"), mimeType: "image/jpeg" };
-  } catch (err: any) {
-    logger.debug({ err: err?.message, filename }, "HEIC to JPEG conversion not possible; sending original");
+  } catch (err) {
+    logger.debug({ err: errorMessage(err), filename }, "HEIC to JPEG conversion not possible; sending original");
     return null;
   }
 }
@@ -140,8 +141,8 @@ async function convertDocToPdf(
       filename: pdfFilename,
       mimeType: "application/pdf",
     };
-  } catch (err: any) {
-    if (err?.code === "ENOENT") {
+  } catch (err) {
+    if (errorCode(err) === "ENOENT") {
       logger.debug("LibreOffice not installed, skipping document conversion");
     } else {
       logger.warn({ err, filename }, "Document conversion to PDF failed");

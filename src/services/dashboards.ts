@@ -17,6 +17,7 @@ import {
   ThreadAutoArchiveDuration,
   ThreadChannel,
   Message,
+  MessageFlags,
 } from "discord.js";
 import { createHash } from "node:crypto";
 import { env } from "../util/env.js";
@@ -229,8 +230,8 @@ async function tryUpdateExisting(
       const newMsg = (await discordQueue.add(async () =>
         thread.send({
           embeds: [embed],
-          flags: 4096, // SUPPRESS_NOTIFICATIONS
-        } as any)
+          flags: MessageFlags.SuppressNotifications,
+        })
       )) as Message | undefined;
       if (newMsg) {
         setSetting(DASHBOARD_MSG_ID_KEY, newMsg.id);
@@ -251,11 +252,12 @@ async function tryUpdateExisting(
     }
 
     return true;
-  } catch (err: any) {
+  } catch (err) {
     // Only treat 404 (deleted) and 403 (no access) as "thread gone", create a new one.
     // For transient errors (503, 500, rate limits, network), return true to prevent
     // creating duplicate dashboard threads. We'll retry on the next sync cycle.
-    const status = err?.status ?? err?.httpStatus ?? 0;
+    const e = err as { status?: number; httpStatus?: number } | null | undefined;
+    const status = e?.status ?? e?.httpStatus ?? 0;
     if (status === 404 || status === 403) {
       logger.warn({ err, threadId, status }, "Dashboard thread no longer accessible, will recreate");
       return false;
@@ -326,7 +328,7 @@ function stableContentHash(embed: EmbedBuilder): string {
   // Keep lines that contain ticket numbers (#NNNNN) or state headers (emoji + bold label)
   const stableLines = desc
     .split("\n")
-    .filter((l) => /^[🟠🟣🔵]/.test(l) || /^#?\*\*#\d+\*\*/.test(l.trim()))
+    .filter((l) => /^[🟠🟣🔵]/u.test(l) || /^#?\*\*#\d+\*\*/.test(l.trim()))
     .join("\n");
   return createHash("sha256").update(stableLines).digest("hex").slice(0, 16);
 }

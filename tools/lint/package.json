@@ -1,0 +1,13 @@
+{
+  "name": "zammad-kc-discord-bot-lint",
+  "private": true,
+  "description": "ESLint for the bot. Separate from the root package because typescript-eslint needs the TypeScript 6 compiler API, while the bot builds with TypeScript 7.",
+  "type": "module",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.73.0"
+  }
+}

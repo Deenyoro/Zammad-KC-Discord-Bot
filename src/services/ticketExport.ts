@@ -77,7 +77,7 @@ function makeTurndown(baseUrl: string): TurndownService {
     strongDelimiter: "**",
     linkStyle: "inlined",
   });
-  td.remove(["style", "script", "head", "title", "meta", "link" as any]);
+  td.remove(["style", "script", "head", "title", "meta", "link"]);
 
   td.addRule("images", {
     filter: "img",
@@ -155,7 +155,7 @@ function plainFromHtml(html: string): string {
 
 function tidy(md: string): string {
   return md
-    .replace(/ /g, " ")
+    .replace(/\u00a0/g, " ")
     .replace(/[ \t]+$/gm, "")
     .replace(/^(>\s*)+$/gm, (m) => m.trimEnd())
     .replace(/\n{3,}/g, "\n\n")

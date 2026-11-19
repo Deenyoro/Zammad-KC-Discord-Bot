@@ -61,7 +61,7 @@ export function checkReminderTime(parsedIso: string | null, input: string, now: 
 export function reminderMentionIds(r: Reminder): { users: string[]; roles: string[] } {
   const users: string[] = [];
   const roles: string[] = [];
-  let list: unknown = [];
+  let list: unknown;
   try {
     list = r.mention_ids ? JSON.parse(r.mention_ids) : [];
   } catch {
@@ -140,7 +140,7 @@ async function sendInChannel(client: Client, r: Reminder, content: string): Prom
     }
     return msg.id;
   }
-  const msg = (await discordQueue.add(() => (channel as any).send({ content, allowedMentions }))) as Message;
+  const msg = (await discordQueue.add((): Promise<Message> => channel.send({ content, allowedMentions }))) as Message;
   return msg.id;
 }
 

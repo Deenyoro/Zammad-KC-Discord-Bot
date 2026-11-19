@@ -229,7 +229,6 @@ export async function buildTicketContext(
   try {
     tags = await getTicketTags(ticketId);
   } catch {
-  const lastAgentMsg = agentMessages[agentMessages.length - 1];
     // non-critical
   }
 

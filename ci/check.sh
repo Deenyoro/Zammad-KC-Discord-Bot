@@ -38,8 +38,10 @@ npm ci --no-audit --no-fund --prefer-offline ${NPM_CACHE_DIR:+--cache "$NPM_CACH
 #    (musl on Alpine): better-sqlite3 is not touched by the tests.
 node -e 'const D = require("better-sqlite3"); new D(":memory:").prepare("select 1").get(); require("sharp"); console.log("better-sqlite3 and sharp load")'
 
-# 5. Type check, compile (what the image's build stage runs), then the tests
-#    (Zammad webhook HMAC auth, attachment image conversion via sharp).
+# 5. Type check, lint (ESLint with typescript-eslint, from tools/lint), compile
+#    (what the image's build stage runs), then the tests (Zammad webhook HMAC
+#    auth, attachment image conversion via sharp, settings encryption).
 npm run typecheck
+npm run lint
 npm run build
 npm test

@@ -5,7 +5,7 @@
 # on a v* tag, or manually from the UI/API (set RELEASE_VERSION=v1.2.3 to stamp
 # a version without tagging, DOCKER_PUSH=false to build without publishing).
 #
-# The check job (test stage) gates the image build: npm ci, type check,
+# The check job (test stage) gates the image build: npm ci, type check, lint,
 # build and `npm test` on the Dockerfile's Node image, plus a release version
 # check against package.json. A failed check means no image is built or pushed.
 #

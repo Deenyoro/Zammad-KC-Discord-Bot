@@ -77,6 +77,8 @@ export function protectLinks(html: string): { html: string; links: string[] } {
 }
 
 export function restoreLinks(text: string, links: string[]): string {
+  // NUL-delimited link placeholders inserted by protectLinks.
+  // eslint-disable-next-line no-control-regex
   return text.replace(/\u0000(\d+)\u0000/g, (_m, i) => links[Number(i)] ?? "");
 }
 
