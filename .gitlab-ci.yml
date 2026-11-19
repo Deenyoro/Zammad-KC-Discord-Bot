@@ -1,7 +1,7 @@
-# Container images for Zammad-KC-Discord-Bot, built on GitLab and mirrored to GHCR.
+# Container images for Zammad-KC-Discord-Bot, built on GitLab and published to the GitLab registry only.
 #
-# Ported from .github/workflows/build-and-push.yml, GitHub Actions is disabled on the
-# repository, so this is the only thing that builds these images. Pipelines run
+# GitHub is a plain code mirror (no Actions, no GHCR), so this is the only thing
+# that builds these images. Pipelines run
 # on a v* tag, or manually from the UI/API (set RELEASE_VERSION=v1.2.3 to stamp
 # a version without tagging, DOCKER_PUSH=false to build without publishing).
 #
@@ -10,8 +10,8 @@
 # check against package.json. A failed check means no image is built or pushed.
 #
 # Merge requests (e.g. Renovate MRs) also get a pipeline, via the template's
-# workflow rules: tests and image builds only. The template never pushes,
-# mirrors to GHCR or releases from an MR pipeline, and release jobs here are
+# workflow rules: tests and image builds only. The template never pushes
+# or releases from an MR pipeline, and release jobs here are
 # kept off MRs.
 
 include:
@@ -20,9 +20,6 @@ include:
     file: /docker.yml
 
 variables:
-  # GHCR mirror target for the template's build job (ghcr.io/kawaconnect/<image>).
-  # Also set as a project CI variable; this keeps it visible in the repo.
-  GHCR_OWNER: kawaconnect
   # Same base image as both Dockerfile stages; ci/check.sh fails if they drift.
   NODE_IMAGE: node:24-alpine
 

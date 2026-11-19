@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-19
+
 ### Security
 - No message the bot sends resolves mentions unless it asks to: AI replies and other text built from ticket content
   could ping `@everyone` or a role. The Zammad outage alert and `/remind-me` still ping as before.
@@ -39,7 +41,8 @@ All notable changes to this project are documented in this file.
   from the environment is used with the provider from the environment. While one is set, `/setup ai` or
   `/setup search` does not save a key. Other `/setup` values still win over the environment.
 - New CI job `compose-test` starts the image with the shipped compose file on a fresh and on a root-owned `./data`.
-- Images are mirrored to `ghcr.io/kawaconnect/zammad-kc-discord-bot`; links point to `github.com/kawaconnect`.
+- Images are published to the GitLab registry only (`gitlabreg.kawa.link/dean/zammad-kc-discord-bot/zammad-kc-discord-bot`); nothing goes to GHCR any more, and the
+  GitHub Actions build workflow is removed. Links point to `github.com/kawaconnect`.
 - README no longer claims an MIT license; no license has been chosen.
 - README: privileged intents, bot permissions, environment variable table, current command list, security notes
   and more troubleshooting. `.env.example` keeps comments on their own lines and lists `DEBUG_TOKEN`.

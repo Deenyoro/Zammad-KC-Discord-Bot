@@ -300,13 +300,13 @@ kubectl apply -f k8s/service.yaml
 
 ## Building / Releases (GitLab CI)
 
-Container images are built by GitLab CI (`.gitlab-ci.yml`). GitHub Actions is
-disabled; `.github/workflows/build-and-push.yml` is kept only for reference.
+Container images are built by GitLab CI (`.gitlab-ci.yml`) and published to the
+GitLab container registry only. The GitHub repository is a plain code mirror: no
+GitHub Actions and no GHCR images.
 
 Pipelines run on a `v*` tag, or when started manually from the GitLab UI or API.
 A merge request (e.g. a Renovate MR) also gets a pipeline that runs `check` and
-builds the image, but never publishes anything (no registry push, no GHCR
-mirror). Plain pushes do not start a pipeline.
+builds the image, but never publishes anything (no registry push). Plain pushes do not start a pipeline.
 
 1. **test** stage, `check` job (`ci/check.sh`, cluster runner, `node:24-alpine`,
    which is the same image both Dockerfile stages use):
@@ -324,9 +324,9 @@ mirror). Plain pushes do not start a pipeline.
      file, and on every release.
 2. **build** stage, `build` job: builds the `Dockerfile` with the shared
    `dean/ci-templates` docker template. It runs only if `check` passed. It pushes
-   to the GitLab container registry and mirrors to
-   `ghcr.io/kawaconnect/zammad-kc-discord-bot` (the image `k8s/deployment.yaml`
-   uses; `GHCR_OWNER` in `.gitlab-ci.yml`).
+   to the GitLab container registry as
+   `gitlabreg.kawa.link/dean/zammad-kc-discord-bot/zammad-kc-discord-bot` (the image `k8s/deployment.yaml` uses; the registry is private, so
+   pulls need a read_registry credential).
    A tag `v1.2.3` publishes `1.2.3`, `1.2` and `latest`, plus `sha-<commit>`.
    A manual run without `RELEASE_VERSION` publishes `sha-<commit>`, `<branch>` and
    `<branch>-<commit>`, and also `latest` when run on `master`.
