@@ -11,43 +11,7 @@ import { startHealthCheck, stopHealthCheck } from "./services/health.js";
 import { startDailySummary, stopDailySummary } from "./services/dailySummary.js";
 import { startKeepalive, stopKeepalive } from "./services/keepalive.js";
 import { initMergeAnnouncements } from "./services/related.js";
-import { setupCommand } from "./commands/setup.js";
-import { helpCommand } from "./commands/help.js";
-import {
-  replyCommand,
-  replyallCommand,
-  noteCommand,
-  closeCommand,
-  assignCommand,
-  timeCommand,
-  priorityCommand,
-  stateCommand,
-  pendingCommand,
-  infoCommand,
-  linkCommand,
-  lockCommand,
-  searchCommand,
-  tagsCommand,
-  mergeCommand,
-  historyCommand,
-  relatedCommand,
-  scheduleCommand,
-  schedulesCommand,
-  unscheduleCommand,
-  newticketCommand,
-  textmoduleCommand,
-  aireplyCommand,
-  aisummaryCommand,
-  aihelpCommand,
-  aiproofreadCommand,
-  aitranslateCommand,
-  participantsCommand,
-  weeklyCommand,
-  checknoteCommand,
-  renameCommand,
-} from "./commands/shortcuts.js";
-import { mdCommand } from "./commands/md.js";
-import { remindMeCommand, remindersCommand } from "./commands/remind.js";
+import { allCommands } from "./commands/all.js";
 import { startReminders, stopReminders } from "./services/reminders.js";
 
 let discordClient: Client | null = null;
@@ -59,61 +23,16 @@ let catchupTimer: ReturnType<typeof setInterval> | null = null;
 /** Deploy slash commands to Discord on startup */
 async function deployCommands() {
   const config = env();
-  const commands = [
-    setupCommand.toJSON(),
-    helpCommand.toJSON(),
-    replyCommand.toJSON(),
-    replyallCommand.toJSON(),
-    noteCommand.toJSON(),
-    closeCommand.toJSON(),
-    assignCommand.toJSON(),
-    timeCommand.toJSON(),
-    priorityCommand.toJSON(),
-    stateCommand.toJSON(),
-    pendingCommand.toJSON(),
-    infoCommand.toJSON(),
-    linkCommand.toJSON(),
-    lockCommand.toJSON(),
-    searchCommand.toJSON(),
-    tagsCommand.toJSON(),
-    mergeCommand.toJSON(),
-    historyCommand.toJSON(),
-    relatedCommand.toJSON(),
-    scheduleCommand.toJSON(),
-    schedulesCommand.toJSON(),
-    unscheduleCommand.toJSON(),
-    newticketCommand.toJSON(),
-    textmoduleCommand.toJSON(),
-    aireplyCommand.toJSON(),
-    aisummaryCommand.toJSON(),
-    aihelpCommand.toJSON(),
-    aiproofreadCommand.toJSON(),
-    aitranslateCommand.toJSON(),
-    participantsCommand.toJSON(),
-    weeklyCommand.toJSON(),
-    checknoteCommand.toJSON(),
-    renameCommand.toJSON(),
-    mdCommand.toJSON(),
-    remindMeCommand.toJSON(),
-    remindersCommand.toJSON(),
-  ];
+  const commands = allCommands();
 
   const rest = new REST().setToken(config.DISCORD_TOKEN);
 
   try {
-    if (config.DISCORD_GUILD_ID) {
-      await rest.put(
-        Routes.applicationGuildCommands(config.DISCORD_CLIENT_ID, config.DISCORD_GUILD_ID),
-        { body: commands }
-      );
-      logger.info({ guildId: config.DISCORD_GUILD_ID, count: commands.length }, "Slash commands deployed to guild");
-    } else {
-      await rest.put(
-        Routes.applicationCommands(config.DISCORD_CLIENT_ID),
-        { body: commands }
-      );
-      logger.info({ count: commands.length }, "Slash commands deployed globally");
-    }
+    await rest.put(
+      Routes.applicationGuildCommands(config.DISCORD_CLIENT_ID, config.DISCORD_GUILD_ID),
+      { body: commands }
+    );
+    logger.info({ guildId: config.DISCORD_GUILD_ID, count: commands.length }, "Slash commands deployed to guild");
   } catch (err) {
     logger.error({ err }, "Failed to deploy slash commands");
   }

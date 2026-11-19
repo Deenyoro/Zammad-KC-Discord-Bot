@@ -11,7 +11,7 @@ Built for [Zammad-KC](https://github.com/Deenyoro/zammad-kc) (which adds SMS, Te
 - **Automatic thread creation** - every open Zammad ticket gets a Discord thread with a color-coded embed showing state, priority, assignee, SLA, and a direct link to Zammad
 - **Real-time sync** - Zammad webhooks push new articles, state changes, and title updates to Discord instantly
 - **Bidirectional messaging** - messages in a ticket thread become Zammad internal notes; Zammad articles appear in Discord
-- **Full attachment support** - images, documents, and files sync in both directions (up to 25 MB)
+- **Attachment support** - images, documents, and files sync in both directions. Size limits are set with `/setup attachments` (default 5 MB per file; larger Zammad attachments are linked instead of uploaded)
 - **Links kept** - links in HTML emails and notes are shown inline as `[text](<url>)` (no preview embeds), so a button-only email such as a sign-in / magic-link email is usable from the thread; long messages are split between links, never inside one
 - **Inline images** - images embedded in an article body (Zammad `ticket_attachment` URLs, `cid:` references, `data:` URIs) are posted as Discord image attachments, for emails and notes alike. Images in a reply's quoted chain are posted too, but an image is posted only once per ticket (matched by content), so quoted copies of earlier screenshots are not repeated. HEIC images are converted to JPEG when the bundled image library can decode them
 - **All notes** - every Zammad note reaches the thread, internal or public, agent or System (e.g. Zammad-KC call activity notes); only System-sender non-note articles (trigger auto-replies) are skipped
@@ -21,7 +21,7 @@ Built for [Zammad-KC](https://github.com/Deenyoro/zammad-kc) (which adds SMS, Te
 
 ### Ticket Management
 
-- **25 slash commands** - reply, note, close, lock, assign, owner, state, priority, time accounting, pending, info, link, search, tags, merge, history, scheduled replies, new ticket creation, templates, and more
+- **Slash commands** - reply, reply-all, note, close, lock, assign, rename, state, priority, time accounting, pending, info, link, search, tags, merge, history, scheduled replies, new ticket creation, text modules, and more (see [Commands Reference](#commands-reference))
 - **SLA indicators** - embeds turn red on SLA breach, `/info` shows time remaining
 - **Ticket search** - `/search` finds tickets by number, title, or keyword without leaving Discord
 - **Tags** - list, add, and remove tags directly from Discord
@@ -47,19 +47,21 @@ Built for [Zammad-KC](https://github.com/Deenyoro/zammad-kc) (which adds SMS, Te
 - **`/newticket sms`** - start a new SMS conversation (Zammad-KC)
 - **`/newticket phone`** - log a phone call as an internal note
 
-### Canned Templates
+### Text Modules
 
-- **`/template use <name>`** - send a saved template as a customer reply
-- **`/template list`** - browse available templates
-- **`/template add`** / **`/template remove`** - manage templates (admin only)
+- **`/textmodule use <name>`** - send a Zammad text module as a customer reply
+- **`/textmodule list|search|preview|refresh`** - browse the text modules defined in Zammad
+- Typing `::shortcut` in `/reply`, `/note` or a thread message expands the matching text module
 
-### Smart Suggestions
+### AI Commands (optional)
 
-- **`/ai`** - get a suggested draft response based on the full ticket conversation
-- **`/aihelp`** - get troubleshooting steps, optionally augmented with live web search results
-- **Auto-suggestions** - when a customer replies, the bot can automatically post a suggested response in the thread (visible only to agents, never sent to customers)
-- Supports multiple providers (OpenRouter, OpenAI, Anthropic) with automatic fallback
-- All suggestions are ephemeral or internal - nothing is ever sent to customers automatically
+- **`/aireply`** - a suggested draft reply based on the ticket conversation
+- **`/aisummary`** - a summary of the ticket with next steps
+- **`/aihelp`** - troubleshooting steps, optionally with live web search results
+- **`/aiproofread`**, **`/aitranslate`** - proofread or translate text
+- Supports OpenRouter, OpenAI and Anthropic, with an optional fallback provider
+- Results are posted in the ticket thread for the agents there. Nothing is sent to the customer unless an agent sends it with `/reply`
+- The ticket conversation is sent to the configured AI provider (and search terms to the search provider) when one of these commands is run
 
 ### Daily Summary
 
@@ -100,8 +102,13 @@ Built for [Zammad-KC](https://github.com/Deenyoro/zammad-kc) (which adds SMS, Te
 1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
 2. **New Application** → name it → go to the **Bot** tab
 3. Copy the **Bot Token** → this is your `DISCORD_TOKEN`
-4. Enable **Message Content Intent** and **Server Members Intent**
-5. **OAuth2 → URL Generator**: scopes `bot` + `applications.commands`, permissions:
+4. Under **Privileged Gateway Intents**, enable **Message Content Intent** and
+   **Server Members Intent**. The bot does not start without them ("Used
+   disallowed intents" in the log). Message content is needed to turn thread
+   messages into ticket notes, server members to add the ticket role to threads.
+5. Turn **Public Bot** off so nobody else can add the bot to their server.
+6. **OAuth2 → URL Generator**: scopes `bot` + `applications.commands`, permissions:
+   - View Channels
    - Send Messages
    - Create Public Threads
    - Send Messages in Threads
@@ -110,7 +117,12 @@ Built for [Zammad-KC](https://github.com/Deenyoro/zammad-kc) (which adds SMS, Te
    - Embed Links
    - Attach Files
    - Read Message History
-6. Open the generated URL to invite the bot to your server
+   - Mention Everyone (for the "Zammad is unreachable" alert and `/remind-me ping:`)
+7. Open the generated URL to invite the bot to your server
+
+Everyone who can see the tickets channel can read the ticket threads, and any
+message typed in a ticket thread is saved on the ticket as an internal note.
+Make the channel private to your support staff.
 
 ### 2. Get Discord IDs
 
@@ -132,37 +144,41 @@ Admin → System → API → **New Token**:
 cp .env.example .env
 ```
 
-Fill in the required values:
+Fill in the values. A variable left blank counts as not set.
 
-```env
-# Discord
-DISCORD_TOKEN=<bot token>
-DISCORD_CLIENT_ID=<application ID>
-DISCORD_GUILD_ID=<server ID>
-DISCORD_TICKETS_CHANNEL_ID=<channel ID>
-DISCORD_TICKET_ROLE_ID=<role ID>           # optional - auto-adds role members to threads
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `DISCORD_TOKEN` | yes | | Bot token |
+| `DISCORD_CLIENT_ID` | yes | | Application ID |
+| `DISCORD_GUILD_ID` | yes | | Server the slash commands are registered on |
+| `DISCORD_TICKETS_CHANNEL_ID` | yes | | Channel in which ticket threads are created |
+| `DISCORD_TICKET_ROLE_ID` | no | | Role whose members are added to every open ticket thread |
+| `ZAMMAD_BASE_URL` | yes | | Zammad URL for API calls (internal Docker/Kubernetes URL is fine) |
+| `ZAMMAD_PUBLIC_URL` | no | `ZAMMAD_BASE_URL` | Zammad URL used in links shown to people |
+| `ZAMMAD_API_TOKEN` | yes | | Token with `admin` and `ticket.agent` |
+| `ZAMMAD_WEBHOOK_SECRET` | yes | | Shared secret that signs the webhook (use a long random string) |
+| `ADMIN_USER_IDS` | no | empty | Comma-separated Discord user IDs allowed to run `/setup`; empty means nobody |
+| `PORT` | no | `3100` | HTTP port (webhook, `/healthz`, `/readyz`) |
+| `LOG_LEVEL` | no | `info` | `trace`, `debug`, `info`, `warn`, `error`, `fatal` |
+| `DEBUG_TOKEN` | no | | Enables `/debug/*`, which then require `Authorization: Bearer <token>` |
+| `AI_API_KEY`, `AI_PROVIDER`, `AI_MODEL`, `AI_BASE_URL` | no | provider `openrouter` | AI commands, see [Optional Features](#optional-features) |
+| `AI_FALLBACK_API_KEY`, `AI_FALLBACK_PROVIDER`, `AI_FALLBACK_MODEL` | no | | Fallback AI provider |
+| `SEARCH_API_KEY`, `SEARCH_PROVIDER` | no | provider `tavily` | Web search for `/aihelp` |
+| `SEARCH_FALLBACK_API_KEY`, `SEARCH_FALLBACK_PROVIDER` | no | | Fallback search provider |
+| `DAILY_SUMMARY_HOUR` | no | off | Hour (0-23) for the daily summary |
 
-# Zammad
-ZAMMAD_BASE_URL=http://zammad-nginx:8080   # internal Docker/K8s URL
-ZAMMAD_PUBLIC_URL=https://support.example.com
-ZAMMAD_API_TOKEN=<token with admin + ticket.agent>
-ZAMMAD_WEBHOOK_SECRET=<random secret>
-
-# Access Control
-ADMIN_USER_IDS=                            # comma-separated Discord user IDs allowed to run /setup (empty = nobody)
-
-# Server
-PORT=3100
-LOG_LEVEL=info
-DEBUG_TOKEN=                               # optional - enables /debug/* routes; send as "Authorization: Bearer <token>"
-```
+Values set with `/setup` (AI and search keys, summary hour, timezone and the
+rest) are stored in `data/bot.db` and win over the environment. They are stored
+unencrypted, so protect the data volume and its backups like the `.env` file.
 
 ### 5. Create the Zammad Webhook + Triggers
 
 **Webhook** (Admin → Manage → Webhooks → New):
 - Endpoint: `http://zammad-discord-bot:3100/webhooks/zammad` (adjust hostname for your network)
 - HMAC SHA1 Token: same value as `ZAMMAD_WEBHOOK_SECRET`
-- SSL Verify: No (internal network)
+- SSL Verify: No is acceptable only on a private network between the two containers; use `https://` and Yes if the webhook crosses anything else
+
+The bot rejects any webhook request whose `X-Hub-Signature` does not match the secret.
 
 **Triggers** (Admin → Manage → Triggers):
 
@@ -187,6 +203,13 @@ npm install
 npm run build
 npm start
 ```
+
+With Docker Compose the database is kept in `./data` on the host. The container
+runs as a non-root user, so create the directory and make it writable for that
+user before the first start (`docker compose run --rm discord-bot id` shows the
+uid), otherwise the bot exits with "unable to open database file". Port 3100
+only needs to be published if Zammad reaches the bot through the host; on a
+shared Docker network you can remove the `ports:` entry.
 
 Slash commands are automatically deployed to your Discord server on startup. You can also deploy them manually:
 
@@ -292,9 +315,11 @@ To run the same checks locally with Node 24: `sh ci/check.sh`.
 
 | Command | Description |
 |---------|-------------|
-| `/reply <text> [cc] [file]` | Reply to the customer (auto-detects email/SMS/Teams) |
-| `/note <text> [file]` | Add an internal note |
-| `/template use <name>` | Send a saved canned template as a reply |
+| `/reply <text> [to] [cc] [file] [convert] [close]` | Reply to the customer (auto-detects email/SMS/Teams) |
+| `/replyall <text> [file] [convert] [close]` | Reply to everyone on the last email (To and CC) |
+| `/note <text> [file] [close]` | Add an internal note |
+| `/textmodule use <name>` | Send a Zammad text module as a reply |
+| `/participants` | Show the email addresses and contacts on the ticket |
 
 ### Ticket Management (use inside a ticket thread)
 
@@ -302,9 +327,9 @@ To run the same checks locally with Node 24: `sh ci/check.sh`.
 |---------|-------------|
 | `/info` | Show ticket details, SLA status, and tags |
 | `/link` | Get a direct link to the Zammad ticket |
-| `/owner [user]` | Set ticket owner (defaults to yourself) |
-| `/assign <user>` | Assign ticket to a Discord user |
-| `/close` | Close the ticket |
+| `/assign [user]` | Assign the ticket to a mapped Discord user (defaults to yourself) |
+| `/rename <title>` | Rename the ticket |
+| `/close [note]` | Close the ticket, optionally with an internal note |
 | `/lock [duration]` | Lock ticket permanently, or for a duration (30m, 2h, 4h, 8h, 16h, 1d, 2d, 1w, 1mo) |
 | `/state <name>` | Change state (open, waiting for reply, pending reminder, pending close, closed, closed (locked)) |
 | `/pending <type> <duration>` | Set pending state with expiration (1d, 3d, 1w, 2w, 1m, 3m) |
@@ -320,7 +345,7 @@ To run the same checks locally with Node 24: `sh ci/check.sh`.
 
 | Command | Description |
 |---------|-------------|
-| `/remind-me <when> [message]` | Ping you in this channel/thread at `when`, with the message and a link back. `when` accepts a duration (`30m`, `2h`, `1h30m`, `3d`, `1w`, `2mo`, `in 2h`) or a date/time (`tomorrow 9am`, `today 5pm`, `friday 3pm`, `17:30`, `2026-10-05`, `2026-10-05 14:00`), read in the bot timezone (`/setup timezone`). Past times and times more than 366 days ahead are rejected |
+| `/remind-me <when> [message] [ping] [who]` | `ping:` adds @everyone or @here and `who:` a person or role (pinging everyone, here or a role needs a mapped agent). Ping you in this channel/thread at `when`, with the message and a link back. `when` accepts a duration (`30m`, `2h`, `1h30m`, `3d`, `1w`, `2mo`, `in 2h`) or a date/time (`tomorrow 9am`, `today 5pm`, `friday 3pm`, `17:30`, `2026-10-05`, `2026-10-05 14:00`), read in the bot timezone (`/setup timezone`). Past times and times more than 366 days ahead are rejected |
 | `/reminders [cancel:<id>]` | List your pending reminders, or cancel one |
 
 Reminders are stored in SQLite (`data/bot.db`), checked every 15 seconds, and delivered after a restart if they fell due while the bot was down (marked as late). If the channel is gone the reminder is sent by DM.
@@ -338,24 +363,30 @@ Reminders are stored in SQLite (`data/bot.db`), checked every 15 seconds, and de
 | Command | Description |
 |---------|-------------|
 | `/search <query>` | Search Zammad tickets by number, title, or keyword |
-| `/newticket <type> <to> <subject> <body>` | Create a new ticket (email, sms, or phone-log) |
+| `/newticket <type> <to> <subject> <body> [send]` | Create a new ticket (email, sms, teams, or phone-log) |
+| `/weekly [start] [end] [email]` | Create a Weekly Check ticket |
+| `/checknote` | Add a snapshot of another bot's status board to the ticket as a note (`/setup checknote`) |
 
-### Smart Suggestions (use inside a ticket thread)
-
-| Command | Description |
-|---------|-------------|
-| `/ai` | Get a suggested draft response for this ticket |
-| `/aihelp` | Get troubleshooting steps with optional web search |
-
-### Templates
+### AI (use inside a ticket thread)
 
 | Command | Description |
 |---------|-------------|
-| `/template list` | List all saved templates |
-| `/template add <name> <body>` | Add a new template (admin only) |
-| `/template remove <name>` | Remove a template (admin only) |
+| `/aireply` | Suggested draft reply for this ticket |
+| `/aisummary` | Summary with suggested next steps |
+| `/aihelp` | Troubleshooting steps with optional web search |
+| `/aiproofread <message>` | Proofread a message |
+| `/aitranslate <language> [content]` | Translate text, or the ticket when `content` is omitted |
 
-### Setup (admin only)
+### Text Modules
+
+| Command | Description |
+|---------|-------------|
+| `/textmodule list` | List the text modules defined in Zammad |
+| `/textmodule search <query>` | Search by name or keyword |
+| `/textmodule preview <name>` | Show a text module without sending it |
+| `/textmodule refresh` | Reload the list from Zammad |
+
+### Setup (only users in `ADMIN_USER_IDS`)
 
 | Command | Description |
 |---------|-------------|
@@ -363,23 +394,34 @@ Reminders are stored in SQLite (`data/bot.db`), checked every 15 seconds, and de
 | `/setup ai <api_key> [provider] [model]` | Configure the smart suggestion provider |
 | `/setup search <api_key> [provider]` | Configure web search for `/aihelp` |
 | `/setup summary <hour\|off>` | Configure or disable the daily summary |
+| `/setup model <model>`, `/setup language <lang>` | Change the AI model or default language |
+| `/setup timezone <tz>` | Bot timezone for dates and schedules |
+| `/setup keepalive <hour\|off>` | Daily silent refresh that keeps threads from being hidden |
+| `/setup status-refresh <minutes>` | How often ticket status embeds refresh |
+| `/setup attachments [...]` | Show or set attachment size limits |
+| `/setup weekly-email <email>`, `/setup checknote [bot_id] [channel]` | Defaults for `/weekly` and `/checknote` |
 | `/help` | Show all commands |
 
 ### Thread Messages
 
-Any message typed in a ticket thread is automatically forwarded to Zammad as an internal note (with attachments). The bot detects the ticket channel type - for Teams and RingCentral SMS tickets, messages are routed through the appropriate channel instead. Use `/reply` to send an external reply to the customer.
+Any message typed in a ticket thread is forwarded to Zammad as an internal note (with attachments), whatever the ticket's channel. Mapped agents author the note as themselves; anyone else is named in the note text. Nothing typed in a thread reaches the customer: use `/reply` for that.
+
+Ticket commands only work for Discord users mapped to a Zammad agent (`/setup usermap`).
 
 ## Optional Features
 
-### Smart Suggestions Setup
+### AI Setup
 
 Configure via environment variables or at runtime with `/setup ai`:
 
 ```env
 AI_API_KEY=<your API key>
-AI_PROVIDER=openrouter              # openrouter | openai | anthropic
-AI_MODEL=                           # optional - uses provider default if unset
-AI_BASE_URL=                        # optional - custom endpoint override
+# openrouter | openai | anthropic
+AI_PROVIDER=openrouter
+# optional: provider default when unset
+AI_MODEL=
+# optional: custom endpoint
+AI_BASE_URL=
 ```
 
 **Fallback provider** (used if the primary fails):
@@ -398,13 +440,15 @@ Or configure at runtime (stored in the bot's database, overrides env vars):
 
 ### Web Search Setup
 
-Enables web-augmented `/aihelp` responses. Configure via env or `/setup search`:
+Adds web search results to `/aihelp`. Configure via env or `/setup search`:
 
 ```env
 SEARCH_API_KEY=<your API key>
-SEARCH_PROVIDER=tavily              # tavily | brave
-SEARCH_FALLBACK_API_KEY=            # optional
-SEARCH_FALLBACK_PROVIDER=           # optional
+# tavily | brave
+SEARCH_PROVIDER=tavily
+# optional
+SEARCH_FALLBACK_API_KEY=
+SEARCH_FALLBACK_PROVIDER=
 ```
 
 ### Daily Summary Setup
@@ -412,7 +456,8 @@ SEARCH_FALLBACK_PROVIDER=           # optional
 Posts a ticket statistics embed once per day at the configured hour:
 
 ```env
-DAILY_SUMMARY_HOUR=9                # 0-23, leave empty to disable
+# 0-23, leave empty to disable
+DAILY_SUMMARY_HOUR=9
 ```
 
 Or configure at runtime:
@@ -447,8 +492,8 @@ Discord <──WebSocket──> Bot <──HTTP POST──> Zammad (webhooks)
 ### Data Flow
 
 1. **Zammad → Discord**: Webhook fires → signature verified → per-ticket queue → fetch full ticket → create/update thread → sync all unsynced articles in order
-2. **Discord → Zammad**: Message in thread → check user mapping → detect channel type → create article → mark as synced (suppresses webhook echo)
-3. **Periodic sync**: Every 10 seconds, all open tickets are fetched and compared against local state. Missing threads are created, stale threads are closed, state/title changes are applied. This catches anything webhooks might have missed.
+2. **Discord → Zammad**: Message in thread → look up user mapping → create internal note → mark as synced (suppresses webhook echo)
+3. **Periodic sync**: Every 30 seconds all open tickets are fetched and compared against local state, and every 10 seconds new articles are caught up. Missing threads are created, stale threads are closed, state/title changes are applied. This catches anything webhooks might have missed.
 
 ### Database Tables
 
@@ -458,7 +503,7 @@ Discord <──WebSocket──> Bot <──HTTP POST──> Zammad (webhooks)
 | `user_map` | Links Discord user IDs to Zammad agent emails and IDs |
 | `synced_articles` | Tracks which articles have been synced (prevents duplicates) |
 | `webhook_dedup` | Prevents processing the same webhook delivery twice |
-| `templates` | Stores canned response templates |
+| `templates` | Unused (replaced by Zammad text modules) |
 | `settings` | Runtime configuration overrides (from `/setup` commands) |
 | `posted_media` | Content hashes of images already posted per ticket (inline-image de-duplication) |
 | `reminders` | `/remind-me` reminders and their delivery state |
@@ -499,12 +544,40 @@ For standard Zammad, you may need to create the "waiting for reply" and "closed 
 **Thread not hiding on "waiting for reply"**
 - The thread is archived and members are removed. It may still appear in search results but will be gone from the channel's thread list and sidebar.
 
-**/ai and /aihelp say "not configured"**
+**The AI commands say "not configured"**
 - Set up a provider with `/setup ai <api_key>` or the `AI_API_KEY` env var
 
 **Bot shows "ZAMMAD UNREACHABLE"**
 - Check that `ZAMMAD_BASE_URL` is correct and Zammad is running
 - The bot retries automatically and will recover when connectivity is restored
+
+**Bot exits with "Missing or invalid environment variables"**
+- The lines below the message name each variable. See the table under [Configure](#4-configure).
+
+**Bot exits with "Used disallowed intents"**
+- Enable Message Content Intent and Server Members Intent on the bot's page in the Developer Portal.
+
+**Bot exits with "unable to open database file"**
+- `data/` is not writable by the container user. See [Build & Start](#6-build--start).
+
+**Slash commands are missing**
+- Check the log for "Failed to deploy slash commands". The bot must be in the server named by `DISCORD_GUILD_ID` and invited with the `applications.commands` scope.
+
+**"You are not authorised to use setup commands"**
+- Add your Discord user ID to `ADMIN_USER_IDS` and restart. Discord roles do not count.
+
+**Webhook answers 401 "Invalid signature"**
+- The webhook's HMAC SHA1 token in Zammad differs from `ZAMMAD_WEBHOOK_SECRET`.
+
+**Threads are not created or messages fail with "Missing Permissions"**
+- Give the bot the permissions listed under [Create the Discord Bot](#1-create-the-discord-bot) in the tickets channel.
+
+## Security Notes
+
+- `/webhooks/zammad` accepts only requests signed with `ZAMMAD_WEBHOOK_SECRET` (HMAC-SHA1, as Zammad sends it). `/healthz` and `/readyz` are open; `/debug/*` exist only with `DEBUG_TOKEN`.
+- Do not expose port 3100 to the internet. Zammad is the only client.
+- `/setup` is limited to `ADMIN_USER_IDS`; ticket commands to Discord users mapped to a Zammad agent. The bot acts in Zammad with an admin token, so treat the mapping as granting agent access.
+- Ticket text relayed into Discord never pings anyone: mentions in it are not resolved.
 
 ## License
 

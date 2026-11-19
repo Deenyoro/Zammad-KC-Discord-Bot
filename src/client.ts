@@ -12,6 +12,10 @@ export function createClient(): Client {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
     ],
+    // Ticket text, AI output and titles come from outside Discord. Nothing
+    // pings unless the message asks for it explicitly (the Zammad outage
+    // alert and /remind-me do).
+    allowedMentions: { parse: [] },
   });
 
   // Wire event handlers

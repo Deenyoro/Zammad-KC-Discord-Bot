@@ -1788,6 +1788,12 @@ export async function handleNewTicket(interaction: ChatInputCommandInteraction) 
 export async function handleTextModule(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
 
+  // Text modules are read from Zammad with the bot's token: agents only.
+  if (!getUserMap(interaction.user.id)) {
+    await interaction.reply({ content: "You must be mapped to a Zammad agent before using ticket commands. Ask an admin to run `/setup usermap`.", ephemeral: true });
+    return;
+  }
+
   switch (sub) {
     case "list": {
       await interaction.deferReply({ ephemeral: true });

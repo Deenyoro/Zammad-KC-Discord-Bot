@@ -48,9 +48,11 @@ async function sendAlert(client: Client) {
     const channel = (await client.channels.fetch(channelId)) as TextChannel | null;
     if (!channel?.isTextBased()) return;
 
-    await channel.send(
-      "@everyone **Zammad is unreachable.** The bot cannot sync tickets or process webhooks until connectivity is restored."
-    );
+    await channel.send({
+      content:
+        "@everyone **Zammad is unreachable.** The bot cannot sync tickets or process webhooks until connectivity is restored.",
+      allowedMentions: { parse: ["everyone"] },
+    });
     logger.warn("Zammad health alert sent to Discord");
   } catch (err) {
     logger.error({ err }, "Failed to send Zammad health alert");

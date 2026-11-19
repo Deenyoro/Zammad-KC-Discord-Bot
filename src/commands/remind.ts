@@ -48,7 +48,7 @@ export const remindMeCommand = new SlashCommandBuilder()
       .addChoices({ name: "@everyone", value: "everyone" }, { name: "@here", value: "here" })
   )
   .addMentionableOption((o) =>
-    o.setName("who").setDescription("Also ping this person or role").setRequired(false)
+    o.setName("who").setDescription("Also ping this person or role (roles: staff only)").setRequired(false)
   );
 
 export const remindersCommand = new SlashCommandBuilder()
@@ -85,9 +85,9 @@ export async function handleRemindMe(interaction: ChatInputCommandInteraction) {
   const ping = interaction.options.getString("ping") as "everyone" | "here" | null;
   const who = interaction.options.getMentionable("who");
   const caller = getUserMap(interaction.user.id);
-  if (ping && !caller) {
+  if ((ping || who instanceof Role) && !caller) {
     await interaction.reply({
-      content: "Only staff mapped to a Zammad agent can ping @everyone or @here. Ask an admin to run `/setup usermap`.",
+      content: "Only staff mapped to a Zammad agent can ping @everyone, @here or a role. Ask an admin to run `/setup usermap`.",
       ephemeral: true,
     });
     return;
