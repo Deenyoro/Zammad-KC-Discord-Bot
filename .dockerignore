@@ -6,3 +6,4 @@ data
 *.sqlite
 *.log
 .git
+.compose-test.*

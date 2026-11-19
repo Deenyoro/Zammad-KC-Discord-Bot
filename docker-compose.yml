@@ -5,8 +5,10 @@ services:
     container_name: zammad-discord-bot
     restart: unless-stopped
     env_file: .env
+    # Only needed when Zammad reaches the bot through the host. Bound to
+    # localhost; on a shared Docker network you can remove it.
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     volumes:
       - ./data:/app/data
     networks:
