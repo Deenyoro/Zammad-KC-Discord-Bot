@@ -51,8 +51,8 @@ build:
 compose-test:
   stage: test
   tags: [linux]
-  image: docker:27
-  services: ["docker:27-dind"]
+  image: docker:29
+  services: ["docker:29-dind"]
   interruptible: true
   variables:
     DOCKER_HOST: tcp://docker:2376
