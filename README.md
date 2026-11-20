@@ -4,6 +4,8 @@ Part of the [KawaConnect](https://github.com/kawaconnect/zammad-kc) support stru
 
 Built for [Zammad-KC](https://github.com/kawaconnect/zammad-kc) (which adds SMS, Teams Chat, scheduled replies, and custom ticket states on top of Zammad), but **should work with any standard Zammad installation** - the KC-specific features (scheduled replies, SMS conversations) simply won't be available if the KC endpoints don't exist.
 
+![A ticket thread in Discord: the ticket embed with state, owner and SLA, the customer's email, an agent's note, and the reply sent with /reply](docs/images/ticket-thread.png)
+
 ## Features
 
 ### Core
