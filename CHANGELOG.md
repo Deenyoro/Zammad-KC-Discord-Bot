@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Docs
+
+- README: example screenshot in `docs/images/` (example data only).
+
 ## [1.10.0] - 2026-11-19
 
 ### Security
