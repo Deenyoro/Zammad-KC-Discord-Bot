@@ -1,4 +1,4 @@
-FROM node:24-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
@@ -6,7 +6,7 @@ COPY tsconfig.json ./
 COPY src/ src/
 RUN npm run build
 
-FROM node:24-alpine
+FROM node:26-alpine
 # sharp for image conversion (webp/jpg → png), libreoffice for doc → pdf,
 # su-exec for the entrypoint to drop root
 RUN apk add --no-cache libreoffice-writer libreoffice-calc libreoffice-impress \
